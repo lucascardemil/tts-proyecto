@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>TikTok - código de conexión</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 3rem auto; padding: 0 1rem; text-align: center; }
+  textarea { width: 100%; height: 4rem; font-size: 1rem; padding: .6rem; box-sizing: border-box; }
+  button { margin-top: 1rem; padding: .6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+  #err { color: #c00; margin-top: 1rem; }
+</style>
+</head>
+<body>
+  <h1>Listo</h1>
+  <p>Copiá este código y pegalo en la app:</p>
+  <textarea id="code" readonly></textarea>
+  <br>
+  <button id="copy-btn">Copiar código</button>
+  <p id="err"></p>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const error = params.get("error_description") || params.get("error");
+    if (code) {
+      document.getElementById("code").value = code;
+    } else {
+      document.getElementById("err").textContent = error || "No se recibió ningún código.";
+    }
+    document.getElementById("copy-btn").addEventListener("click", () => {
+      const el = document.getElementById("code");
+      el.select();
+      navigator.clipboard.writeText(el.value);
+    });
+  </script>
+</body>
+</html>

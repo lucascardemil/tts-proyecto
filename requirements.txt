@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────
+# Requisitos del proyecto: Historias para Dormir (TTS + Video)
+# ─────────────────────────────────────────────
+
+# Servidor web para la interfaz gráfica
+flask>=3.0.0
+
+# ─────────────────────────────────────────────
+# Chatterbox (Resemble AI) — único motor de voz del proyecto
+# ─────────────────────────────────────────────
+# MIT license, apto para uso comercial. Usa el checkpoint Multilingual V3
+# (entrenado en 23 idiomas incluido español, no el checkpoint base en
+# inglés) — mismo paquete, sin instalar nada aparte. Autoregresivo:
+# prosodia natural, a cambio de poder perder palabras ocasionalmente en
+# textos largos — de ahí la verificación con faster-whisper (ver más
+# abajo) con reintentos. Descarga sus pesos solo (~2GB) de HuggingFace la
+# primera vez que se usa.
+chatterbox-tts==0.1.7
+torch>=2.6.0
+torchaudio>=2.6.0
+
+# ─────────────────────────────────────────────
+# Edge TTS — NO es un motor seleccionable, se usa internamente UNA SOLA VEZ
+# por voz para generar los clips de referencia que Chatterbox clona
+# (biblioteca de acentos en voices/). Sin esto, la primera vez que uses
+# cada voz fallará con un mensaje pidiéndote que la instales.
+# ─────────────────────────────────────────────
+edge-tts>=6.1.0
+
+# ─────────────────────────────────────────────
+# faster-whisper — doble uso: sincroniza los subtítulos del video (pestaña
+# 🎬 Video) Y verifica que el audio generado por Chatterbox diga lo que se
+# le pidió (reintenta si detecta palabras perdidas). mutagen lee la
+# duración del audio sin depender de ffmpeg. El render del video en sí lo
+# hace Remotion (Node.js), no Python — ver video/README.md.
+# ─────────────────────────────────────────────
+faster-whisper>=1.0.0
+mutagen>=1.47.0
+
+# Ordenamiento automático de imágenes por nombre/fecha EXIF en la pestaña Video
+pillow>=10.0.0
+
+# Opcional: lee la duración real de los clips de video subidos en la
+# pestaña Video (si no está instalado, se asume ~5s por clip, que es lo
+# que el proyecto espera de todos modos)
+opencv-python-headless>=4.8.0
+
+# ─────────────────────────────────────────────
+# Publicar el video en Facebook (inmediato o programado) — ver .env.example
+# ─────────────────────────────────────────────
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# ─────────────────────────────────────────────
+# Publicar el video en YouTube — requiere login OAuth (ver youtube_publisher.py
+# para las instrucciones de Google Cloud Console y youtube_client_secret.json)
+# ─────────────────────────────────────────────
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.2.0

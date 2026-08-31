@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.env
+youtube_client_secret.json
+youtube_token.json
+facebook_publish_state.json
+models/
+voices/
+output/
+video/node_modules/
+video/out/
+*.log

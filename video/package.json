@@ -1,0 +1,26 @@
+{
+  "name": "historias-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Genera automáticamente videos de historias para dormir (imágenes + audio + subtítulos)",
+  "scripts": {
+    "start": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts StoryVideo out/video.mp4",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.506",
+    "@remotion/fonts": "4.0.506",
+    "@remotion/google-fonts": "4.0.506",
+    "@remotion/transitions": "4.0.506",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.506",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.3",
+    "typescript": "^5.5.4"
+  }
+}
