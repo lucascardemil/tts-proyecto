@@ -13,7 +13,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -26,6 +26,26 @@ MAX_SCHEDULE_SECONDS = 75 * 24 * 60 * 60  # y como máximo 75 días
 
 POST_SPACING_SECONDS = 60 * 60  # separación mínima que mantenemos entre publicaciones
 _STATE_PATH = Path(__file__).parent / "facebook_publish_state.json"
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # segundos: 2, 4, 8...
+
+
+def _post_with_retry(url: str, max_retries: int = MAX_RETRIES, **kwargs):
+    """POST con reintentos ante error de red o HTTP 5xx (transitorios)."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, **kwargs)
+        except requests.RequestException as e:
+            last_exc = e
+        else:
+            if response.status_code < 500:
+                return response
+            last_exc = requests.RequestException(f"HTTP {response.status_code}")
+        if attempt < max_retries - 1:
+            time.sleep(RETRY_BACKOFF_BASE ** attempt)
+    raise last_exc
 
 
 def _load_next_slot() -> Optional[float]:
@@ -68,6 +88,45 @@ def _decide_publish_time() -> tuple[Optional[datetime], float]:
     return datetime.fromtimestamp(next_slot), next_slot
 
 
+def get_video_stats(video_ids: list) -> dict:
+    """
+    Consulta vistas/likes/comentarios de videos ya publicados (Graph API).
+
+    Args:
+        video_ids: lista de IDs de video de Facebook.
+
+    Returns:
+        dict {video_id: {"views": int, "likes": int, "comments": int}}. Si no
+        hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
+    """
+    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
+    if not access_token or not video_ids:
+        return {}
+
+    stats = {}
+    for video_id in video_ids:
+        try:
+            response = requests.get(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/{video_id}",
+                params={
+                    "fields": "views,likes.summary(true),comments.summary(true)",
+                    "access_token": access_token,
+                },
+                timeout=30,
+            )
+            payload = response.json()
+            if not response.ok or "error" in payload:
+                continue
+            stats[video_id] = {
+                "views": int(payload.get("views", 0) or 0),
+                "likes": int(payload.get("likes", {}).get("summary", {}).get("total_count", 0)),
+                "comments": int(payload.get("comments", {}).get("summary", {}).get("total_count", 0)),
+            }
+        except Exception:
+            continue
+    return stats
+
+
 def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     """
     Interpreta una respuesta de la Graph API. Devuelve (payload, None) si
@@ -91,7 +150,7 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     return payload, None
 
 
-def publish_video(video_path: str, title: str, description: str) -> dict:
+def publish_video(video_path: str, title: str, description: str, on_status: Optional[Callable[[str], None]] = None) -> dict:
     """
     Sube un video a la Página de Facebook configurada. Decide sola cuándo
     debe salir la publicación para mantener al menos 1 hora de separación
@@ -136,11 +195,13 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
 
     url = VIDEO_UPLOAD_URL.format(page_id=page_id)
     file_size = path.stat().st_size
+    notify = on_status or (lambda msg: None)
 
     # Fase 1: "start" — Facebook abre la sesión y decide el tamaño del
     # primer fragmento (end_offset - start_offset).
+    notify("Iniciando subida a Facebook...")
     try:
-        start_response = requests.post(
+        start_response = _post_with_retry(
             url,
             data={"access_token": access_token, "upload_phase": "start", "file_size": file_size},
             timeout=60,
@@ -164,7 +225,9 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
             while start_offset < end_offset:
                 f.seek(start_offset)
                 chunk = f.read(end_offset - start_offset)
-                transfer_response = requests.post(
+                pct = int(start_offset / file_size * 100) if file_size else 0
+                notify(f"Subiendo video a Facebook... {pct}%")
+                transfer_response = _post_with_retry(
                     url,
                     data={
                         "access_token": access_token,
@@ -184,8 +247,9 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
         return {"ok": False, "error": f"Error subiendo el video a Facebook: {e}"}
 
     # Fase 3: "finish" — cierra la sesión y publica (o programa) el video.
+    notify("Finalizando publicación en Facebook...")
     try:
-        finish_response = requests.post(
+        finish_response = _post_with_retry(
             url,
             data={
                 "access_token": access_token,

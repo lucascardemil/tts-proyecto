@@ -175,6 +175,53 @@ def _build_kenburns_sequence(n_images: int) -> list:
     return [KEN_BURNS_PATTERN[i % len(KEN_BURNS_PATTERN)] for i in range(n_images)]
 
 
+PAUSE_GAP_THRESHOLD = 0.15  # segundos de silencio entre palabras para considerarlo una pausa
+PAUSE_SNAP_WINDOW = 0.6  # cuánto se puede mover un corte para alinearlo a una pausa cercana
+
+
+def _find_pause_midpoints(words: list) -> list:
+    """
+    Puntos medios (segundos) de los silencios entre palabras consecutivas,
+    ordenados por tamaño de pausa descendente (las pausas más grandes suelen
+    marcar fin de oración/idea, así que se priorizan al ajustar cortes).
+    """
+    pauses = []
+    for a, b in zip(words, words[1:]):
+        gap = b["start"] - a["end"]
+        if gap >= PAUSE_GAP_THRESHOLD:
+            pauses.append((gap, (a["end"] + b["start"]) / 2))
+    pauses.sort(key=lambda p: -p[0])
+    return [t for _, t in pauses]
+
+
+def _snap_cuts_to_pauses(cut_times: list, words: list) -> list:
+    """
+    Ajusta cada tiempo de corte (excepto el último, que es el final del audio)
+    al punto medio de la pausa de habla más cercana dentro de PAUSE_SNAP_WINDOW,
+    para que el cambio de imagen no caiga a mitad de una palabra/frase. Cada
+    pausa se usa como mucho una vez. Sin pausa cercana disponible, se deja el
+    corte tal como estaba (reparto equitativo, comportamiento actual).
+    """
+    if not words or len(cut_times) <= 1:
+        return cut_times
+
+    available = _find_pause_midpoints(words)
+    used = set()
+    snapped = list(cut_times)
+    for i in range(len(cut_times) - 1):  # el último corte es el final del audio, no se mueve
+        best_idx, best_dist = None, PAUSE_SNAP_WINDOW
+        for j, pause_t in enumerate(available):
+            if j in used:
+                continue
+            dist = abs(pause_t - cut_times[i])
+            if dist <= best_dist:
+                best_idx, best_dist = j, dist
+        if best_idx is not None:
+            snapped[i] = available[best_idx]
+            used.add(best_idx)
+    return snapped
+
+
 def _build_timeline(
     scenes: list,
     audio_name: str,
@@ -221,12 +268,34 @@ def _build_timeline(
     per_image = max(MIN_IMAGE_SECONDS, remaining / n_images) if n_images else 0.0
     target = [per_image if t is None else t for t in target]
 
+    # Puntos de corte entre dos imágenes consecutivas: se ajustan a la pausa
+    # de habla más cercana para que el cambio de imagen no caiga a mitad de
+    # una palabra. Los cortes que tocan un clip de video no se mueven, porque
+    # su duración es fija (la del archivo). Ver PAUSE_GAP_THRESHOLD/PAUSE_SNAP_WINDOW.
+    boundaries = [0.0]
+    for dur in target:
+        boundaries.append(boundaries[-1] + dur)
+    boundaries[-1] = extended_duration
+
+    adjustable_idx = [i for i in range(1, n) if scenes[i - 1]["type"] == "image" and scenes[i]["type"] == "image"]
+    if adjustable_idx and words:
+        cut_times = [boundaries[i] for i in adjustable_idx]
+        snapped = _snap_cuts_to_pauses(cut_times, words)
+        for idx, new_t in zip(adjustable_idx, snapped):
+            boundaries[idx] = new_t
+        # Un corte ajustado no puede cruzarse con sus vecinos (mantener orden temporal)
+        # ni dejar una escena más corta que TRANSITION_FRAMES: TransitionSeries exige que
+        # cada Sequence dure al menos lo que la Transition que le sigue, o Remotion falla.
+        min_gap = (TRANSITION_FRAMES + 1) / FPS
+        for i in range(1, len(boundaries) - 1):
+            boundaries[i] = max(boundaries[i - 1] + min_gap, min(boundaries[i], boundaries[i + 1] - min_gap))
+
     directions = _build_kenburns_sequence(n)
 
     clips = []
     t = 0.0
     for i, (sc, dur) in enumerate(zip(scenes, target)):
-        end_t = extended_duration if i == n - 1 else min(t + dur, extended_duration)
+        end_t = extended_duration if i == n - 1 else min(boundaries[i + 1], extended_duration)
         start_frame = round(t * FPS)
         end_frame = max(round(end_t * FPS), start_frame + 1)
 
@@ -450,10 +519,16 @@ def build_props(
 def render_props(
     props_path,
     output_name: Optional[str] = None,
+    orientation: str = "vertical",
     on_progress=None,
 ) -> Optional[str]:
     """
     Renderiza con Remotion un props.json ya armado (por build_props()).
+
+    Args:
+        orientation: "vertical" (1080x1920, Reels/Shorts/TikTok) u
+            "horizontal" (1920x1080, YouTube estándar) — selecciona la
+            composición de Remotion a usar (ver video/src/Root.tsx).
 
     Returns:
         Ruta al .mp4 generado, o None si hubo error.
@@ -467,9 +542,10 @@ def render_props(
         output_name = f"video_{int(time.time())}.mp4"
     output_path = VIDEO_OUT_DIR / output_name
 
+    composition_id = "StoryVideoHorizontal" if orientation == "horizontal" else "StoryVideo"
     report("🎬 Renderizando video con Remotion (puede tardar varios minutos)...")
     cmd = [
-        "npx", "remotion", "render", "src/index.ts", "StoryVideo",
+        "npx", "remotion", "render", "src/index.ts", composition_id,
         str(output_path), f"--props={props_path}",
     ]
     try:
@@ -504,6 +580,7 @@ def generate_video(
     language: str = "es",
     subtitles_enabled: bool = True,
     subtitle_style: Optional[dict] = None,
+    orientation: str = "vertical",
     on_progress=None,
 ) -> Optional[str]:
     """
@@ -522,7 +599,9 @@ def generate_video(
     )
     if timeline is None:
         return None
-    return render_props(VIDEO_DIR / "props.json", output_name=output_name, on_progress=on_progress)
+    return render_props(
+        VIDEO_DIR / "props.json", output_name=output_name, orientation=orientation, on_progress=on_progress
+    )
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ API, así que el marcado como IA solo aplica del lado de Instagram.
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -31,6 +31,26 @@ RUPLOAD_URL = f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSION}"
 
 STATUS_POLL_SECONDS = 5
 STATUS_MAX_WAIT_SECONDS = 600
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # segundos: 2, 4, 8...
+
+
+def _request_with_retry(method: str, url: str, max_retries: int = MAX_RETRIES, **kwargs):
+    """GET/POST con reintentos ante error de red o HTTP 5xx (transitorios)."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.request(method, url, **kwargs)
+        except requests.RequestException as e:
+            last_exc = e
+        else:
+            if response.status_code < 500:
+                return response
+            last_exc = requests.RequestException(f"HTTP {response.status_code}")
+        if attempt < max_retries - 1:
+            time.sleep(RETRY_BACKOFF_BASE ** attempt)
+    raise last_exc
 
 
 def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
@@ -47,9 +67,49 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     return payload, None
 
 
+def get_media_stats(media_ids: list) -> dict:
+    """
+    Consulta reproducciones/likes/comentarios de reels ya publicados (Graph API).
+
+    Args:
+        media_ids: lista de IDs de media de Instagram.
+
+    Returns:
+        dict {media_id: {"views": int, "likes": int, "comments": int}}. Si no
+        hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
+    """
+    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
+    if not access_token or not media_ids:
+        return {}
+
+    stats = {}
+    for media_id in media_ids:
+        try:
+            response = requests.get(
+                f"{GRAPH_URL}/{media_id}",
+                params={
+                    "fields": "plays,like_count,comments_count",
+                    "access_token": access_token,
+                },
+                timeout=30,
+            )
+            payload = response.json()
+            if not response.ok or "error" in payload:
+                continue
+            stats[media_id] = {
+                "views": int(payload.get("plays", 0) or 0),
+                "likes": int(payload.get("like_count", 0) or 0),
+                "comments": int(payload.get("comments_count", 0) or 0),
+            }
+        except Exception:
+            continue
+    return stats
+
+
 def _get_ig_user_id(page_id: str, access_token: str) -> tuple[Optional[str], Optional[dict]]:
     try:
-        response = requests.get(
+        response = _request_with_retry(
+            "GET",
             f"{GRAPH_URL}/{page_id}",
             params={"fields": "instagram_business_account", "access_token": access_token},
             timeout=30,
@@ -71,7 +131,7 @@ def _get_ig_user_id(page_id: str, access_token: str) -> tuple[Optional[str], Opt
     return ig_account["id"], None
 
 
-def publish_video(video_path: str, title: str, description: str) -> dict:
+def publish_video(video_path: str, title: str, description: str, on_status: Optional[Callable[[str], None]] = None) -> dict:
     """
     Sube un video como Reel a la cuenta de Instagram vinculada a la Página
     de Facebook configurada, marcado como contenido generado con IA.
@@ -89,14 +149,18 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
     if not path.exists():
         return {"ok": False, "error": f"No se encontró el video: {video_path}"}
 
+    notify = on_status or (lambda msg: None)
+
     ig_user_id, err = _get_ig_user_id(page_id, access_token)
     if err:
         return err
 
     # Fase 1: crear el container en modo resumable (sin video_url — el
     # archivo se sube en la fase 2, directo desde acá).
+    notify("Creando publicación en Instagram...")
     try:
-        container_response = requests.post(
+        container_response = _request_with_retry(
+            "POST",
             f"{GRAPH_URL}/{ig_user_id}/media",
             params={"access_token": access_token},
             json={
@@ -117,23 +181,34 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
     container_id = container_payload["id"]
 
     # Fase 2: subir el archivo entero a rupload.facebook.com (streaming, sin
-    # cargarlo entero en memoria).
+    # cargarlo entero en memoria). Reintenta desde el principio del archivo
+    # ante error de red (el upload no es incremental como en Facebook).
+    notify("Subiendo video a Instagram...")
     file_size = path.stat().st_size
-    try:
-        with open(path, "rb") as f:
-            upload_response = requests.post(
-                f"{RUPLOAD_URL}/{container_id}",
-                headers={
-                    "Authorization": f"OAuth {access_token}",
-                    "Content-Type": "video/mp4",
-                    "offset": "0",
-                    "file_size": str(file_size),
-                },
-                data=f,
-                timeout=300,
-            )
-    except requests.RequestException as e:
-        return {"ok": False, "error": f"Error subiendo el video a Instagram: {e}"}
+    last_exc = None
+    upload_response = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            with open(path, "rb") as f:
+                upload_response = requests.post(
+                    f"{RUPLOAD_URL}/{container_id}",
+                    headers={
+                        "Authorization": f"OAuth {access_token}",
+                        "Content-Type": "video/mp4",
+                        "offset": "0",
+                        "file_size": str(file_size),
+                    },
+                    data=f,
+                    timeout=300,
+                )
+            break
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                notify(f"Reintentando subida a Instagram ({attempt + 2}/{MAX_RETRIES})...")
+                time.sleep(RETRY_BACKOFF_BASE ** attempt)
+    else:
+        return {"ok": False, "error": f"Error subiendo el video a Instagram: {last_exc}"}
 
     # Nota: Instagram suele responder 400 "ProcessingFailedError" acá aunque
     # el archivo se haya recibido bien y termine procesando OK — la única
@@ -141,6 +216,7 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
     # el código HTTP de esta subida. Por eso no se corta acá aunque falle.
 
     # Fase 3: esperar a que Instagram termine de procesar el video.
+    notify("Esperando que Instagram procese el video (puede tardar varios minutos)...")
     deadline = time.time() + STATUS_MAX_WAIT_SECONDS
     was_rate_limited = False
     while time.time() < deadline:
@@ -178,8 +254,10 @@ def publish_video(video_path: str, title: str, description: str) -> dict:
         return {"ok": False, "error": "Instagram tardó demasiado en procesar el video."}
 
     # Fase 4: publicar el container ya procesado.
+    notify("Publicando en Instagram...")
     try:
-        publish_response = requests.post(
+        publish_response = _request_with_retry(
+            "POST",
             f"{GRAPH_URL}/{ig_user_id}/media_publish",
             params={"access_token": access_token},
             json={"creation_id": container_id},

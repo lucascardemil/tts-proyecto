@@ -13,8 +13,9 @@ igual que el .env de Facebook.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,6 +23,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+# youtube.upload también autoriza thumbnails().set() y el scope de lectura de
+# videos.list(), así que no hace falta pedir un permiso adicional.
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 CLIENT_SECRET_PATH = Path(__file__).parent / "youtube_client_secret.json"
 TOKEN_PATH = Path(__file__).parent / "youtube_token.json"
@@ -36,7 +39,12 @@ def _load_credentials() -> Optional[Credentials]:
         return None
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError:
+            # El usuario revocó el acceso o el token venció del todo: hay que
+            # reconectar de nuevo, no hay nada más que hacer con este token.
+            return None
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     return creds
 
@@ -70,6 +78,7 @@ def publish_video(
     privacy_status: str = "public",
     tags: Optional[list] = None,
     is_ai_generated: bool = False,
+    on_status: Optional[Callable[[str], None]] = None,
 ) -> dict:
     """
     Sube un video al canal de YouTube conectado.
@@ -94,6 +103,7 @@ def publish_video(
     if not path.exists():
         return {"ok": False, "error": f"No se encontró el video: {video_path}"}
 
+    notify = on_status or (lambda msg: None)
     try:
         youtube = build("youtube", "v3", credentials=creds)
         body = {
@@ -106,12 +116,73 @@ def publish_video(
         media = MediaFileUpload(str(path), chunksize=-1, resumable=True, mimetype="video/mp4")
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
+        notify("Subiendo video a YouTube...")
         response = None
         while response is None:
-            _, response = request.next_chunk()
+            # num_retries: reintenta con backoff exponencial ante error de
+            # red o HTTP 5xx transitorio, sin reempezar el fragmento desde cero.
+            status, response = request.next_chunk(num_retries=3)
+            if status:
+                notify(f"Subiendo video a YouTube... {int(status.progress() * 100)}%")
 
         return {"ok": True, "video_id": response["id"]}
     except HttpError as e:
         return {"ok": False, "error": f"Error de YouTube: {e}"}
     except Exception as e:
         return {"ok": False, "error": f"Error subiendo a YouTube: {e}"}
+
+
+def set_thumbnail(video_id: str, thumbnail_path: str) -> dict:
+    """Sube una miniatura personalizada (.jpg, hasta 2MB) para un video ya publicado."""
+    creds = _load_credentials()
+    if creds is None:
+        return {"ok": False, "error": "Todavía no conectaste tu cuenta de YouTube."}
+
+    path = Path(thumbnail_path)
+    if not path.exists():
+        return {"ok": False, "error": f"No se encontró la miniatura: {thumbnail_path}"}
+
+    try:
+        youtube = build("youtube", "v3", credentials=creds)
+        media = MediaFileUpload(str(path), mimetype="image/jpeg")
+        youtube.thumbnails().set(videoId=video_id, media_body=media).execute()
+        return {"ok": True}
+    except HttpError as e:
+        return {"ok": False, "error": f"Error de YouTube: {e}"}
+    except Exception as e:
+        return {"ok": False, "error": f"Error subiendo la miniatura: {e}"}
+
+
+def get_video_stats(video_ids: list) -> dict:
+    """
+    Consulta vistas/likes/comentarios de videos ya publicados (YouTube Data API v3).
+
+    Args:
+        video_ids: lista de IDs de video (hasta 50 por límite de la API).
+
+    Returns:
+        dict {video_id: {"views": int, "likes": int, "comments": int}}. Si no
+        hay conexión o falla la consulta, devuelve {} (sin cortar el flujo).
+    """
+    if not video_ids:
+        return {}
+
+    try:
+        creds = _load_credentials()
+        if creds is None:
+            return {}
+        youtube = build("youtube", "v3", credentials=creds)
+        stats = {}
+        for i in range(0, len(video_ids), 50):
+            batch = video_ids[i:i + 50]
+            response = youtube.videos().list(part="statistics", id=",".join(batch)).execute()
+            for item in response.get("items", []):
+                s = item.get("statistics", {})
+                stats[item["id"]] = {
+                    "views": int(s.get("viewCount", 0)),
+                    "likes": int(s.get("likeCount", 0)),
+                    "comments": int(s.get("commentCount", 0)),
+                }
+        return stats
+    except Exception:
+        return {}

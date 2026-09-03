@@ -11,6 +11,7 @@ import sys
 import time
 import uuid
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -20,6 +21,10 @@ import video_maker
 import facebook_publisher
 import instagram_publisher
 import youtube_publisher
+import feedback_analyzer
+import job_store
+import seo_optimizer
+import thumbnail_maker
 from tts_engine import (
     text_to_speech_long,
     VOICE_LIBRARY,
@@ -282,6 +287,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="tabs">
     <button class="tab-btn active" id="tab-btn-audio" data-tab="audio">🔊 Audio</button>
     <button class="tab-btn" id="tab-btn-video" data-tab="video">🎬 Video</button>
+    <button class="tab-btn" id="tab-btn-analytics" data-tab="analytics">📊 Analítica</button>
   </div>
 
   <div id="tab-audio">
@@ -350,13 +356,6 @@ HTML = r"""<!DOCTYPE html>
   <div id="tab-video" style="display:none">
 
     <div class="card">
-      <h2>📝 Historia</h2>
-      <input type="text" id="video-title" placeholder="Ej: El viejo perro que esperaba cada noche junto al faro"
-             style="margin-bottom:.3rem">
-      <small style="color:var(--muted)">Título de la historia — aparece en la tarjeta inicial del video</small>
-    </div>
-
-    <div class="card">
       <h2>🖼️ Imágenes y clips de video</h2>
       <p style="color:var(--muted);font-size:.85rem;margin-bottom:.8rem">
         Podés mezclar fotos y clips de video cortos (~5s cada uno) — los clips se reproducen
@@ -387,6 +386,14 @@ HTML = r"""<!DOCTYPE html>
                  style="width:100%;padding:.5rem;border-radius:10px;border:1px solid var(--border);background:var(--surface2)">
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>📐 Formato del video</h2>
+      <select id="video-orientation">
+        <option value="vertical">Vertical 9:16 (Reels / Shorts / TikTok)</option>
+        <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
+      </select>
     </div>
 
     <div class="card">
@@ -466,17 +473,36 @@ HTML = r"""<!DOCTYPE html>
         <h2>📤 Publicar</h2>
         <div class="player-actions" style="justify-content:flex-start;gap:1.2rem">
           <label><input type="checkbox" id="pub-fb" checked> 📘 Facebook</label>
+          <label><input type="checkbox" id="pub-ig" checked> 📸 Instagram</label>
           <label><input type="checkbox" id="pub-yt"> ▶️ YouTube</label>
         </div>
 
-        <label style="margin-top:.8rem">Descripción</label>
-        <textarea id="pub-description" rows="3" placeholder="Descripción del video..."></textarea>
-
-        <div id="pub-fb-extra" style="margin-top:.6rem">
+        <div id="pub-fb-extra" style="margin-top:.8rem">
+          <label>Descripción (Facebook)</label>
+          <textarea id="pub-fb-description" rows="3" placeholder="Descripción del video..."></textarea>
+          <div class="player-actions" style="margin-top:.4rem;justify-content:flex-start;gap:.6rem">
+            <button class="btn-sm" type="button" id="fb-caption-btn">✨ Sugerir caption (Facebook)</button>
+          </div>
+          <div id="fb-caption-status" style="margin-top:.3rem"></div>
+          <label style="margin-top:.6rem"><input type="checkbox" id="fb-auto-time" style="width:auto" checked> ⏰ Publicar en el mejor horario detectado</label>
+          <div id="fb-best-time-hint" style="color:var(--muted);font-size:.8rem;margin-top:.2rem"></div>
           <p style="color:var(--muted);font-size:.8rem">
             Se publica al toque, salvo que hayas publicado hace menos de 1 hora — en ese caso se programa
             automáticamente para completar esa hora, sin que tengas que elegir horario.
-            También se publica como Reel en tu cuenta de Instagram vinculada, marcado como contenido generado con IA.
+          </p>
+        </div>
+
+        <div id="pub-ig-extra" style="margin-top:.6rem">
+          <label>Descripción (Instagram)</label>
+          <textarea id="pub-ig-description" rows="3" placeholder="Descripción del video..."></textarea>
+          <div class="player-actions" style="margin-top:.4rem;justify-content:flex-start;gap:.6rem">
+            <button class="btn-sm" type="button" id="ig-caption-btn">✨ Sugerir caption (Instagram)</button>
+          </div>
+          <div id="ig-caption-status" style="margin-top:.3rem"></div>
+          <label style="margin-top:.6rem"><input type="checkbox" id="ig-auto-time" style="width:auto" checked> ⏰ Publicar en el mejor horario detectado</label>
+          <div id="ig-best-time-hint" style="color:var(--muted);font-size:.8rem;margin-top:.2rem"></div>
+          <p style="color:var(--muted);font-size:.8rem">
+            Se publica como Reel en tu cuenta de Instagram vinculada, marcado como contenido generado con IA.
           </p>
         </div>
 
@@ -488,9 +514,21 @@ HTML = r"""<!DOCTYPE html>
           </div>
           <div id="yt-privacy-wrap" style="display:none">
             <label>Título en YouTube</label>
-            <input type="text" id="yt-title" placeholder="Si lo dejás vacío, se usa el título de la historia">
+            <input type="text" id="yt-title" placeholder="Título del video en YouTube">
+            <label style="margin-top:.6rem">Descripción (YouTube)</label>
+            <textarea id="pub-yt-description" rows="3" placeholder="Descripción del video..."></textarea>
             <label style="margin-top:.6rem">Etiquetas</label>
             <input type="text" id="yt-tags" placeholder="Etiquetas separadas por coma">
+            <div class="player-actions" style="margin-top:.6rem;justify-content:flex-start;gap:.6rem">
+              <button class="btn-sm" type="button" id="yt-seo-btn">✨ Sugerir SEO</button>
+              <button class="btn-sm" type="button" id="yt-thumb-btn">🖼️ Generar miniatura</button>
+              <button class="btn-sm" type="button" id="yt-thumb-variants-btn">🅰️🅱️ Generar variantes</button>
+            </div>
+            <div id="yt-seo-status" style="margin-top:.3rem"></div>
+            <div id="yt-thumb-preview" style="display:none;margin-top:.5rem">
+              <img id="yt-thumb-img" style="max-width:220px;border-radius:8px;display:block" alt="Miniatura generada">
+            </div>
+            <div id="yt-thumb-variants" style="display:none;margin-top:.5rem;gap:.6rem;flex-wrap:wrap" class="player-actions"></div>
             <label style="margin-top:.6rem"><input type="checkbox" id="yt-is-ai" style="width:auto" checked> Marcar como contenido generado con IA</label>
             <label style="margin-top:.6rem">Privacidad en YouTube</label>
             <select id="yt-privacy">
@@ -501,10 +539,22 @@ HTML = r"""<!DOCTYPE html>
           </div>
         </div>
 
+        <div style="margin-top:.8rem">
+          <label><input type="checkbox" id="pub-schedule" style="width:auto"> 🕒 Programar publicación</label>
+          <div id="pub-schedule-wrap" style="display:none;margin-top:.4rem">
+            <input type="datetime-local" id="pub-schedule-time">
+            <p style="color:var(--muted);font-size:.8rem;margin-top:.3rem">
+              Se aplica a Facebook, Instagram y YouTube que estén tildados. Facebook puede además
+              retrasarla un poco más si publicaste hace menos de una hora.
+            </p>
+          </div>
+        </div>
+
         <div class="player-actions" style="margin-top:.8rem">
           <button class="btn btn-primary" id="publish-btn">📤 Publicar</button>
         </div>
         <div id="fb-status"></div>
+        <div id="ig-status"></div>
         <div id="yt-status"></div>
       </div>
     </div>
@@ -521,6 +571,42 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
   </div> <!-- /tab-video -->
+
+  <div id="tab-analytics" style="display:none">
+
+    <div class="card">
+      <h2>📘 Analítica de Facebook</h2>
+      <div class="player-actions" style="justify-content:flex-start">
+        <button class="btn-sm" id="fb-analytics-refresh-btn">🔄 Actualizar</button>
+      </div>
+      <div id="fb-analytics-table" style="margin-top:.6rem;font-size:.85rem"></div>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>📊 Analítica de YouTube</h2>
+      <div class="player-actions" style="justify-content:flex-start">
+        <button class="btn-sm" id="yt-analytics-refresh-btn">🔄 Actualizar</button>
+      </div>
+      <div id="yt-analytics-table" style="margin-top:.6rem;font-size:.85rem"></div>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>📸 Analítica de Instagram</h2>
+      <div class="player-actions" style="justify-content:flex-start">
+        <button class="btn-sm" id="ig-analytics-refresh-btn">🔄 Actualizar</button>
+      </div>
+      <div id="ig-analytics-table" style="margin-top:.6rem;font-size:.85rem"></div>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>💡 Qué funcionó mejor</h2>
+      <div class="player-actions" style="justify-content:flex-start">
+        <button class="btn-sm" id="feedback-analytics-refresh-btn">🔄 Actualizar</button>
+      </div>
+      <div id="feedback-analytics-result" style="margin-top:.6rem;font-size:.85rem"></div>
+    </div>
+
+  </div> <!-- /tab-analytics -->
 
   <footer>
     Chatterbox (MIT) · Remotion · 100% gratuito y open-source
@@ -542,10 +628,17 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     const tab = btn.dataset.tab;
     $("tab-audio").style.display = tab === "audio" ? "" : "none";
     $("tab-video").style.display = tab === "video" ? "" : "none";
+    $("tab-analytics").style.display = tab === "analytics" ? "" : "none";
     if (tab === "video") {
       loadAudioOptions();
       loadExistingVideos();
       checkYoutubeConnection();
+    }
+    if (tab === "analytics") {
+      loadFacebookAnalytics();
+      loadYoutubeAnalytics();
+      loadInstagramAnalytics();
+      loadAnalyticsFeedback();
     }
   });
 });
@@ -780,7 +873,9 @@ function showGeneratedVideo(filename, title) {
   currentVideoPath = filename;
   $("video-player").src = "/video/" + filename;
   $("video-player-wrap").style.display = "block";
-  $("pub-description").value = title || "";
+  $("pub-fb-description").value = title || "";
+  $("pub-ig-description").value = title || "";
+  $("pub-yt-description").value = title || "";
   $("fb-status").innerHTML = "";
   $("yt-status").innerHTML = "";
   $("video-drive-status").innerHTML = "";
@@ -873,7 +968,7 @@ renderSubtitlePreview();
 $("video-existing-select").addEventListener("change", () => {
   const filename = $("video-existing-select").value;
   if (!filename) return;
-  showGeneratedVideo(filename, $("video-title").value.trim());
+  showGeneratedVideo(filename, "");
 });
 
 function showVideoStatus(type, msg) {
@@ -882,8 +977,15 @@ function showVideoStatus(type, msg) {
   el.innerHTML = type === "loading" ? `<div class="spinner"></div><span>${msg}</span>` : `<span>${msg}</span>`;
 }
 
+$("video-orientation").addEventListener("change", () => {
+  const horizontal = $("video-orientation").value === "horizontal";
+  const preview = $("video-subtitle-preview");
+  preview.style.aspectRatio = horizontal ? "16/9" : "9/16";
+  preview.style.maxWidth = horizontal ? "340px" : "220px";
+});
+
 $("video-generate-btn").addEventListener("click", async () => {
-  const title = $("video-title").value.trim();
+  const title = "";
   const audioFile = $("video-audio-upload").files[0];
   const audioChoice = $("video-audio-select").value;
 
@@ -897,6 +999,7 @@ $("video-generate-btn").addEventListener("click", async () => {
 
   const formData = new FormData();
   formData.append("title", title);
+  formData.append("orientation", $("video-orientation").value);
   selectedImages.forEach(file => formData.append("images", file));
   if (audioFile) { formData.append("audio_file", audioFile); } else { formData.append("audio_choice", audioChoice); }
 
@@ -994,38 +1097,100 @@ $("video-save-drive-btn").addEventListener("click", async () => {
 // ── Selector de destinos de publicación ──
 function updatePublishExtras() {
   $("pub-fb-extra").style.display = $("pub-fb").checked ? "block" : "none";
+  $("pub-ig-extra").style.display = $("pub-ig").checked ? "block" : "none";
   $("pub-yt-extra").style.display = $("pub-yt").checked ? "block" : "none";
   $("fb-status").style.display = $("pub-fb").checked ? "block" : "none";
+  $("ig-status").style.display = $("pub-ig").checked ? "block" : "none";
   $("yt-status").style.display = $("pub-yt").checked ? "block" : "none";
 }
 $("pub-fb").addEventListener("change", updatePublishExtras);
+$("pub-ig").addEventListener("change", updatePublishExtras);
 $("pub-yt").addEventListener("change", () => { updatePublishExtras(); checkYoutubeConnection(); });
 updatePublishExtras();
+
+$("pub-schedule").addEventListener("change", () => {
+  $("pub-schedule-wrap").style.display = $("pub-schedule").checked ? "block" : "none";
+});
+
+$("fb-auto-time").addEventListener("change", () => {
+  if ($("fb-auto-time").checked) loadBestTimeHint("fb-best-time-hint", "/api/facebook/best-time");
+  else $("fb-best-time-hint").textContent = "";
+});
+$("ig-auto-time").addEventListener("change", () => {
+  if ($("ig-auto-time").checked) loadBestTimeHint("ig-best-time-hint", "/api/instagram/best-time");
+  else $("ig-best-time-hint").textContent = "";
+});
+if ($("fb-auto-time").checked) loadBestTimeHint("fb-best-time-hint", "/api/facebook/best-time");
+if ($("ig-auto-time").checked) loadBestTimeHint("ig-best-time-hint", "/api/instagram/best-time");
+
+function getScheduledTimeIso() {
+  if (!$("pub-schedule").checked) return null;
+  const val = $("pub-schedule-time").value;
+  return val || null;
+}
+
+function _nextDatetimeLocalAtHour(hour) {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
+}
+
+async function _fetchBestTime(url) {
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok || data.insufficient_data) return null;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function loadBestTimeHint(hintId, url) {
+  const el = $(hintId);
+  el.textContent = "Analizando publicaciones anteriores...";
+  const data = await _fetchBestTime(url);
+  if (!data) {
+    el.textContent = "Todavía no hay suficientes datos — se publica ahora.";
+    return;
+  }
+  el.textContent = `Mejor franja detectada: ${data.best_daypart} (muestra: ${data.sample_size} publicaciones).`;
+}
+
+async function getAutoOrScheduledTimeIso(autoCheckboxId, bestTimeUrl) {
+  if ($(autoCheckboxId).checked) {
+    const data = await _fetchBestTime(bestTimeUrl);
+    return data ? _nextDatetimeLocalAtHour(data.best_hour) : null;
+  }
+  return getScheduledTimeIso();
+}
 
 function showFbStatus(type, msg) {
   const el = $("fb-status");
   el.className = type;
-  el.innerHTML = type === "loading" ? `<div class="spinner"></div><span>${msg}</span>` : `<span>${msg}</span>`;
+  if (type === "loading") {
+    el.innerHTML = `<div class="spinner"></div><span>${msg}</span>`;
+  } else if (type === "error") {
+    el.innerHTML = `<span>${msg}</span> <button class="btn-sm" id="fb-retry-btn">🔄 Reintentar</button>`;
+    $("fb-retry-btn").addEventListener("click", () => publishToFacebook());
+  } else {
+    el.innerHTML = `<span>${msg}</span>`;
+  }
 }
 
-function buildFbCombinedMsg(data) {
-  const parts = [];
-  if (data.status === "done") {
-    if (data.scheduled_time) {
-      const when = new Date(data.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      parts.push(`🕒 Facebook programado para las ${when} (para no publicar dos veces seguidas)`);
-    } else {
-      parts.push(`✅ Facebook (id: ${data.video_id})`);
-    }
+function showIgStatus(type, msg) {
+  const el = $("ig-status");
+  el.className = type;
+  if (type === "loading") {
+    el.innerHTML = `<div class="spinner"></div><span>${msg}</span>`;
+  } else if (type === "error") {
+    el.innerHTML = `<span>${msg}</span> <button class="btn-sm" id="ig-retry-btn">🔄 Reintentar</button>`;
+    $("ig-retry-btn").addEventListener("click", () => publishToInstagram());
   } else {
-    parts.push("❌ Facebook: " + data.error);
+    el.innerHTML = `<span>${msg}</span>`;
   }
-  if (data.ig_ok) {
-    parts.push(`✅ Instagram (id: ${data.ig_media_id})`);
-  } else if (data.ig_error) {
-    parts.push("⚠️ Instagram: " + data.ig_error);
-  }
-  return parts.join(" — ");
 }
 
 async function pollFacebookJob(jobId) {
@@ -1034,34 +1199,116 @@ async function pollFacebookJob(jobId) {
     const res = await fetch("/api/facebook/status/" + jobId);
     const data = await res.json();
     if (!data.ok) { showFbStatus("error", "❌ " + (data.error || "Error al consultar el estado.")); return; }
-    if (data.status === "done" || data.status === "error") {
-      showFbStatus(data.status === "done" ? "success" : "error", buildFbCombinedMsg(data));
+    if (data.status === "scheduled") {
+      const when = new Date(data.scheduled_for).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+      showFbStatus("loading", `Facebook programado para ${when}...`);
+      continue;
+    }
+    if (data.status === "running" && data.stage) {
+      showFbStatus("loading", data.stage);
+      continue;
+    }
+    if (data.status === "done") {
+      let msg;
+      if (data.scheduled_time) {
+        const when = new Date(data.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        msg = `🕒 Facebook programado para las ${when} (para no publicar dos veces seguidas)`;
+      } else {
+        msg = `✅ Facebook (id: ${data.video_id})`;
+      }
+      showFbStatus("success", msg);
+      return;
+    }
+    if (data.status === "error") {
+      showFbStatus("error", "❌ Facebook: " + data.error);
       return;
     }
   }
 }
 
-async function publishToFacebook() {
+async function pollInstagramJob(jobId) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    const res = await fetch("/api/instagram/status/" + jobId);
+    const data = await res.json();
+    if (!data.ok) { showIgStatus("error", "❌ " + (data.error || "Error al consultar el estado.")); return; }
+    if (data.status === "scheduled") {
+      const when = new Date(data.scheduled_for).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+      showIgStatus("loading", `Instagram programado para ${when}...`);
+      continue;
+    }
+    if (data.status === "running" && data.stage) {
+      showIgStatus("loading", data.stage);
+      continue;
+    }
+    if (data.status === "done") {
+      showIgStatus("success", `✅ Instagram (id: ${data.media_id})`);
+      return;
+    }
+    if (data.status === "error") {
+      showIgStatus("error", "❌ Instagram: " + data.error);
+      return;
+    }
+  }
+}
+
+async function publishToFacebook(force) {
   if (!currentVideoPath) return;
   showFbStatus("loading", "Publicando en Facebook...");
+  const scheduledTime = await getAutoOrScheduledTimeIso("fb-auto-time", "/api/facebook/best-time");
+  showFbStatus("loading", scheduledTime ? "Programando en Facebook..." : "Publicando en Facebook...");
   try {
     const res = await fetch("/api/facebook/publish", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         filename: currentVideoPath,
-        title: $("video-title").value.trim(),
-        description: $("pub-description").value.trim(),
+        title: "",
+        description: $("pub-fb-description").value.trim(),
+        scheduled_time: scheduledTime,
+        force: !!force,
       }),
     });
     const data = await res.json();
     if (data.ok) {
       await pollFacebookJob(data.job_id);
+    } else if (data.duplicate && confirm(data.error + " ¿Publicar de todas formas?")) {
+      return publishToFacebook(true);
     } else {
       showFbStatus("error", "❌ " + (data.error || "Error al publicar."));
     }
   } catch (e) {
     showFbStatus("error", "❌ Error de conexión con el servidor.");
+  }
+}
+
+async function publishToInstagram(force) {
+  if (!currentVideoPath) return;
+  showIgStatus("loading", "Publicando en Instagram...");
+  const scheduledTime = await getAutoOrScheduledTimeIso("ig-auto-time", "/api/instagram/best-time");
+  showIgStatus("loading", scheduledTime ? "Programando en Instagram..." : "Publicando en Instagram...");
+  try {
+    const res = await fetch("/api/instagram/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: currentVideoPath,
+        title: "",
+        description: $("pub-ig-description").value.trim(),
+        scheduled_time: scheduledTime,
+        force: !!force,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      await pollInstagramJob(data.job_id);
+    } else if (data.duplicate && confirm(data.error + " ¿Publicar de todas formas?")) {
+      return publishToInstagram(true);
+    } else {
+      showIgStatus("error", "❌ " + (data.error || "Error al publicar."));
+    }
+  } catch (e) {
+    showIgStatus("error", "❌ Error de conexión con el servidor.");
   }
 }
 
@@ -1101,7 +1348,14 @@ $("yt-connect-btn").addEventListener("click", async () => {
 function showYtStatus(type, msg) {
   const el = $("yt-status");
   el.className = type;
-  el.innerHTML = type === "loading" ? `<div class="spinner"></div><span>${msg}</span>` : `<span>${msg}</span>`;
+  if (type === "loading") {
+    el.innerHTML = `<div class="spinner"></div><span>${msg}</span>`;
+  } else if (type === "error") {
+    el.innerHTML = `<span>${msg}</span> <button class="btn-sm" id="yt-retry-btn">🔄 Reintentar</button>`;
+    $("yt-retry-btn").addEventListener("click", () => publishToYoutube());
+  } else {
+    el.innerHTML = `<span>${msg}</span>`;
+  }
 }
 
 async function pollYoutubeJob(jobId) {
@@ -1110,8 +1364,19 @@ async function pollYoutubeJob(jobId) {
     const res = await fetch("/api/youtube/publish/status/" + jobId);
     const data = await res.json();
     if (!data.ok) { showYtStatus("error", "❌ " + (data.error || "Error al consultar el estado.")); return; }
+    if (data.status === "scheduled") {
+      const when = new Date(data.scheduled_for).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+      showYtStatus("loading", `YouTube programado para ${when}...`);
+      continue;
+    }
+    if (data.status === "running" && data.stage) {
+      showYtStatus("loading", data.stage);
+      continue;
+    }
     if (data.status === "done") {
       showYtStatus("success", `✅ Publicado en YouTube (id: ${data.video_id})`);
+      generatedThumbnail = null;
+      loadYoutubeAnalytics();
       return;
     }
     if (data.status === "error") {
@@ -1121,29 +1386,35 @@ async function pollYoutubeJob(jobId) {
   }
 }
 
-async function publishToYoutube() {
+async function publishToYoutube(force) {
   if (!currentVideoPath) return;
   if ($("yt-connect-wrap").style.display !== "none") {
     showYtStatus("error", "❌ Conectá tu cuenta de YouTube primero.");
     return;
   }
-  showYtStatus("loading", "Publicando en YouTube...");
+  const scheduledTime = getScheduledTimeIso();
+  showYtStatus("loading", scheduledTime ? "Programando en YouTube..." : "Publicando en YouTube...");
   try {
     const res = await fetch("/api/youtube/publish", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         filename: currentVideoPath,
-        title: $("yt-title").value.trim() || $("video-title").value.trim(),
-        description: $("pub-description").value.trim(),
+        title: $("yt-title").value.trim(),
+        description: $("pub-yt-description").value.trim(),
         privacy_status: $("yt-privacy").value,
         tags: $("yt-tags").value.trim(),
         is_ai_generated: $("yt-is-ai").checked,
+        scheduled_time: scheduledTime,
+        thumbnail: generatedThumbnail,
+        force: !!force,
       }),
     });
     const data = await res.json();
     if (data.ok) {
       await pollYoutubeJob(data.job_id);
+    } else if (data.duplicate && confirm(data.error + " ¿Publicar de todas formas?")) {
+      return publishToYoutube(true);
     } else {
       showYtStatus("error", "❌ " + (data.error || "Error al publicar."));
     }
@@ -1152,10 +1423,196 @@ async function publishToYoutube() {
   }
 }
 
+let generatedThumbnail = null;
+
+$("yt-seo-btn").addEventListener("click", async () => {
+  const text = $("text-input").value.trim();
+  if (!text) {
+    $("yt-seo-status").textContent = "❌ Escribí o pegá el guion primero.";
+    return;
+  }
+  $("yt-seo-status").textContent = "✨ Generando sugerencia SEO...";
+  try {
+    const res = await fetch("/api/seo/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, title: $("yt-title").value.trim() }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      $("yt-seo-status").textContent = "❌ " + (data.error || "No se pudo generar la sugerencia.");
+      return;
+    }
+    $("yt-title").value = data.title;
+    $("pub-yt-description").value = data.description;
+    $("yt-tags").value = data.tags.join(", ");
+    $("yt-seo-status").textContent = `✅ SEO sugerido (puntaje ${data.score}/100)`;
+  } catch (e) {
+    $("yt-seo-status").textContent = "❌ Error de conexión con el servidor.";
+  }
+});
+
+function makeSocialCaptionHandler(descId, statusId) {
+  return async () => {
+    const text = $("text-input").value.trim();
+    const status = $(statusId);
+    if (!text) {
+      status.textContent = "❌ Escribí o pegá el guion primero.";
+      return;
+    }
+    status.textContent = "✨ Generando caption...";
+    try {
+      const res = await fetch("/api/seo/suggest-social", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        status.textContent = "❌ " + (data.error || "No se pudo generar el caption.");
+        return;
+      }
+      $(descId).value = data.caption + "\n\n" + data.hashtags.join(" ");
+      status.textContent = "✅ Caption sugerido.";
+    } catch (e) {
+      status.textContent = "❌ Error de conexión con el servidor.";
+    }
+  };
+}
+$("fb-caption-btn").addEventListener("click", makeSocialCaptionHandler("pub-fb-description", "fb-caption-status"));
+$("ig-caption-btn").addEventListener("click", makeSocialCaptionHandler("pub-ig-description", "ig-caption-status"));
+
+$("yt-thumb-btn").addEventListener("click", async () => {
+  $("yt-seo-status").textContent = "🖼️ Generando miniatura...";
+  try {
+    const res = await fetch("/api/thumbnail/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("yt-title").value.trim() }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      $("yt-seo-status").textContent = "❌ " + (data.error || "No se pudo generar la miniatura.");
+      return;
+    }
+    generatedThumbnail = data.filename;
+    $("yt-thumb-img").src = data.url + "?t=" + Date.now();
+    $("yt-thumb-preview").style.display = "block";
+    $("yt-thumb-variants").style.display = "none";
+    $("yt-seo-status").textContent = "✅ Miniatura lista — se subirá junto con el video.";
+  } catch (e) {
+    $("yt-seo-status").textContent = "❌ Error de conexión con el servidor.";
+  }
+});
+
+$("yt-thumb-variants-btn").addEventListener("click", async () => {
+  $("yt-seo-status").textContent = "🅰️🅱️ Generando variantes de miniatura...";
+  try {
+    const res = await fetch("/api/thumbnail/variants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("yt-title").value.trim() }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      $("yt-seo-status").textContent = "❌ " + (data.error || "No se pudieron generar las variantes.");
+      return;
+    }
+    const wrap = $("yt-thumb-variants");
+    wrap.innerHTML = data.variants.map((v, i) => `
+      <div style="text-align:center">
+        <img src="${v.url}?t=${Date.now()}" data-filename="${v.filename}"
+             style="width:160px;border-radius:8px;cursor:pointer;border:3px solid transparent"
+             class="yt-thumb-variant-img" alt="Variante ${i + 1}">
+        <div style="font-size:.75rem;color:var(--muted)">Variante ${i + 1}</div>
+      </div>`).join("");
+    wrap.style.display = "flex";
+    $("yt-thumb-preview").style.display = "none";
+    wrap.querySelectorAll(".yt-thumb-variant-img").forEach(img => {
+      img.addEventListener("click", () => {
+        wrap.querySelectorAll(".yt-thumb-variant-img").forEach(i => i.style.borderColor = "transparent");
+        img.style.borderColor = "var(--accent, #6366f1)";
+        generatedThumbnail = img.dataset.filename;
+        $("yt-seo-status").textContent = "✅ Miniatura elegida — se subirá junto con el video.";
+      });
+    });
+    $("yt-seo-status").textContent = "Elegí la miniatura que más te guste.";
+  } catch (e) {
+    $("yt-seo-status").textContent = "❌ Error de conexión con el servidor.";
+  }
+});
+
+async function _loadAnalytics(tableId, url, emptyMsg) {
+  const wrap = $(tableId);
+  wrap.textContent = "Cargando...";
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok || !data.videos.length) {
+      wrap.textContent = emptyMsg;
+      return;
+    }
+    const rows = data.videos.map(v => `
+      <tr>
+        <td style="padding:.3rem">${v.title || v.video_id || v.media_id}</td>
+        <td style="padding:.3rem">${v.views ?? "-"}</td>
+        <td style="padding:.3rem">${v.likes ?? "-"}</td>
+        <td style="padding:.3rem">${v.comments ?? "-"}</td>
+      </tr>`).join("");
+    wrap.innerHTML = `
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="text-align:left;color:var(--muted)">
+          <th style="padding:.3rem">Título</th><th>Vistas</th><th>Likes</th><th>Comentarios</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    wrap.textContent = "❌ Error de conexión con el servidor.";
+  }
+}
+function loadYoutubeAnalytics() {
+  return _loadAnalytics("yt-analytics-table", "/api/youtube/analytics", "Todavía no hay videos publicados en YouTube.");
+}
+function loadFacebookAnalytics() {
+  return _loadAnalytics("fb-analytics-table", "/api/facebook/analytics", "Todavía no hay videos publicados en Facebook.");
+}
+function loadInstagramAnalytics() {
+  return _loadAnalytics("ig-analytics-table", "/api/instagram/analytics", "Todavía no hay videos publicados en Instagram.");
+}
+$("yt-analytics-refresh-btn").addEventListener("click", loadYoutubeAnalytics);
+$("fb-analytics-refresh-btn").addEventListener("click", loadFacebookAnalytics);
+$("ig-analytics-refresh-btn").addEventListener("click", loadInstagramAnalytics);
+
+async function loadAnalyticsFeedback() {
+  const el = $("feedback-analytics-result");
+  el.textContent = "Cargando...";
+  try {
+    const res = await fetch("/api/analytics/feedback");
+    const data = await res.json();
+    if (!data.ok) {
+      el.textContent = "❌ " + (data.error || "No se pudo cargar.");
+      return;
+    }
+    if (data.insufficient_data) {
+      el.textContent = `Todavía no hay suficientes videos publicados con estadísticas (${data.sample_size}/3 mínimo).`;
+      return;
+    }
+    el.innerHTML = `
+      <p>📦 Muestra: ${data.sample_size} videos — 👁️ Promedio de vistas: ${data.avg_views}</p>
+      <p>📏 Mejor largo de título: ${data.best_title_length}</p>
+      <p>🔑 Palabras clave más frecuentes en los videos con más vistas: ${data.top_keywords.join(", ") || "—"}</p>
+    `;
+  } catch (e) {
+    el.textContent = "❌ Error de conexión con el servidor.";
+  }
+}
+$("feedback-analytics-refresh-btn").addEventListener("click", loadAnalyticsFeedback);
+
 $("publish-btn").addEventListener("click", async () => {
   if (!currentVideoPath) return;
   const targets = [];
   if ($("pub-fb").checked) targets.push(publishToFacebook());
+  if ($("pub-ig").checked) targets.push(publishToInstagram());
   if ($("pub-yt").checked) targets.push(publishToYoutube());
   if (!targets.length) return;
 
@@ -1209,6 +1666,7 @@ def _run_tts_job(job_id: str, text: str, kwargs: dict):
     except Exception as e:
         with _tts_jobs_lock:
             _tts_jobs[job_id].update(status="error", error=str(e), percent=100)
+            job_store.save("tts", _tts_jobs)
         return
 
     with _tts_jobs_lock:
@@ -1220,6 +1678,7 @@ def _run_tts_job(job_id: str, text: str, kwargs: dict):
             _tts_jobs[job_id].update(
                 status="error", percent=100, error="Error al generar el audio. Revisa los logs del servidor."
             )
+        job_store.save("tts", _tts_jobs)
 
 
 @app.route("/api/tts/start", methods=["POST"])
@@ -1248,6 +1707,7 @@ def api_tts_start():
             "error": None,
             "started_at": time.time(),
         }
+        job_store.save("tts", _tts_jobs)
 
     thread = threading.Thread(target=_run_tts_job, args=(job_id, text, kwargs), daemon=True)
     thread.start()
@@ -1295,7 +1755,7 @@ _video_render_lock = threading.Lock()
 
 
 def _run_video_job(job_id: str, image_paths: list, audio_path: str, title: str,
-                    subtitles_enabled: bool, subtitle_style: Optional[dict], cleanup):
+                    subtitles_enabled: bool, subtitle_style: Optional[dict], orientation: str, cleanup):
     def on_progress(msg):
         with _video_jobs_lock:
             _video_jobs[job_id]["message"] = msg
@@ -1318,11 +1778,13 @@ def _run_video_job(job_id: str, image_paths: list, audio_path: str, title: str,
             if timeline:
                 video_path = video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
+                    orientation=orientation,
                     on_progress=on_progress,
                 )
     except Exception as e:
         with _video_jobs_lock:
             _video_jobs[job_id].update(status="error", error=str(e))
+            job_store.save("video", _video_jobs)
         cleanup()
         return
 
@@ -1334,6 +1796,7 @@ def _run_video_job(job_id: str, image_paths: list, audio_path: str, title: str,
             _video_jobs[job_id].update(
                 status="error", error="Error al preparar o renderizar la edición. Revisa los logs del servidor."
             )
+        job_store.save("video", _video_jobs)
     cleanup()
 
 
@@ -1394,6 +1857,9 @@ def api_video_start():
         "background": False if request.form.get("subtitle_background") == "0" else None,
     }
     subtitle_style = {k: v for k, v in style_overrides.items() if v is not None} or None
+    orientation = request.form.get("orientation", "vertical").strip()
+    if orientation not in ("vertical", "horizontal"):
+        orientation = "vertical"
 
     job_id = uuid.uuid4().hex
     with _video_jobs_lock:
@@ -1403,10 +1869,11 @@ def api_video_start():
             "error": None,
             "started_at": time.time(),
         }
+        job_store.save("video", _video_jobs)
 
     thread = threading.Thread(
         target=_run_video_job,
-        args=(job_id, image_paths, str(audio_path), title, subtitles_enabled, subtitle_style, cleanup),
+        args=(job_id, image_paths, str(audio_path), title, subtitles_enabled, subtitle_style, orientation, cleanup),
         daemon=True,
     )
     thread.start()
@@ -1472,10 +1939,61 @@ def api_video_save_drive():
 _fb_jobs = {}  # job_id -> {status, error, video_id, started_at}
 _fb_jobs_lock = threading.Lock()
 
+_ig_jobs = {}  # job_id -> {status, error, media_id, started_at}
+_ig_jobs_lock = threading.Lock()
 
-def _run_facebook_job(job_id: str, video_path: str, title: str, description: str):
-    result = facebook_publisher.publish_video(video_path, title, description)
-    ig_result = instagram_publisher.publish_video(video_path, title, description)
+
+def _parse_scheduled_time(data: dict) -> tuple[Optional[float], Optional[str]]:
+    """Lee 'scheduled_time' (datetime-local ISO) del body. Devuelve (timestamp, error)."""
+    raw = (data.get("scheduled_time") or "").strip()
+    if not raw:
+        return None, None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None, "Fecha/hora de programación inválida."
+    ts = time.mktime(dt.timetuple())
+    if ts <= time.time():
+        return None, "La fecha programada tiene que ser en el futuro."
+    return ts, None
+
+
+MIN_VIDEO_BYTES = 10 * 1024  # por debajo de esto, casi seguro está corrupto o vacío
+
+
+def _video_precheck(video_path: Path) -> Optional[str]:
+    """Chequeos básicos antes de publicar: el archivo existe y no está vacío/corrupto."""
+    if not video_path.exists():
+        return f"No se encontró el video: {video_path.name}"
+    size = video_path.stat().st_size
+    if size < MIN_VIDEO_BYTES:
+        return f"El video parece estar corrupto o vacío ({size} bytes): {video_path.name}"
+    return None
+
+
+def _already_published(path: Path, filename: str) -> bool:
+    """True si ya existe un registro de publicación para ese mismo archivo."""
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except Exception:
+        return False
+    return any(item.get("filename") == filename for item in items)
+
+
+def _fb_set_stage(job_id: str, stage: str):
+    with _fb_jobs_lock:
+        if job_id in _fb_jobs:
+            _fb_jobs[job_id]["stage"] = stage
+
+
+def _run_facebook_job(job_id: str, video_path: str, title: str, description: str, target_ts: Optional[float] = None):
+    if target_ts is not None:
+        time.sleep(max(0, target_ts - time.time()))
+        with _fb_jobs_lock:
+            _fb_jobs[job_id]["status"] = "running"
+    result = facebook_publisher.publish_video(
+        video_path, title, description, on_status=lambda s: _fb_set_stage(job_id, s)
+    )
     with _fb_jobs_lock:
         if result["ok"]:
             _fb_jobs[job_id].update(
@@ -1483,11 +2001,33 @@ def _run_facebook_job(job_id: str, video_path: str, title: str, description: str
             )
         else:
             _fb_jobs[job_id].update(status="error", error=result["error"])
-        _fb_jobs[job_id].update(
-            ig_ok=ig_result["ok"],
-            ig_media_id=ig_result.get("media_id"),
-            ig_error=ig_result.get("error"),
-        )
+        job_store.save("facebook", _fb_jobs)
+    if result["ok"]:
+        _record_published_facebook(result["video_id"], title, Path(video_path).name)
+
+
+def _ig_set_stage(job_id: str, stage: str):
+    with _ig_jobs_lock:
+        if job_id in _ig_jobs:
+            _ig_jobs[job_id]["stage"] = stage
+
+
+def _run_instagram_job(job_id: str, video_path: str, title: str, description: str, target_ts: Optional[float] = None):
+    if target_ts is not None:
+        time.sleep(max(0, target_ts - time.time()))
+        with _ig_jobs_lock:
+            _ig_jobs[job_id]["status"] = "running"
+    result = instagram_publisher.publish_video(
+        video_path, title, description, on_status=lambda s: _ig_set_stage(job_id, s)
+    )
+    with _ig_jobs_lock:
+        if result["ok"]:
+            _ig_jobs[job_id].update(status="done", media_id=result.get("media_id"))
+        else:
+            _ig_jobs[job_id].update(status="error", error=result.get("error"))
+        job_store.save("instagram", _ig_jobs)
+    if result["ok"]:
+        _record_published_instagram(result.get("media_id"), title, Path(video_path).name)
 
 
 @app.route("/api/facebook/publish", methods=["POST"])
@@ -1501,22 +2041,33 @@ def api_facebook_publish():
         return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
 
     video_path = video_maker.VIDEO_OUT_DIR / filename
-    if not video_path.exists():
-        return jsonify({"ok": False, "error": f"No se encontró el video: {filename}"}), 400
+    precheck_error = _video_precheck(video_path)
+    if precheck_error:
+        return jsonify({"ok": False, "error": precheck_error}), 400
+
+    if not data.get("force") and _already_published(_PUBLISHED_FB_PATH, filename):
+        return jsonify({"ok": False, "error": "Este video ya fue publicado antes en Facebook.", "duplicate": True}), 409
+
+    target_ts, sched_err = _parse_scheduled_time(data)
+    if sched_err:
+        return jsonify({"ok": False, "error": sched_err}), 400
 
     job_id = uuid.uuid4().hex
     with _fb_jobs_lock:
         _fb_jobs[job_id] = {
-            "status": "running",
+            "status": "scheduled" if target_ts else "running",
+            "stage": None,
             "error": None,
             "video_id": None,
             "scheduled_time": None,
+            "scheduled_for": datetime.fromtimestamp(target_ts).isoformat() if target_ts else None,
             "started_at": time.time(),
         }
+        job_store.save("facebook", _fb_jobs)
 
     thread = threading.Thread(
         target=_run_facebook_job,
-        args=(job_id, str(video_path), title, description),
+        args=(job_id, str(video_path), title, description, target_ts),
         daemon=True,
     )
     thread.start()
@@ -1528,6 +2079,63 @@ def api_facebook_publish():
 def api_facebook_status(job_id):
     with _fb_jobs_lock:
         job = _fb_jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Trabajo no encontrado."}), 404
+        response = dict(job)
+
+    response.pop("started_at", None)
+    response["ok"] = True
+    return jsonify(response)
+
+
+@app.route("/api/instagram/publish", methods=["POST"])
+def api_instagram_publish():
+    data = request.get_json(force=True)
+    filename = data.get("filename", "").strip()
+    title = data.get("title", "").strip()
+    description = data.get("description", "").strip()
+
+    if not filename:
+        return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
+
+    video_path = video_maker.VIDEO_OUT_DIR / filename
+    precheck_error = _video_precheck(video_path)
+    if precheck_error:
+        return jsonify({"ok": False, "error": precheck_error}), 400
+
+    if not data.get("force") and _already_published(_PUBLISHED_IG_PATH, filename):
+        return jsonify({"ok": False, "error": "Este video ya fue publicado antes en Instagram.", "duplicate": True}), 409
+
+    target_ts, sched_err = _parse_scheduled_time(data)
+    if sched_err:
+        return jsonify({"ok": False, "error": sched_err}), 400
+
+    job_id = uuid.uuid4().hex
+    with _ig_jobs_lock:
+        _ig_jobs[job_id] = {
+            "status": "scheduled" if target_ts else "running",
+            "stage": None,
+            "error": None,
+            "media_id": None,
+            "scheduled_for": datetime.fromtimestamp(target_ts).isoformat() if target_ts else None,
+            "started_at": time.time(),
+        }
+        job_store.save("instagram", _ig_jobs)
+
+    thread = threading.Thread(
+        target=_run_instagram_job,
+        args=(job_id, str(video_path), title, description, target_ts),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/instagram/status/<job_id>")
+def api_instagram_status(job_id):
+    with _ig_jobs_lock:
+        job = _ig_jobs.get(job_id)
         if not job:
             return jsonify({"ok": False, "error": "Trabajo no encontrado."}), 404
         response = dict(job)
@@ -1556,13 +2164,35 @@ def api_youtube_connect():
     return jsonify(result)
 
 
-def _run_youtube_job(job_id: str, video_path: str, title: str, description: str, privacy_status: str, tags: list, is_ai_generated: bool):
-    result = youtube_publisher.publish_video(video_path, title, description, privacy_status, tags, is_ai_generated)
+def _yt_set_stage(job_id: str, stage: str):
+    with _yt_jobs_lock:
+        if job_id in _yt_jobs:
+            _yt_jobs[job_id]["stage"] = stage
+
+
+def _run_youtube_job(job_id: str, video_path: str, title: str, description: str, privacy_status: str, tags: list, is_ai_generated: bool, target_ts: Optional[float] = None, thumbnail_path: Optional[str] = None):
+    if target_ts is not None:
+        time.sleep(max(0, target_ts - time.time()))
+        with _yt_jobs_lock:
+            _yt_jobs[job_id]["status"] = "running"
+    result = youtube_publisher.publish_video(
+        video_path, title, description, privacy_status, tags, is_ai_generated,
+        on_status=lambda s: _yt_set_stage(job_id, s),
+    )
+    if result.get("ok") and thumbnail_path and Path(thumbnail_path).exists():
+        _yt_set_stage(job_id, "Subiendo miniatura...")
+        thumb_result = youtube_publisher.set_thumbnail(result["video_id"], thumbnail_path)
+        if not thumb_result.get("ok"):
+            result["thumbnail_error"] = thumb_result.get("error")
+
     with _yt_jobs_lock:
         if result["ok"]:
-            _yt_jobs[job_id].update(status="done", video_id=result["video_id"])
+            _yt_jobs[job_id].update(status="done", video_id=result["video_id"],
+                                     thumbnail_error=result.get("thumbnail_error"))
+            _record_published_video(result["video_id"], title, Path(video_path).name)
         else:
             _yt_jobs[job_id].update(status="error", error=result["error"])
+        job_store.save("youtube", _yt_jobs)
 
 
 @app.route("/api/youtube/publish", methods=["POST"])
@@ -1574,26 +2204,44 @@ def api_youtube_publish():
     privacy_status = data.get("privacy_status", "public").strip()
     tags = [t.strip() for t in data.get("tags", "").split(",") if t.strip()]
     is_ai_generated = bool(data.get("is_ai_generated"))
+    thumbnail_name = data.get("thumbnail", "").strip()
 
     if not filename:
         return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
 
     video_path = video_maker.VIDEO_OUT_DIR / filename
-    if not video_path.exists():
-        return jsonify({"ok": False, "error": f"No se encontró el video: {filename}"}), 400
+    precheck_error = _video_precheck(video_path)
+    if precheck_error:
+        return jsonify({"ok": False, "error": precheck_error}), 400
+
+    if not data.get("force") and _already_published(_PUBLISHED_VIDEOS_PATH, filename):
+        return jsonify({"ok": False, "error": "Este video ya fue publicado antes en YouTube.", "duplicate": True}), 409
+
+    thumbnail_path = None
+    if thumbnail_name:
+        candidate = video_maker.VIDEO_OUT_DIR / thumbnail_name
+        if candidate.exists():
+            thumbnail_path = str(candidate)
+
+    target_ts, sched_err = _parse_scheduled_time(data)
+    if sched_err:
+        return jsonify({"ok": False, "error": sched_err}), 400
 
     job_id = uuid.uuid4().hex
     with _yt_jobs_lock:
         _yt_jobs[job_id] = {
-            "status": "running",
+            "status": "scheduled" if target_ts else "running",
+            "stage": None,
             "error": None,
             "video_id": None,
+            "scheduled_for": datetime.fromtimestamp(target_ts).isoformat() if target_ts else None,
             "started_at": time.time(),
         }
+        job_store.save("youtube", _yt_jobs)
 
     thread = threading.Thread(
         target=_run_youtube_job,
-        args=(job_id, str(video_path), title, description, privacy_status, tags, is_ai_generated),
+        args=(job_id, str(video_path), title, description, privacy_status, tags, is_ai_generated, target_ts, thumbnail_path),
         daemon=True,
     )
     thread.start()
@@ -1612,6 +2260,190 @@ def api_youtube_publish_status(job_id):
     response.pop("started_at", None)
     response["ok"] = True
     return jsonify(response)
+
+
+# ─────────────────────────────────────────────
+# SEO, MINIATURAS Y ANALÍTICA DE YOUTUBE
+# ─────────────────────────────────────────────
+
+_PUBLISHED_VIDEOS_PATH = OUTPUT_DIR / "youtube_published.json"
+
+
+def _record_published_video(video_id: str, title: str, filename: str = "") -> None:
+    """Guarda cada video subido a YouTube para poder consultar su analítica después."""
+    try:
+        videos = json.loads(_PUBLISHED_VIDEOS_PATH.read_text(encoding="utf-8")) if _PUBLISHED_VIDEOS_PATH.exists() else []
+    except Exception:
+        videos = []
+    videos.append({"video_id": video_id, "title": title, "filename": filename, "published_at": datetime.now().isoformat()})
+    try:
+        _PUBLISHED_VIDEOS_PATH.write_text(json.dumps(videos, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+@app.route("/api/seo/suggest", methods=["POST"])
+def api_seo_suggest():
+    data = request.get_json(force=True)
+    text = data.get("text", "").strip()
+    base_title = data.get("title", "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Falta el texto de la historia."}), 400
+    suggestion = seo_optimizer.suggest_seo(text, base_title)
+    return jsonify({"ok": True, **suggestion})
+
+
+@app.route("/api/seo/suggest-social", methods=["POST"])
+def api_seo_suggest_social():
+    data = request.get_json(force=True)
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Falta el texto de la historia."}), 400
+    suggestion = seo_optimizer.suggest_social_caption(text)
+    return jsonify({"ok": True, **suggestion})
+
+
+@app.route("/api/thumbnail/generate", methods=["POST"])
+def api_thumbnail_generate():
+    data = request.get_json(force=True)
+    title = data.get("title", "").strip()
+    scene_name = data.get("scene", "scene_000").strip()
+
+    scene_path = None
+    for f in video_maker.VIDEO_PUBLIC_DIR.glob(f"{scene_name}.*"):
+        scene_path = f
+        break
+    if scene_path is None:
+        return jsonify({"ok": False, "error": f"No se encontró una escena '{scene_name}' para usar de fondo."}), 400
+
+    out_name = f"thumbnail_{uuid.uuid4().hex}.jpg"
+    out_path = video_maker.VIDEO_OUT_DIR / out_name
+    try:
+        thumbnail_maker.generate_thumbnail(str(scene_path), title, str(out_path))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error generando la miniatura: {e}"}), 500
+
+    return jsonify({"ok": True, "filename": out_name, "url": f"/video/{out_name}"})
+
+
+@app.route("/api/thumbnail/variants", methods=["POST"])
+def api_thumbnail_variants():
+    """Genera hasta 3 variantes de miniatura (A/B) usando distintas escenas del video, para elegir la más llamativa."""
+    data = request.get_json(force=True)
+    title = data.get("title", "").strip()
+
+    scenes = sorted(video_maker.VIDEO_PUBLIC_DIR.glob("scene_*.*"))
+    if not scenes:
+        return jsonify({"ok": False, "error": "No hay escenas disponibles para generar miniaturas."}), 400
+
+    # elige hasta 3 escenas repartidas a lo largo del video (inicio, medio, final)
+    count = min(3, len(scenes))
+    indices = sorted({round(i * (len(scenes) - 1) / (count - 1)) for i in range(count)}) if count > 1 else [0]
+
+    variants = []
+    for idx in indices:
+        scene_path = scenes[idx]
+        out_name = f"thumbnail_{uuid.uuid4().hex}.jpg"
+        out_path = video_maker.VIDEO_OUT_DIR / out_name
+        try:
+            thumbnail_maker.generate_thumbnail(str(scene_path), title, str(out_path))
+        except Exception:
+            continue
+        variants.append({"filename": out_name, "url": f"/video/{out_name}"})
+
+    if not variants:
+        return jsonify({"ok": False, "error": "No se pudo generar ninguna variante de miniatura."}), 500
+
+    return jsonify({"ok": True, "variants": variants})
+
+
+def _analytics_rows(path: Path, id_field: str, stats_fn) -> list:
+    """Lee un JSON de publicados y le mezcla las stats (views/likes/comments) ya frescas."""
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except Exception:
+        items = []
+
+    ids = [i[id_field] for i in items]
+    stats_by_id = stats_fn(ids) if ids else {}
+    return [{**i, **stats_by_id.get(i[id_field], {})} for i in items]
+
+
+@app.route("/api/youtube/analytics")
+def api_youtube_analytics():
+    rows = _analytics_rows(_PUBLISHED_VIDEOS_PATH, "video_id", youtube_publisher.get_video_stats)
+    return jsonify({"ok": True, "videos": rows})
+
+
+# ─────────────────────────────────────────────
+# ANALÍTICA DE FACEBOOK E INSTAGRAM
+# ─────────────────────────────────────────────
+
+_PUBLISHED_FB_PATH = OUTPUT_DIR / "facebook_published.json"
+_PUBLISHED_IG_PATH = OUTPUT_DIR / "instagram_published.json"
+
+
+def _record_published_item(path: Path, id_field: str, item_id, title: str, filename: str = "") -> None:
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except Exception:
+        items = []
+    items.append({id_field: item_id, "title": title, "filename": filename, "published_at": datetime.now().isoformat()})
+    try:
+        path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _record_published_facebook(video_id, title: str, filename: str = "") -> None:
+    """Guarda cada video publicado en Facebook para poder consultar su analítica después."""
+    if not video_id:
+        return
+    _record_published_item(_PUBLISHED_FB_PATH, "video_id", video_id, title, filename)
+
+
+def _record_published_instagram(media_id, title: str, filename: str = "") -> None:
+    """Guarda cada media publicado en Instagram para poder consultar su analítica después."""
+    if not media_id:
+        return
+    _record_published_item(_PUBLISHED_IG_PATH, "media_id", media_id, title, filename)
+
+
+@app.route("/api/facebook/analytics")
+def api_facebook_analytics():
+    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
+    return jsonify({"ok": True, "videos": rows})
+
+
+@app.route("/api/instagram/analytics")
+def api_instagram_analytics():
+    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+    return jsonify({"ok": True, "videos": rows})
+
+
+@app.route("/api/analytics/feedback")
+def api_analytics_feedback():
+    all_rows = (
+        _analytics_rows(_PUBLISHED_VIDEOS_PATH, "video_id", youtube_publisher.get_video_stats)
+        + _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
+        + _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+    )
+    result = feedback_analyzer.analyze_from_rows(all_rows)
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/facebook/best-time")
+def api_facebook_best_time():
+    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
+    result = feedback_analyzer.best_posting_hour(rows)
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/instagram/best-time")
+def api_instagram_best_time():
+    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+    result = feedback_analyzer.best_posting_hour(rows)
+    return jsonify({"ok": True, **result})
 
 
 # ─────────────────────────────────────────────
