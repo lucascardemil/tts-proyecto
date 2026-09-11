@@ -13,6 +13,7 @@ Requiere Node.js + `npm install` corrido dentro de la carpeta video/, y las
 dependencias Python opcionales: faster-whisper, mutagen (ver requirements.txt).
 """
 
+import difflib
 import json
 import re
 import shutil
@@ -42,6 +43,155 @@ DEFAULT_CLIP_SECONDS = 5.0  # duración asumida de un clip de video si no se pue
 # (la composición y el audio duran más que el contenido visual real).
 TRANSITION_FRAMES = 20
 KEN_BURNS_PATTERN = ["zoomIn", "panRight", "zoomOut", "panLeft"]
+
+# Specs de entrega del audio final (ver normalize_audio()).
+AUDIO_TARGET_SAMPLE_RATE = 48000
+AUDIO_TARGET_LUFS = -15  # punto medio del rango -14/-16 LUFS pedido
+AUDIO_TARGET_TP = -1.5  # dBTP
+
+# Debe coincidir con subtitleStyleSchema.default(...) en video/src/schema.ts —
+# `npx remotion render` NO rellena los campos faltantes de un objeto anidado
+# contra el schema de Zod (solo hace merge superficial con defaultProps), así
+# que un subtitleStyle parcial (p.ej. solo {"position": "bottom"}) llega al
+# componente con fontSize/textColor/etc. en `undefined` y el subtítulo se ve
+# sin estilo (texto negro chico, sin fondo). Por eso acá se completa siempre
+# el dict entero antes de escribirlo en props.json.
+SUBTITLE_STYLE_DEFAULTS = {
+    "fontFamily": "cinzel",
+    "fontSize": 44,
+    "position": "bottom",
+    "textColor": "#ffffff",
+    "highlightColor": "#ffd98a",
+    "background": True,
+    "strokeColor": None,
+    "strokeWidth": 2,
+    "uppercase": False,
+    "italic": False,
+    "letterSpacing": 0,
+    "animationType": "highlight",
+}
+
+# Catálogo de estilos de subtítulo: "clasico" es el look original del
+# proyecto, y los otros 6 clonan los estilos virales documentados en
+# https://github.com/nicolaigaina/ai-video-captions
+# (backend/caption-styles.config.json) — Hormozi, MrBeast, Karaoke, Minimal,
+# Bounce y Classic. Cada valor es un subtitle_style completo — se usa tal
+# cual, sin mezclar con SUBTITLE_STYLE_DEFAULTS.
+SUBTITLE_PRESETS = {
+    "clasico": {
+        "label": "Clásico (caja)",
+        "fontFamily": "cinzel",
+        "fontSize": 44,
+        "position": "bottom",
+        "textColor": "#ffffff",
+        "highlightColor": "#ffd98a",
+        "background": True,
+        "strokeColor": None,
+        "strokeWidth": 2,
+        "uppercase": False,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "highlight",
+    },
+    "hormozi": {
+        "label": "Hormozi",
+        "fontFamily": "montserrat",
+        "fontSize": 46,
+        "position": "bottom",
+        "textColor": "#ffffff",
+        "highlightColor": "#00ffff",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 2,
+        "uppercase": True,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "highlight",
+    },
+    "mrbeast": {
+        "label": "MrBeast",
+        "fontFamily": "bebas",
+        "fontSize": 50,
+        "position": "bottom",
+        "textColor": "#ffff00",
+        "highlightColor": "#ff6600",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 3,
+        "uppercase": True,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "highlight",
+    },
+    "karaoke": {
+        "label": "Karaoke",
+        "fontFamily": "montserrat",
+        "fontSize": 46,
+        "position": "bottom",
+        "textColor": "#ffffff",
+        "highlightColor": "#0080ff",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 2,
+        "uppercase": True,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "highlight",
+    },
+    "minimal": {
+        "label": "Minimal",
+        "fontFamily": "bebas",
+        "fontSize": 48,
+        "position": "bottom",
+        "textColor": "#ffffff",
+        "highlightColor": "#f5f5f5",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 1.5,
+        "uppercase": True,
+        "italic": True,
+        "letterSpacing": 2,
+        "animationType": "scale",
+    },
+    "bounce": {
+        "label": "Bounce",
+        "fontFamily": "bangers",
+        "fontSize": 48,
+        "position": "bottom",
+        "textColor": "#00ff88",
+        "highlightColor": "#ff00ff",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 2,
+        "uppercase": True,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "bounce",
+    },
+    "classic": {
+        "label": "Classic",
+        "fontFamily": "anton",
+        "fontSize": 48,
+        "position": "bottom",
+        "textColor": "#ffffff",
+        "highlightColor": "#ffff00",
+        "background": False,
+        "strokeColor": "#000000",
+        "strokeWidth": 3,
+        "uppercase": True,
+        "italic": False,
+        "letterSpacing": 0,
+        "animationType": "highlight",
+    },
+}
+DEFAULT_SUBTITLE_PRESET = "clasico"
+
+
+def get_subtitle_preset_style(preset_id: str) -> dict:
+    """Devuelve el subtitle_style de un preset (sin la 'label', que es solo
+    para la UI), o el del preset por default si el id no existe."""
+    preset = SUBTITLE_PRESETS.get(preset_id, SUBTITLE_PRESETS[DEFAULT_SUBTITLE_PRESET])
+    return {k: v for k, v in preset.items() if k != "label"}
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv"}
@@ -97,6 +247,36 @@ def get_audio_duration(audio_path: str) -> float:
     return float(audio.info.length)
 
 
+def normalize_audio(src_path: str, dest_path: Path, report=print) -> bool:
+    """
+    Normaliza el audio de narración a las specs de entrega: 48kHz, loudness
+    -15 LUFS (dentro del rango -14/-16 pedido) con true peak <= -1.5 dBTP,
+    vía el filtro `loudnorm` (EBU R128) de ffmpeg. Escribe WAV PCM sin
+    comprimir en dest_path — Remotion lo recodea a AAC al renderizar.
+
+    Returns:
+        True si se normalizó con ffmpeg; False si no está disponible y se
+        debe usar una copia simple del audio original como respaldo.
+    """
+    cmd = [
+        "ffmpeg", "-y", "-i", src_path,
+        "-af", f"loudnorm=I={AUDIO_TARGET_LUFS}:TP={AUDIO_TARGET_TP}:LRA=11",
+        "-ar", str(AUDIO_TARGET_SAMPLE_RATE),
+        "-c:a", "pcm_s16le",
+        str(dest_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=(sys.platform == "win32"))
+    except FileNotFoundError:
+        report("[AVISO] No se encontró 'ffmpeg' — se usa el audio original sin normalizar loudness/sample rate.")
+        return False
+    if result.returncode != 0:
+        report("[AVISO] ffmpeg falló normalizando el audio, se usa el original sin normalizar:")
+        report(result.stderr[-1000:])
+        return False
+    return True
+
+
 def _get_whisper_model():
     """Carga faster-whisper una sola vez y lo cachea en memoria."""
     global _whisper_model
@@ -107,7 +287,13 @@ def _get_whisper_model():
 
     print("  (cargando modelo de transcripción, puede tardar la primera vez...)")
     # 'small' es un buen equilibrio velocidad/precisión para voz sintética clara.
-    _whisper_model = WhisperModel("small", device="auto", compute_type="auto")
+    # device="auto" de ctranslate2 puede detectar una GPU por el driver y luego
+    # fallar al cargar cublas si el entorno no trae los runtimes CUDA (torch
+    # CPU-only) — mismo chequeo que tts_engine._tts_device() para no reventar.
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+    _whisper_model = WhisperModel("small", device=device, compute_type=compute_type)
     return _whisper_model
 
 
@@ -222,6 +408,67 @@ def _snap_cuts_to_pauses(cut_times: list, words: list) -> list:
     return snapped
 
 
+def _normalize_tokens(text: str) -> list:
+    return re.findall(r"[a-záéíóúñü0-9]+", text.lower())
+
+
+def _align_boundaries_to_script(frases: list, words: list, duration: float) -> Optional[list]:
+    """
+    Devuelve n+1 puntos de corte (segundos, dominio 0..duration) alineados a
+    donde cada frase empieza a decirse en el audio real (según la
+    transcripción palabra por palabra), o None si la confianza es demasiado
+    baja (el caller debe usar el reparto viejo — partes iguales/reescalado —
+    como fallback).
+    """
+    if not frases or not words:
+        return None
+    word_tokens = [_normalize_tokens(w["word"])[:1] for w in words]  # 0 o 1 token por word
+    word_tokens = [t[0] if t else "" for t in word_tokens]
+
+    starts = [None] * len(frases)
+    cursor = 0
+    resolved = 0
+    for i, frase in enumerate(frases):
+        tokens = _normalize_tokens(frase)
+        if not tokens:
+            continue
+        window = word_tokens[cursor:cursor + max(len(tokens) * 4, 25)]
+        sm = difflib.SequenceMatcher(None, window, tokens, autojunk=False)
+        blocks = [b for b in sm.get_matching_blocks() if b.size > 0]
+        if not blocks or sm.ratio() < 0.25:
+            continue
+        first, last = blocks[0], blocks[-1]
+        starts[i] = words[cursor + first.a]["start"]
+        cursor = cursor + last.a + last.size
+        resolved += 1
+
+    if resolved < max(1, len(frases) * 0.4):
+        return None  # muy poco confiable, mejor no arriesgar
+
+    # ancla obligatoria en 0 y al final (duración del audio); el resto se
+    # interpola proporcional a longitud de frase entre los puntos SÍ resueltos
+    anchors = [(0, 0.0)] + [(i, t) for i, t in enumerate(starts) if t is not None] + [(len(frases), duration)]
+    filled = [None] * (len(frases) + 1)
+    for i, t in anchors:
+        filled[i] = t
+    for a, b in zip(anchors, anchors[1:]):
+        i0, t0 = a
+        i1, t1 = b
+        if i1 - i0 <= 1:
+            continue
+        span_tokens = [len(_normalize_tokens(frases[k])) or 1 for k in range(i0, i1)]
+        total = sum(span_tokens)
+        acc = 0
+        for k in range(i0 + 1, i1):
+            acc += span_tokens[k - i0 - 1]
+            filled[k] = t0 + (t1 - t0) * (acc / total)
+
+    # no-decreciente por seguridad
+    for i in range(1, len(filled)):
+        filled[i] = max(filled[i], filled[i - 1])
+    return filled
+
+
 def _build_timeline(
     scenes: list,
     audio_name: str,
@@ -229,6 +476,7 @@ def _build_timeline(
     words: list,
     title: str,
     subtitle_style: Optional[dict] = None,
+    frases: Optional[list] = None,
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -240,6 +488,10 @@ def _build_timeline(
             highlightColor/background). Si es None, se omite la clave del
             todo y el default de zod en schema.ts rellena los valores
             actuales — mismo video que antes de esta opción.
+        frases: lista opcional de "frase del guion" por escena (mismo orden
+            y largo que scenes). Si viene y se puede alinear con confianza
+            contra la transcripción real, cada escena dura lo que tarda su
+            frase en narrarse en vez de repartirse en partes iguales.
     """
     n = len(scenes)
 
@@ -257,38 +509,59 @@ def _build_timeline(
     # Duración objetivo de cada escena: los clips de video usan su duración
     # real (capada a la duración extendida); las imágenes se reparten
     # el tiempo que sobra, con un mínimo de MIN_IMAGE_SECONDS cada una.
-    target = [None] * n
-    for i, sc in enumerate(scenes):
-        if sc["type"] == "video":
-            target[i] = min(sc["native_duration"] or DEFAULT_CLIP_SECONDS, extended_duration)
+    aligned = _align_boundaries_to_script(frases, words, duration) if frases and len(frases) == n else None
 
-    video_total = sum(t for t in target if t is not None)
-    n_images = target.count(None)
-    remaining = max(extended_duration - video_total, 0.0)
-    per_image = max(MIN_IMAGE_SECONDS, remaining / n_images) if n_images else 0.0
-    target = [per_image if t is None else t for t in target]
-
-    # Puntos de corte entre dos imágenes consecutivas: se ajustan a la pausa
-    # de habla más cercana para que el cambio de imagen no caiga a mitad de
-    # una palabra. Los cortes que tocan un clip de video no se mueven, porque
-    # su duración es fija (la del archivo). Ver PAUSE_GAP_THRESHOLD/PAUSE_SNAP_WINDOW.
-    boundaries = [0.0]
-    for dur in target:
-        boundaries.append(boundaries[-1] + dur)
-    boundaries[-1] = extended_duration
-
-    adjustable_idx = [i for i in range(1, n) if scenes[i - 1]["type"] == "image" and scenes[i]["type"] == "image"]
-    if adjustable_idx and words:
-        cut_times = [boundaries[i] for i in adjustable_idx]
-        snapped = _snap_cuts_to_pauses(cut_times, words)
-        for idx, new_t in zip(adjustable_idx, snapped):
-            boundaries[idx] = new_t
-        # Un corte ajustado no puede cruzarse con sus vecinos (mantener orden temporal)
-        # ni dejar una escena más corta que TRANSITION_FRAMES: TransitionSeries exige que
-        # cada Sequence dure al menos lo que la Transition que le sigue, o Remotion falla.
+    if aligned:
+        # Cortes alineados a donde cada frase empieza a narrarse en el audio
+        # real, en vez de reparto artificial parejo/reescalado.
+        scale = extended_duration / duration if duration > 0 else 1.0
+        boundaries = [b * scale for b in aligned]
+        target = [boundaries[i + 1] - boundaries[i] for i in range(n)]
         min_gap = (TRANSITION_FRAMES + 1) / FPS
         for i in range(1, len(boundaries) - 1):
             boundaries[i] = max(boundaries[i - 1] + min_gap, min(boundaries[i], boundaries[i + 1] - min_gap))
+    else:
+        target = [None] * n
+        for i, sc in enumerate(scenes):
+            if sc["type"] == "video":
+                target[i] = min(sc["native_duration"] or DEFAULT_CLIP_SECONDS, extended_duration)
+
+        video_total = sum(t for t in target if t is not None)
+        n_images = target.count(None)
+        remaining = max(extended_duration - video_total, 0.0)
+        per_image = max(MIN_IMAGE_SECONDS, remaining / n_images) if n_images else 0.0
+        target = [per_image if t is None else t for t in target]
+
+        # Sin imágenes que absorban el desfase entre el total de los clips y la
+        # duración del audio, hay que repartirlo proporcionalmente entre todos los
+        # clips (en vez de dejar que el ajuste final de 'boundaries[-1]' lo vuelque
+        # entero sobre el último clip, que terminaría con un playbackRate muy bajo
+        # = cámara lenta / "glitch" perceptible solo en la última escena).
+        if n_images == 0 and video_total > 0 and abs(extended_duration - video_total) > 0.01:
+            scale = extended_duration / video_total
+            target = [t * scale for t in target]
+
+        # Puntos de corte entre dos imágenes consecutivas: se ajustan a la pausa
+        # de habla más cercana para que el cambio de imagen no caiga a mitad de
+        # una palabra. Los cortes que tocan un clip de video no se mueven, porque
+        # su duración es fija (la del archivo). Ver PAUSE_GAP_THRESHOLD/PAUSE_SNAP_WINDOW.
+        boundaries = [0.0]
+        for dur in target:
+            boundaries.append(boundaries[-1] + dur)
+        boundaries[-1] = extended_duration
+
+        adjustable_idx = [i for i in range(1, n) if scenes[i - 1]["type"] == "image" and scenes[i]["type"] == "image"]
+        if adjustable_idx and words:
+            cut_times = [boundaries[i] for i in adjustable_idx]
+            snapped = _snap_cuts_to_pauses(cut_times, words)
+            for idx, new_t in zip(adjustable_idx, snapped):
+                boundaries[idx] = new_t
+            # Un corte ajustado no puede cruzarse con sus vecinos (mantener orden temporal)
+            # ni dejar una escena más corta que TRANSITION_FRAMES: TransitionSeries exige que
+            # cada Sequence dure al menos lo que la Transition que le sigue, o Remotion falla.
+            min_gap = (TRANSITION_FRAMES + 1) / FPS
+            for i in range(1, len(boundaries) - 1):
+                boundaries[i] = max(boundaries[i - 1] + min_gap, min(boundaries[i], boundaries[i + 1] - min_gap))
 
     directions = _build_kenburns_sequence(n)
 
@@ -325,8 +598,7 @@ def _build_timeline(
         "scenes": clips,
         "subtitles": words,
     }
-    if subtitle_style is not None:
-        timeline["subtitleStyle"] = subtitle_style
+    timeline["subtitleStyle"] = {**SUBTITLE_STYLE_DEFAULTS, **(subtitle_style or {})}
     return timeline
 
 
@@ -420,6 +692,7 @@ def build_props(
     language: str = "es",
     subtitles_enabled: bool = True,
     subtitle_style: Optional[dict] = None,
+    frases: Optional[list] = None,
     on_progress=None,
 ) -> Optional[dict]:
     """
@@ -440,6 +713,8 @@ def build_props(
             textColor/highlightColor/background (ver subtitleStyleSchema en
             video/src/schema.ts). Si es None, se usan los valores por
             defecto (ajustables después a mano en Remotion Studio).
+        frases: lista opcional de "frase del guion" por escena, en el mismo
+            orden que image_paths — ver _align_boundaries_to_script.
         on_progress: función opcional callback(str) para reportar avance.
 
     Returns:
@@ -484,9 +759,15 @@ def build_props(
     if n_video_clips:
         report(f"  🎞️  {n_video_clips} clip(s) de video detectado(s) entre las escenas.")
 
-    audio_ext = Path(audio_path).suffix.lower() or ".mp3"
-    audio_name = f"narracion{audio_ext}"
-    shutil.copy(audio_path, VIDEO_PUBLIC_DIR / audio_name)
+    # Normalizado a WAV siempre (48kHz + loudness) — así el sample rate y el
+    # loudness de entrega no dependen del formato con que llegó el audio.
+    # Si ffmpeg no está disponible, se cae a copiar el original tal cual
+    # (conservando su extensión real, ya que el WAV de respaldo no aplica).
+    audio_name = "narracion.wav"
+    report("🎚️  Normalizando audio (48kHz, loudness)...")
+    if not normalize_audio(audio_path, VIDEO_PUBLIC_DIR / audio_name, report=report):
+        audio_name = f"narracion{Path(audio_path).suffix.lower() or '.mp3'}"
+        shutil.copy(audio_path, VIDEO_PUBLIC_DIR / audio_name)
 
     # 2. Duración real del audio
     duration = get_audio_duration(str(VIDEO_PUBLIC_DIR / audio_name))
@@ -508,7 +789,7 @@ def build_props(
         report("🔇 Subtítulos desactivados — se omite la transcripción.")
 
     # 4. Timeline (qué escena se ve cuándo, con qué efecto o si es un clip de video)
-    timeline = _build_timeline(scenes, audio_name, duration, words, title, subtitle_style)
+    timeline = _build_timeline(scenes, audio_name, duration, words, title, subtitle_style, frases=frases)
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -533,10 +814,10 @@ def render_props(
     Returns:
         Ruta al .mp4 generado, o None si hubo error.
     """
-    def report(msg: str):
+    def report(msg: str, percent: Optional[int] = None):
         print(msg)
         if on_progress:
-            on_progress(msg)
+            on_progress(f"{msg} ({percent}%)" if percent is not None else msg)
 
     if output_name is None:
         output_name = f"video_{int(time.time())}.mp4"
@@ -547,13 +828,24 @@ def render_props(
     cmd = [
         "npx", "remotion", "render", "src/index.ts", composition_id,
         str(output_path), f"--props={props_path}",
+        # Specs de entrega (H.264/yuv420p/BT.709 + AAC 192k) — el sample
+        # rate y el loudness del audio ya vienen fijados por normalize_audio()
+        # sobre narracion.wav antes de llegar acá.
+        "--codec=h264",
+        "--crf=20",
+        "--pixel-format=yuv420p",
+        "--color-space=bt709",
+        "--audio-codec=aac",
+        "--audio-bitrate=192k",
     ]
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(VIDEO_DIR),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
             shell=(sys.platform == "win32"),
         )
     except FileNotFoundError:
@@ -563,9 +855,36 @@ def render_props(
         )
         return None
 
-    if result.returncode != 0:
+    # Remotion actualiza su barra de progreso pisando la misma línea con \r,
+    # no con \n, así que hay que leer de a un carácter para verla en vivo.
+    frame_re = re.compile(r"(\d+)/(\d+)")
+    ansi_re = re.compile(r"\x1b\[[0-9;]*m")
+    output_tail = ""
+    line_buf = ""
+    last_percent = None
+    while True:
+        ch = proc.stdout.read(1)
+        if not ch:
+            break
+        output_tail = (output_tail + ch)[-2500:]
+        if ch in ("\r", "\n"):
+            line = ansi_re.sub("", line_buf).strip()
+            line_buf = ""
+            m = frame_re.search(line)
+            if m:
+                frames, total = int(m.group(1)), int(m.group(2))
+                if total > 0:
+                    percent = min(99, int(frames / total * 100))
+                    if percent != last_percent:
+                        last_percent = percent
+                        report("🎬 Renderizando video con Remotion...", percent)
+        else:
+            line_buf += ch
+    proc.wait()
+
+    if proc.returncode != 0:
         report("[ERROR] Remotion falló al renderizar:")
-        report(result.stderr[-2500:] or result.stdout[-2500:])
+        report(output_tail)
         return None
 
     report(f"✅ Video guardado en: {output_path}")

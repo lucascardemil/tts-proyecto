@@ -18,6 +18,12 @@ const defaultProps = {
     textColor: "#ffffff",
     highlightColor: "#ffd98a",
     background: true,
+    strokeColor: null,
+    strokeWidth: 2,
+    uppercase: false,
+    italic: false,
+    letterSpacing: 0,
+    animationType: "highlight",
   },
 } satisfies StoryVideoProps;
 

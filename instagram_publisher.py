@@ -18,12 +18,13 @@ IA/TTS). Facebook (Página) no tiene ese parámetro documentado en su propia
 API, así que el marcado como IA solo aplica del lado de Instagram.
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+
+import meta_auth
 
 GRAPH_API_VERSION = "v21.0"
 GRAPH_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
@@ -60,9 +61,7 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
         return None, {"ok": False, "error": f"Respuesta inesperada de Instagram (HTTP {response.status_code})"}
 
     if not response.ok or "error" in payload:
-        fb_error = payload.get("error", {})
-        message = fb_error.get("message", "Error desconocido de Instagram")
-        return None, {"ok": False, "error": message}
+        return None, meta_auth.classify_error(payload, "Instagram")
 
     return payload, None
 
@@ -78,8 +77,8 @@ def get_media_stats(media_ids: list) -> dict:
         dict {media_id: {"views": int, "likes": int, "comments": int}}. Si no
         hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
     """
-    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-    if not access_token or not media_ids:
+    _, access_token, err = meta_auth.get_credentials()
+    if err or not media_ids:
         return {}
 
     stats = {}
@@ -140,14 +139,18 @@ def publish_video(video_path: str, title: str, description: str, on_status: Opti
         {"ok": True, "media_id": str} si se publicó, o
         {"ok": False, "error": str} si algo falló.
     """
-    page_id = os.environ.get("FB_PAGE_ID")
-    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-    if not page_id or not access_token:
-        return {"ok": False, "error": "Falta configurar FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN en .env"}
+    page_id, access_token, err = meta_auth.get_credentials()
+    if err:
+        return err
 
     path = Path(video_path)
     if not path.exists():
         return {"ok": False, "error": f"No se encontró el video: {video_path}"}
+
+    # Ver el comentario equivalente en facebook_publisher.publish_video.
+    token_check = meta_auth.validate()
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
 
     notify = on_status or (lambda msg: None)
 

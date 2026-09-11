@@ -32,8 +32,11 @@ export const subtitleWordSchema = z.object({
   end: z.number(), // segundos
 });
 
-export const subtitleFontId = z.enum(["cinzel", "playfair", "poppins", "montserrat"]);
+export const subtitleFontId = z.enum([
+  "cinzel", "playfair", "poppins", "montserrat", "bebas", "anton", "bangers",
+]);
 export const subtitlePosition = z.enum(["top", "center", "bottom"]);
+export const subtitleAnimationType = z.enum(["highlight", "scale", "bounce"]);
 
 export const subtitleStyleSchema = z.object({
   fontFamily: subtitleFontId.default("cinzel"),
@@ -46,6 +49,14 @@ export const subtitleStyleSchema = z.object({
   textColor: z.string().default("#ffffff"),
   highlightColor: z.string().default("#ffd98a"),
   background: z.boolean().default(true),
+  // Contorno del texto (look "karaoke TikTok": blanco + borde negro). Sin
+  // definir = sin contorno, se usa solo la sombra existente.
+  strokeColor: z.string().nullable().default(null),
+  strokeWidth: z.number().default(2),
+  uppercase: z.boolean().default(false),
+  italic: z.boolean().default(false),
+  letterSpacing: z.number().default(0),
+  animationType: subtitleAnimationType.default("highlight"),
 });
 
 export const storyVideoSchema = z.object({
@@ -61,6 +72,12 @@ export const storyVideoSchema = z.object({
     textColor: "#ffffff",
     highlightColor: "#ffd98a",
     background: true,
+    strokeColor: null,
+    strokeWidth: 2,
+    uppercase: false,
+    italic: false,
+    letterSpacing: 0,
+    animationType: "highlight",
   }),
 });
 

@@ -185,7 +185,6 @@ def bootstrap_voice(voice_id: str, show_progress: bool = True) -> bool:
     try:
         import asyncio
         import edge_tts
-        import torchaudio as ta
     except ImportError:
         print(
             f"[ERROR] Para generar la voz de referencia '{voice_id}' la primera vez, "
@@ -207,8 +206,10 @@ def bootstrap_voice(voice_id: str, show_progress: bool = True) -> bool:
 
         asyncio.run(_gen())
 
-        waveform, sr = ta.load(str(tmp_mp3))
-        ta.save(str(voice_reference_path(voice_id)), waveform, sr, encoding="PCM_S", bits_per_sample=16)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(tmp_mp3), "-acodec", "pcm_s16le", str(voice_reference_path(voice_id))],
+            check=True, capture_output=True,
+        )
         return True
     except Exception as e:
         print(f"[ERROR] No se pudo generar la voz de referencia '{voice_id}': {e}")
@@ -530,7 +531,8 @@ def tts_chatterbox(
     tmp_path = f"{output_path}.tmp.wav"
 
     try:
-        import torchaudio as ta
+        import numpy as np
+        import soundfile as sf
 
         for attempt in range(max_attempts):
             # En reintentos (no en el primer intento) bajamos temperature
@@ -547,12 +549,13 @@ def tts_chatterbox(
                 temperature=attempt_temperature,
                 repetition_penalty=repetition_penalty,
             )
-            # encoding/bits_per_sample explícitos: el tensor que devuelve
-            # ChatterboxMultilingualTTS.generate() se guarda por default en
-            # formato float (WAVE_FORMAT_IEEE_FLOAT), que el módulo wave de
-            # la stdlib (usado en _detect_dead_air/_concat_wav) no sabe leer
-            # ("unknown format: 3"). Forzar PCM de 16 bits lo deja legible.
-            ta.save(tmp_path, wav, model.sr, encoding="PCM_S", bits_per_sample=16)
+            # PCM de 16 bits explícito: el tensor que devuelve
+            # ChatterboxMultilingualTTS.generate() es float, que el módulo
+            # wave de la stdlib (usado en _detect_dead_air/_concat_wav) no
+            # sabe leer ("unknown format: 3"). Convertir a int16 lo deja legible.
+            wav_np = wav.squeeze().cpu().numpy()
+            wav_int16 = np.clip(wav_np * 32767, -32768, 32767).astype(np.int16)
+            sf.write(tmp_path, wav_int16, model.sr, subtype="PCM_16")
 
             if verify_audio and detector.has_glitch(tmp_path, text):
                 if attempt < max_attempts - 1:

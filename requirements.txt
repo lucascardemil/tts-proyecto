@@ -15,9 +15,19 @@ flask>=3.0.0
 # textos largos — de ahí la verificación con faster-whisper (ver más
 # abajo) con reintentos. Descarga sus pesos solo (~2GB) de HuggingFace la
 # primera vez que se usa.
-chatterbox-tts==0.1.7
+#
+# IMPORTANTE: el soporte de t3_model="v3" (checkpoint V3, que usa
+# _get_chatterbox_model() en tts_engine.py) todavía no está en el release
+# 0.1.7 de PyPI — solo en la rama main de GitHub. Instalar desde ahí, NO
+# desde PyPI, o from_pretrained() falla con "unexpected keyword argument
+# 't3_model'":
+#   pip install "git+https://github.com/resemble-ai/chatterbox.git"
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git
 torch>=2.6.0
 torchaudio>=2.6.0
+# El wheel de torch en PyPI (arriba) es CPU-only en Windows. Para usar la GPU
+# (NVIDIA), instalar despues con el indice de PyTorch que matchee tu driver, ej:
+#   pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # ─────────────────────────────────────────────
 # Edge TTS — NO es un motor seleccionable, se usa internamente UNA SOLA VEZ

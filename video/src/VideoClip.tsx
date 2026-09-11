@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, Video, staticFile, Loop } from "remotion";
+import { AbsoluteFill, OffthreadVideo, staticFile, Loop } from "remotion";
 
 export const VideoClip: React.FC<{
   src: string;
@@ -19,7 +19,7 @@ export const VideoClip: React.FC<{
   if (playbackRate !== undefined && playbackRate < 1) {
     return (
       <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#000" }}>
-        <Video
+        <OffthreadVideo
           src={staticFile(src)}
           muted
           playbackRate={playbackRate}
@@ -32,7 +32,7 @@ export const VideoClip: React.FC<{
   return (
     <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#000" }}>
       <Loop durationInFrames={Math.max(nativeDurationInFrames, 1)}>
-        <Video src={staticFile(src)} muted style={videoStyle} />
+        <OffthreadVideo src={staticFile(src)} muted style={videoStyle} />
       </Loop>
     </AbsoluteFill>
   );

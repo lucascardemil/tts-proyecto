@@ -7,7 +7,7 @@ que funciona siempre y es gratis.
 import re
 from collections import Counter
 
-POWER_WORDS = ["Historia", "Real", "Increíble", "Impactante", "Secreto", "Nunca Contada"]
+POWER_WORDS = ["Real", "Increíble", "Impactante", "Secreto", "Definitivo", "Explicado"]
 
 STOPWORDS = {
     "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
@@ -32,19 +32,23 @@ def _extract_keywords(text: str, limit: int = 12) -> list:
     return [w for w, _ in counts.most_common(limit)]
 
 
-def _build_title(base_title: str, keywords: list) -> str:
-    base_title = (base_title or "").strip()
-    if not base_title and keywords:
-        base_title = " ".join(w.capitalize() for w in keywords[:3])
-    if not base_title:
-        base_title = "Historia Real"
+def _build_title(script_text: str, keywords: list) -> str:
+    """
+    El título sale siempre del gancho real del guion (su primera oración),
+    nunca de un título previo — reusar un título ya generado como semilla
+    hace que, en cada click de "sugerir SEO", se le vuelvan a pegar palabras
+    clave y power words encima de las que ya tenía (título cada vez más
+    largo y sin sentido). Esta función es idempotente: mismo guion, mismo
+    título, sin importar cuántas veces se la llame.
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", script_text.strip())
+    hook = sentences[0].strip().strip("«»\"“”") if sentences and sentences[0].strip() else ""
 
-    title = base_title
-    if len(title) <= 60 and keywords:
-        extra = keywords[0].capitalize()
-        if extra.lower() not in title.lower():
-            title = f"{title} | {extra.capitalize()}"
-    if len(title) <= 70:
+    title = hook or (" ".join(w.capitalize() for w in keywords[:4]) if keywords else "Video")
+    if len(title) > 90:
+        title = title[:87].rsplit(" ", 1)[0] + "..."
+
+    if len(title) <= 75:
         power = next((p for p in POWER_WORDS if p.lower() not in title.lower()), None)
         if power:
             title = f"{title} ({power})"
@@ -59,7 +63,7 @@ def _build_description(script_text: str, keywords: list, title: str) -> str:
         "",
         f"En este video: {top_keywords}." if top_keywords else "",
         "",
-        "🔔 Suscribite para más historias como esta.",
+        "🔔 Suscribite para más contenido como este.",
         "👍 Dejá tu like y contame qué te pareció en los comentarios.",
     ]
     description = "\n".join(l for l in lines if l is not None)
@@ -124,7 +128,7 @@ def suggest_social_caption(script_text: str) -> dict:
     sentences = re.split(r"(?<=[.!?])\s+", script_text.strip())
     hook = " ".join(sentences[:2]).strip()[:200] if sentences else ""
 
-    caption_lines = [hook, "", "🔔 Seguime para más historias como esta."]
+    caption_lines = [hook, "", "🔔 Seguime para más contenido como este."]
     caption = "\n".join(l for l in caption_lines if l)
 
     hashtags = [f"#{w}" for w in keywords[:10]]
@@ -138,13 +142,13 @@ def suggest_seo(script_text: str, base_title: str = "") -> dict:
 
     Args:
         script_text: texto completo de la narración.
-        base_title: título tentativo (opcional, ej. las primeras palabras del guion).
+        base_title: ya no se usa (se ignora) — ver _build_title().
 
     Returns:
         {"title": str, "description": str, "tags": list[str], "score": int}
     """
     keywords = _extract_keywords(script_text)
-    title = _build_title(base_title, keywords)
+    title = _build_title(script_text, keywords)
     description = _build_description(script_text, keywords, title)
     tags = _build_tags(keywords, title)
     return {

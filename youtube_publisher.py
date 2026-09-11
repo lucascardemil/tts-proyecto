@@ -31,7 +31,7 @@ TOKEN_PATH = Path(__file__).parent / "youtube_token.json"
 
 
 def is_connected() -> bool:
-    return TOKEN_PATH.exists()
+    return _load_credentials() is not None
 
 
 def _load_credentials() -> Optional[Credentials]:
@@ -42,8 +42,12 @@ def _load_credentials() -> Optional[Credentials]:
         try:
             creds.refresh(Request())
         except RefreshError:
-            # El usuario revocó el acceso o el token venció del todo: hay que
-            # reconectar de nuevo, no hay nada más que hacer con este token.
+            # El usuario revocó el acceso o el refresh token venció del todo
+            # (p.ej. apps OAuth en modo "Testing" en Google Cloud Console,
+            # que vencen el refresh token a los 7 días): hay que reconectar
+            # de nuevo. Se borra el token viejo para que is_connected()
+            # refleje esto y la UI vuelva a ofrecer "Conectar cuenta".
+            TOKEN_PATH.unlink(missing_ok=True)
             return None
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     return creds
@@ -97,7 +101,7 @@ def publish_video(
     """
     creds = _load_credentials()
     if creds is None:
-        return {"ok": False, "error": "Todavía no conectaste tu cuenta de YouTube."}
+        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo."}
 
     path = Path(video_path)
     if not path.exists():
@@ -136,7 +140,7 @@ def set_thumbnail(video_id: str, thumbnail_path: str) -> dict:
     """Sube una miniatura personalizada (.jpg, hasta 2MB) para un video ya publicado."""
     creds = _load_credentials()
     if creds is None:
-        return {"ok": False, "error": "Todavía no conectaste tu cuenta de YouTube."}
+        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo."}
 
     path = Path(thumbnail_path)
     if not path.exists():

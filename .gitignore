@@ -11,3 +11,6 @@ output/
 video/node_modules/
 video/out/
 *.log
+logs/
+scratch/
+.claude/

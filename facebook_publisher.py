@@ -3,19 +3,20 @@ Publicación de videos en una Página de Facebook vía Graph API.
 
 Requiere un Page Access Token (de una app de Facebook Developers, con
 permisos pages_manage_posts + pages_read_engagement) guardado en las
-variables de entorno FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN (ver .env.example).
+variables de entorno FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN (ver .env).
 No hace falta ningún flujo de login/OAuth: el token ya autoriza a la app
 a publicar en esa Página.
 """
 
 import json
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+
+import meta_auth
 
 GRAPH_API_VERSION = "v19.0"
 # Facebook usa un host aparte para subir video (no el graph.facebook.com normal).
@@ -99,8 +100,8 @@ def get_video_stats(video_ids: list) -> dict:
         dict {video_id: {"views": int, "likes": int, "comments": int}}. Si no
         hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
     """
-    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-    if not access_token or not video_ids:
+    _, access_token, err = meta_auth.get_credentials()
+    if err or not video_ids:
         return {}
 
     stats = {}
@@ -143,9 +144,7 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
         # El mensaje de error de Facebook suele explicar exactamente qué
         # falló (token vencido, permisos faltantes, etc) — se lo pasamos
         # tal cual al usuario en vez de un genérico "falló la subida".
-        fb_error = payload.get("error", {})
-        message = fb_error.get("message", "Error desconocido de Facebook")
-        return None, {"ok": False, "error": message}
+        return None, meta_auth.classify_error(payload, "Facebook")
 
     return payload, None
 
@@ -175,17 +174,20 @@ def publish_video(video_path: str, title: str, description: str, on_status: Opti
         subió correctamente (scheduled_time en ISO si se programó, None si
         se publicó de inmediato), o {"ok": False, "error": str} si algo falló.
     """
-    page_id = os.environ.get("FB_PAGE_ID")
-    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-    if not page_id or not access_token:
-        return {
-            "ok": False,
-            "error": "Falta configurar FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN en .env",
-        }
+    page_id, access_token, err = meta_auth.get_credentials()
+    if err:
+        return err
 
     path = Path(video_path)
     if not path.exists():
         return {"ok": False, "error": f"No se encontró el video: {video_path}"}
+
+    # Chequeo del token antes de empezar a transferir: si está invalidado,
+    # Facebook rechazaría la subida igual, pero recién después de abrir la
+    # sesión — y el mensaje que devuelve no dice qué hacer al respecto.
+    token_check = meta_auth.validate()
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
 
     scheduled_time, effective_ts = _decide_publish_time()
     finish_extra = {}
