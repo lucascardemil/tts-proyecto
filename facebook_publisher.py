@@ -3,7 +3,7 @@ Publicación de videos en una Página de Facebook vía Graph API.
 
 Requiere un Page Access Token (de una app de Facebook Developers, con
 permisos pages_manage_posts + pages_read_engagement) guardado en las
-variables de entorno FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN (ver .env).
+variables de entorno FB_PAGE_<N>_ID y FB_PAGE_<N>_TOKEN (ver .env, meta_auth.py).
 No hace falta ningún flujo de login/OAuth: el token ya autoriza a la app
 a publicar en esa Página.
 """
@@ -89,23 +89,30 @@ def _decide_publish_time() -> tuple[Optional[datetime], float]:
     return datetime.fromtimestamp(next_slot), next_slot
 
 
-def get_video_stats(video_ids: list) -> dict:
+def get_video_stats(video_ids: list, id_to_page: Optional[dict] = None) -> dict:
     """
     Consulta vistas/likes/comentarios de videos ya publicados (Graph API).
 
     Args:
         video_ids: lista de IDs de video de Facebook.
+        id_to_page: mapeo {video_id: page_id} para usar el token de la
+            página que publicó cada video (varias páginas, cada una con su
+            propio token). Los videos sin entrada (registros previos a esta
+            función) usan la primera página configurada.
 
     Returns:
         dict {video_id: {"views": int, "likes": int, "comments": int}}. Si no
         hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
     """
-    _, access_token, err = meta_auth.get_credentials()
-    if err or not video_ids:
+    if not video_ids:
         return {}
+    id_to_page = id_to_page or {}
 
     stats = {}
     for video_id in video_ids:
+        _, access_token, err = meta_auth.get_credentials(id_to_page.get(video_id))
+        if err:
+            continue
         try:
             response = requests.get(
                 f"https://graph.facebook.com/{GRAPH_API_VERSION}/{video_id}",
@@ -149,13 +156,40 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     return payload, None
 
 
-def publish_video(video_path: str, title: str, description: str, on_status: Optional[Callable[[str], None]] = None) -> dict:
+def _resolve_schedule(requested_ts: Optional[float]) -> tuple[Optional[datetime], float]:
     """
-    Sube un video a la Página de Facebook configurada. Decide sola cuándo
-    debe salir la publicación para mantener al menos 1 hora de separación
-    con la anterior (ver POST_SPACING_SECONDS/_decide_publish_time): la
-    publica de inmediato si ya pasó esa hora, o la programa automáticamente
-    para completarla — el usuario nunca elige horario.
+    Si vino un horario pedido explícitamente (elegido a mano o sugerido por
+    el "mejor horario"), lo usa tal cual — salvo que esté fuera de la
+    ventana que admite Facebook (menos de 10 min o más de 75 días), en cuyo
+    caso se publica ya. Si no vino ninguno, cae al auto-decide interno
+    (_decide_publish_time) que solo mantiene 1 hora de separación.
+    """
+    if requested_ts is None:
+        return _decide_publish_time()
+
+    now = time.time()
+    delta = requested_ts - now
+    if delta < MIN_SCHEDULE_SECONDS or delta > MAX_SCHEDULE_SECONDS:
+        return None, now
+    return datetime.fromtimestamp(requested_ts), requested_ts
+
+
+def publish_video(
+    video_path: str,
+    title: str,
+    description: str,
+    page_id: Optional[str] = None,
+    scheduled_time: Optional[float] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """
+    Sube un video a la Página de Facebook indicada (o la primera configurada
+    si no se pasa page_id). Si se pasa scheduled_time (timestamp) lo usa como
+    horario real de Facebook (scheduled_publish_time de la Graph API — la
+    publicación queda programada del lado de Meta, visible en Meta Business
+    Suite, y sobrevive a que este server se reinicie). Si no se pasa nada,
+    decide sola cuándo debe salir para mantener al menos 1 hora de
+    separación con la anterior (ver POST_SPACING_SECONDS/_decide_publish_time).
 
     Usa el protocolo de subida reanudable (Resumable Upload) de la Graph
     API en vez de mandar el archivo entero en un solo POST: para videos de
@@ -168,13 +202,15 @@ def publish_video(video_path: str, title: str, description: str, on_status: Opti
         video_path: ruta local al archivo .mp4 a publicar.
         title: título del video.
         description: descripción/caption del post.
+        scheduled_time: timestamp (epoch) al que debe salir, o None para
+            dejar que la función decida sola.
 
     Returns:
         {"ok": True, "video_id": str, "scheduled_time": str|None} si se
         subió correctamente (scheduled_time en ISO si se programó, None si
         se publicó de inmediato), o {"ok": False, "error": str} si algo falló.
     """
-    page_id, access_token, err = meta_auth.get_credentials()
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
     if err:
         return err
 
@@ -185,11 +221,11 @@ def publish_video(video_path: str, title: str, description: str, on_status: Opti
     # Chequeo del token antes de empezar a transferir: si está invalidado,
     # Facebook rechazaría la subida igual, pero recién después de abrir la
     # sesión — y el mensaje que devuelve no dice qué hacer al respecto.
-    token_check = meta_auth.validate()
+    token_check = meta_auth.validate(page_id)
     if not token_check["ok"]:
         return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
 
-    scheduled_time, effective_ts = _decide_publish_time()
+    scheduled_time, effective_ts = _resolve_schedule(scheduled_time)
     finish_extra = {}
     if scheduled_time is not None:
         finish_extra["published"] = "false"

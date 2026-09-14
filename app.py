@@ -56,6 +56,7 @@ load_dotenv()
 GDRIVE_VIDEOS_DIR = Path(os.environ.get("GDRIVE_VIDEOS_DIR", r"G:\Mi unidad\VIDEOS DE FACEBOOK"))
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB: tope de subida (imágenes/clips del pipeline manual)
 
 
 HTML = r"""<!DOCTYPE html>
@@ -603,6 +604,16 @@ HTML = r"""<!DOCTYPE html>
         Incluir subtítulos
       </label>
 
+      <label class="checkbox-row" for="pipeline-animate-images">
+        <input type="checkbox" id="pipeline-animate-images" checked>
+        Animar imágenes (Ken Burns)
+      </label>
+
+      <label class="checkbox-row" for="pipeline-generate-video-clips">
+        <input type="checkbox" id="pipeline-generate-video-clips" checked>
+        Animar clips al generarlos (si no, solo imagen estática)
+      </label>
+
       <div class="pipeline-action-row">
         <button id="pipeline-start-btn" class="btn btn-primary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><path d="M12 3l1.9 5.7L20 10.5l-5.7 1.9L12 18l-1.9-5.6L4 10.5l5.7-1.8z"/></svg>
@@ -653,6 +664,11 @@ HTML = r"""<!DOCTYPE html>
 
         <div class="card" style="margin-top:20px">
           <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg> Publicar</h2>
+
+          <div id="pub-page-wrap" style="display:none;margin-bottom:10px">
+            <label for="pub-page">Página de Facebook/Instagram</label>
+            <select id="pub-page"></select>
+          </div>
 
           <div class="pub-target-row">
             <label><input type="checkbox" id="pub-fb" checked> 📘 Facebook</label>
@@ -929,9 +945,10 @@ function activateTab(tab) {
   $("tab-ajustes").style.display = tab === "ajustes" ? "" : "none";
   if (tab === "video") {
     checkYoutubeConnection();
-    checkMetaToken();
+    loadMetaPages().then(checkMetaToken);
   }
   if (tab === "historial") {
+    loadMetaPages().then(checkMetaToken);
     loadHistorialVideos();
   }
   if (tab === "ajustes") {
@@ -1024,6 +1041,28 @@ async function deleteHistorialVideo(filename, item) {
 function selectHistorialVideo(filename, item) {
   document.querySelectorAll(".hist-item.selected").forEach(el => el.classList.remove("selected"));
   item.classList.add("selected");
+  if (filename !== currentVideoPath) {
+    // Video distinto al que estaba cargado: limpiar guion y sugerencias
+    // viejas, si no _publishSourceText() devuelve el guion del video
+    // anterior (cache en #pipeline-script) y las sugerencias de
+    // caption/SEO quedan pegadas a esa publicación anterior.
+    $("pipeline-script").value = "";
+    $("pub-fb-description").value = "";
+    $("pub-ig-description").value = "";
+    $("yt-title").value = "";
+    $("pub-yt-description").value = "";
+    $("yt-tags").value = "";
+    $("fb-caption-status").textContent = "";
+    $("ig-caption-status").textContent = "";
+    $("yt-seo-status").textContent = "";
+    generatedThumbnail = null;
+    $("yt-thumb-preview").style.display = "none";
+    $("yt-thumb-variants").style.display = "none";
+    $("yt-thumb-variants").innerHTML = "";
+    $("fb-status").innerHTML = "";
+    $("ig-status").innerHTML = "";
+    $("yt-status").innerHTML = "";
+  }
   currentVideoPath = filename;
   $("pipeline-player").src = `/video/${filename}`;
   $("historial-publish-hint").style.display = "none";
@@ -1244,6 +1283,7 @@ async function rehydratePipelineJob() {
     $("pipeline-panels").style.display = "";
     await pollPipelineStatus(jobId);
     if (data.status === "running") {
+      if (pipelinePollTimer) clearInterval(pipelinePollTimer);
       pipelinePollTimer = setInterval(() => pollPipelineStatus(jobId), 3000);
     }
   } catch (e) {}
@@ -1357,6 +1397,7 @@ $("pipeline-retry-btn").addEventListener("click", async () => {
       return;
     }
     setLastPipelineJobId(data.job_id);
+    if (pipelinePollTimer) clearInterval(pipelinePollTimer);
     pipelinePollTimer = setInterval(() => pollPipelineStatus(data.job_id), 3000);
   } catch (e) {
     alert("No se pudo reintentar.");
@@ -1411,6 +1452,8 @@ $("pipeline-start-btn").addEventListener("click", async () => {
         orientation: $("pipeline-orientation").value,
         subtitles_enabled: $("pipeline-subtitles-enabled").checked,
         subtitle_preset: pipelineSubtitlePreset,
+        animate_images: $("pipeline-animate-images").checked,
+        generate_video_clips: $("pipeline-generate-video-clips").checked,
       }),
     });
     const data = await res.json();
@@ -1420,6 +1463,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
       return;
     }
     setLastPipelineJobId(data.job_id);
+    if (pipelinePollTimer) clearInterval(pipelinePollTimer);
     pipelinePollTimer = setInterval(() => pollPipelineStatus(data.job_id), 3000);
   } catch (e) {
     alert("No se pudo iniciar el pipeline.");
@@ -1549,6 +1593,7 @@ function updatePublishExtras() {
 $("pub-fb").addEventListener("change", updatePublishExtras);
 $("pub-ig").addEventListener("change", updatePublishExtras);
 $("pub-yt").addEventListener("change", () => { updatePublishExtras(); checkYoutubeConnection(); });
+$("pub-page").addEventListener("change", checkMetaToken);
 updatePublishExtras();
 
 $("pub-schedule").addEventListener("change", () => {
@@ -1627,10 +1672,32 @@ const showFbStatus = (type, msg, authError) => _showPubStatus("fb-status", type,
 const showIgStatus = (type, msg, authError) => _showPubStatus("ig-status", type, msg, () => publishToInstagram(), authError);
 const showYtStatus = (type, msg) => _showPubStatus("yt-status", type, msg, () => publishToYoutube());
 
+/** Carga las páginas configuradas en .env y llena el selector "Publicar". */
+async function loadMetaPages() {
+  try {
+    const res = await fetch("/api/meta/pages");
+    const data = await res.json();
+    const pages = (data.ok && data.pages) || [];
+    const sel = $("pub-page");
+    const previousValue = sel.value;
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
+    if (previousValue && pages.some(p => p.page_id === previousValue)) {
+      sel.value = previousValue;
+    }
+    $("pub-page-wrap").style.display = pages.length > 1 ? "" : "none";
+  } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
+}
+
+function selectedPageId() {
+  const sel = $("pub-page");
+  return sel && sel.value ? sel.value : null;
+}
+
 async function checkMetaToken() {
   const el = $("meta-token-status");
+  const pageId = selectedPageId();
   try {
-    const res = await fetch("/api/meta/token-status");
+    const res = await fetch("/api/meta/token-status" + (pageId ? "?page_id=" + encodeURIComponent(pageId) : ""));
     const data = await res.json();
     if (data.ok) {
       el.style.display = "none";
@@ -1640,14 +1707,18 @@ async function checkMetaToken() {
     _showPubStatus("meta-token-status", "error", "⚠️ Facebook/Instagram: " + data.error,
                    () => checkMetaToken(), data.auth_error);
   } catch (e) {
-    el.style.display = "none";  // sin conexión al server no hay nada útil que avisar
+    // sin conexión al server: no tocar el banner, dejar el último estado visible
   }
 }
 
 /** Relee .env para tomar el token nuevo y, si ahora es válido, reintenta lo que falló. */
 async function reloadMetaToken(retryFn) {
   try {
-    const res = await fetch("/api/meta/reload-token", { method: "POST" });
+    const res = await fetch("/api/meta/reload-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page_id: selectedPageId() }),
+    });
     const data = await res.json();
     if (data.ok) {
       $("meta-token-status").style.display = "none";
@@ -1667,11 +1738,6 @@ async function pollFacebookJob(jobId) {
     const res = await fetch("/api/facebook/status/" + jobId);
     const data = await res.json();
     if (!data.ok) { showFbStatus("error", "❌ " + (data.error || "Error al consultar el estado.")); return; }
-    if (data.status === "scheduled") {
-      const when = new Date(data.scheduled_for).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
-      showFbStatus("loading", `Facebook programado para ${when}...`);
-      continue;
-    }
     if (data.status === "running" && data.stage) {
       showFbStatus("loading", data.stage);
       continue;
@@ -1702,8 +1768,8 @@ async function pollInstagramJob(jobId) {
     if (!data.ok) { showIgStatus("error", "❌ " + (data.error || "Error al consultar el estado.")); return; }
     if (data.status === "scheduled") {
       const when = new Date(data.scheduled_for).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
-      showIgStatus("loading", `Instagram programado para ${when}...`);
-      continue;
+      showIgStatus("success", `🕒 Instagram programado para ${when} (se publica solo, no hace falta esperar acá)`);
+      return;
     }
     if (data.status === "running" && data.stage) {
       showIgStatus("loading", data.stage);
@@ -1736,6 +1802,7 @@ async function publishToFacebook(force) {
         title: $("yt-title").value.trim(),
         description: $("pub-fb-description").value.trim(),
         scheduled_time: scheduledTime,
+        page_id: selectedPageId(),
         force: !!force,
       }),
     });
@@ -1768,6 +1835,7 @@ async function publishToInstagram(force) {
         title: $("yt-title").value.trim(),
         description: $("pub-ig-description").value.trim(),
         scheduled_time: scheduledTime,
+        page_id: selectedPageId(),
         force: !!force,
       }),
     });
@@ -1891,7 +1959,6 @@ async function _publishSourceText() {
     const res = await fetch(`/api/pipeline/script/${encodeURIComponent(currentVideoPath)}`);
     const data = await res.json();
     if (data.ok && data.text) {
-      $("pipeline-script").value = data.text;
       return data.text;
     }
   } catch (e) {}
@@ -2253,6 +2320,7 @@ def api_tts_status(job_id):
 
 @app.route("/audio/<filename>")
 def serve_audio(filename):
+    filename = secure_filename_safe(filename)
     filepath = OUTPUT_DIR / filename
     if not filepath.exists():
         return "Archivo no encontrado", 404
@@ -2278,7 +2346,7 @@ _video_render_lock = threading.Lock()
 
 def _run_video_job(job_id: str, image_paths: list, audio_path: str, title: str,
                     subtitles_enabled: bool, subtitle_style: Optional[dict], orientation: str, cleanup,
-                    clip_story_id: Optional[str] = None):
+                    clip_story_id: Optional[str] = None, animate_images: bool = True):
     def on_progress(msg):
         with _video_jobs_lock:
             _video_jobs[job_id]["message"] = msg
@@ -2295,6 +2363,7 @@ def _run_video_job(job_id: str, image_paths: list, audio_path: str, title: str,
                 title=title,
                 subtitles_enabled=subtitles_enabled,
                 subtitle_style=subtitle_style,
+                animate_images=animate_images,
                 on_progress=on_progress,
             )
             video_path = None
@@ -2335,7 +2404,8 @@ _clipgen_jobs_lock = threading.Lock()
 _clipgen_lock = threading.Lock()
 
 
-def _run_clipgen_job(job_id: str, story_text: str, story_id: str, clips_dir: Path, provider: str):
+def _run_clipgen_job(job_id: str, story_text: str, story_id: str, clips_dir: Path, provider: str,
+                      generate_video_clips: bool = True):
     def on_progress(msg):
         with _clipgen_jobs_lock:
             _clipgen_jobs[job_id]["message"] = msg
@@ -2351,7 +2421,7 @@ def _run_clipgen_job(job_id: str, story_text: str, story_id: str, clips_dir: Pat
             start_index = auto_pipeline.resume_index(clips_dir)
             clips = auto_pipeline.generate_clips(
                 story, clips_dir, unattended=True, start_index=start_index, on_progress=on_progress,
-                provider=provider,
+                provider=provider, generate_video=generate_video_clips,
             )
     except Exception as e:
         logger.exception("clipgen job %s: fallo", job_id)
@@ -2379,6 +2449,7 @@ def api_clipgen_start():
     story_text = data.get("story_text", "").strip()
     story_id = data.get("story_id", "").strip() or uuid.uuid4().hex[:8]
     provider = data.get("provider", "whatsapp").strip()
+    generate_video_clips = bool(data.get("generate_video_clips", True))
 
     if not story_text:
         return jsonify({"ok": False, "error": "Pega el texto de la historia (guion + prompts)."}), 400
@@ -2402,6 +2473,7 @@ def api_clipgen_start():
     thread = threading.Thread(
         target=_run_clipgen_job,
         args=(job_id, story_text, story_id, clips_dir, provider),
+        kwargs={"generate_video_clips": generate_video_clips},
         daemon=True,
     )
     thread.start()
@@ -2537,7 +2609,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                        tts_kwargs: dict, orientation: str, subtitles_enabled: bool,
                        subtitle_style: Optional[dict], title: str, provider: str = "whatsapp",
                        skip_tts: bool = False, script_text: Optional[str] = None,
-                       wait_tts_from: Optional[str] = None):
+                       wait_tts_from: Optional[str] = None, animate_images: bool = True,
+                       generate_video_clips: bool = True):
     # Si el guion vino ya separado desde la UI (campo propio), se usa tal cual --
     # extract_script() adivina por heading/posición y puede confundirse si el
     # bloque de prompts menciona la palabra "guion" (p.ej. "Frase del guion:").
@@ -2609,7 +2682,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 start_index = auto_pipeline.resume_index(clips_dir)
                 clips = auto_pipeline.generate_clips(
                     story, clips_dir, unattended=True, start_index=start_index, on_progress=on_progress,
-                    provider=provider,
+                    provider=provider, generate_video=generate_video_clips,
                 )
         except Exception as e:
             logger.exception("pipeline job %s: clipgen fallo", job_id)
@@ -2666,7 +2739,10 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             _pipeline_sub_update(job_id, "video", message=msg)
 
     try:
-        clips = sorted(str(p) for p in clips_dir.glob("scene_*.mp4"))
+        clips = sorted(
+            (str(p) for p in clips_dir.glob("scene_*.*") if p.suffix in (".mp4", ".jpg")),
+            key=lambda s: int(Path(s).stem.split("_")[1]),
+        )
         audio_path = str(OUTPUT_DIR / audio_filename)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
         frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
@@ -2678,6 +2754,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 subtitles_enabled=subtitles_enabled,
                 subtitle_style=subtitle_style,
                 frases=frases,
+                animate_images=animate_images,
                 on_progress=on_progress,
             )
             video_path = None
@@ -2756,6 +2833,8 @@ def api_pipeline_start():
         return jsonify({"ok": False, "error": f"Proveedor desconocido: {provider}"}), 400
     subtitles_enabled = bool(data.get("subtitles_enabled", True))
     subtitle_style = video_maker.get_subtitle_preset_style(data.get("subtitle_preset", ""))
+    animate_images = bool(data.get("animate_images", True))
+    generate_video_clips = bool(data.get("generate_video_clips", True))
 
     job_id = uuid.uuid4().hex
     inputs = {
@@ -2767,6 +2846,8 @@ def api_pipeline_start():
         "subtitle_style": subtitle_style,
         "title": title,
         "provider": provider,
+        "animate_images": animate_images,
+        "generate_video_clips": generate_video_clips,
     }
     with _pipeline_jobs_lock:
         _pipeline_jobs[job_id] = {
@@ -2787,7 +2868,8 @@ def api_pipeline_start():
         target=_run_pipeline_job,
         args=(job_id, story_text, story_id, clips_dir, tts_kwargs, orientation,
               subtitles_enabled, subtitle_style, title, provider),
-        kwargs={"script_text": script_text},
+        kwargs={"script_text": script_text, "animate_images": animate_images,
+                "generate_video_clips": generate_video_clips},
         daemon=True,
     )
     thread.start()
@@ -2855,7 +2937,9 @@ def api_pipeline_retry(job_id):
               inputs["orientation"], inputs["subtitles_enabled"], inputs["subtitle_style"],
               inputs["title"], inputs["provider"]),
         kwargs={"skip_tts": skip_tts, "script_text": inputs.get("script_text"),
-                "wait_tts_from": wait_tts_from},
+                "wait_tts_from": wait_tts_from,
+                "animate_images": inputs.get("animate_images", True),
+                "generate_video_clips": inputs.get("generate_video_clips", True)},
         daemon=True,
     )
     thread.start()
@@ -2986,6 +3070,7 @@ def api_video_start():
         return jsonify({"ok": False, "error": "Elige un audio ya generado o sube uno nuevo."}), 400
 
     subtitles_enabled = request.form.get("subtitles_enabled", "1").strip() not in ("0", "false", "")
+    animate_images = request.form.get("animate_images", "1").strip() not in ("0", "false", "")
     style_overrides = {
         "fontFamily": request.form.get("subtitle_font") or None,
         "fontSize": int(request.form["subtitle_size"]) if request.form.get("subtitle_size") else None,
@@ -3016,7 +3101,7 @@ def api_video_start():
     thread = threading.Thread(
         target=_run_video_job,
         args=(job_id, image_paths, str(audio_path), title, subtitles_enabled, subtitle_style, orientation, cleanup,
-              clip_story_id),
+              clip_story_id, animate_images),
         daemon=True,
     )
     thread.start()
@@ -3040,6 +3125,7 @@ def api_video_status(job_id):
 
 @app.route("/video/<filename>")
 def serve_video(filename):
+    filename = secure_filename_safe(filename)
     filepath = video_maker.VIDEO_OUT_DIR / filename
     if not filepath.exists():
         return "Archivo no encontrado", 404
@@ -3102,7 +3188,7 @@ def api_video_delete(filename):
 @app.route("/api/video/save-drive", methods=["POST"])
 def api_video_save_drive():
     data = request.get_json(force=True)
-    filename = data.get("filename", "").strip()
+    filename = secure_filename_safe(data.get("filename", "").strip())
     if not filename:
         return jsonify({"ok": False, "error": "Falta el video a guardar."}), 400
 
@@ -3241,13 +3327,16 @@ def _fb_set_stage(job_id: str, stage: str):
             _fb_jobs[job_id]["stage"] = stage
 
 
-def _run_facebook_job(job_id: str, video_path: str, title: str, description: str, target_ts: Optional[float] = None):
-    if target_ts is not None:
-        time.sleep(max(0, target_ts - time.time()))
-        with _fb_jobs_lock:
-            _fb_jobs[job_id]["status"] = "running"
+def _run_facebook_job(
+    job_id: str, video_path: str, title: str, description: str, page_id: Optional[str] = None, target_ts: Optional[float] = None
+):
+    # target_ts se manda tal cual a Facebook (scheduled_publish_time real de
+    # la Graph API): la subida pasa ya mismo, Facebook es quien retiene la
+    # publicación hasta esa hora — no hay que esperar acá ni arriesgarse a
+    # perder la programación si este server se reinicia antes de esa hora.
     result = facebook_publisher.publish_video(
-        video_path, title, description, on_status=lambda s: _fb_set_stage(job_id, s)
+        video_path, title, description, page_id=page_id, scheduled_time=target_ts,
+        on_status=lambda s: _fb_set_stage(job_id, s)
     )
     with _fb_jobs_lock:
         if result["ok"]:
@@ -3260,7 +3349,7 @@ def _run_facebook_job(job_id: str, video_path: str, title: str, description: str
             )
         job_store.save("facebook", _fb_jobs)
     if result["ok"]:
-        _record_published_facebook(result["video_id"], title or Path(video_path).stem, Path(video_path).name)
+        _record_published_facebook(result["video_id"], title or Path(video_path).stem, Path(video_path).name, page_id)
         _cleanup_clip_folder_for_video(Path(video_path).name)
 
 
@@ -3270,13 +3359,15 @@ def _ig_set_stage(job_id: str, stage: str):
             _ig_jobs[job_id]["stage"] = stage
 
 
-def _run_instagram_job(job_id: str, video_path: str, title: str, description: str, target_ts: Optional[float] = None):
+def _run_instagram_job(
+    job_id: str, video_path: str, title: str, description: str, page_id: Optional[str] = None, target_ts: Optional[float] = None
+):
     if target_ts is not None:
         time.sleep(max(0, target_ts - time.time()))
         with _ig_jobs_lock:
             _ig_jobs[job_id]["status"] = "running"
     result = instagram_publisher.publish_video(
-        video_path, title, description, on_status=lambda s: _ig_set_stage(job_id, s)
+        video_path, title, description, page_id=page_id, on_status=lambda s: _ig_set_stage(job_id, s)
     )
     with _ig_jobs_lock:
         if result["ok"]:
@@ -3287,19 +3378,35 @@ def _run_instagram_job(job_id: str, video_path: str, title: str, description: st
             )
         job_store.save("instagram", _ig_jobs)
     if result["ok"]:
-        _record_published_instagram(result.get("media_id"), title or Path(video_path).stem, Path(video_path).name)
+        _record_published_instagram(result.get("media_id"), title or Path(video_path).stem, Path(video_path).name, page_id)
         _cleanup_clip_folder_for_video(Path(video_path).name)
+
+
+def _resolve_page_id(data: dict) -> tuple[Optional[str], Optional[dict]]:
+    """Valida el page_id pedido contra las páginas configuradas (o toma la
+    primera si no se especificó ninguna). Devuelve (page_id, err)."""
+    pages = meta_auth.list_pages()
+    if not pages:
+        return None, {"ok": False, "error": meta_auth.MISSING_CREDENTIALS_ERROR}
+    page_id = (data.get("page_id") or "").strip() or pages[0]["page_id"]
+    if page_id not in {p["page_id"] for p in pages}:
+        return None, {"ok": False, "error": "La página seleccionada no está configurada."}
+    return page_id, None
 
 
 @app.route("/api/facebook/publish", methods=["POST"])
 def api_facebook_publish():
     data = request.get_json(force=True)
-    filename = data.get("filename", "").strip()
+    filename = secure_filename_safe(data.get("filename", "").strip())
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
 
     if not filename:
         return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
+
+    page_id, page_err = _resolve_page_id(data)
+    if page_err:
+        return jsonify(page_err), 400
 
     video_path = video_maker.VIDEO_OUT_DIR / filename
     precheck_error = _video_precheck(video_path)
@@ -3316,19 +3423,18 @@ def api_facebook_publish():
     job_id = uuid.uuid4().hex
     with _fb_jobs_lock:
         _fb_jobs[job_id] = {
-            "status": "scheduled" if target_ts else "running",
+            "status": "running",
             "stage": None,
             "error": None,
             "video_id": None,
             "scheduled_time": None,
-            "scheduled_for": datetime.fromtimestamp(target_ts).isoformat() if target_ts else None,
             "started_at": time.time(),
         }
         job_store.save("facebook", _fb_jobs)
 
     thread = threading.Thread(
         target=_run_facebook_job,
-        args=(job_id, str(video_path), title, description, target_ts),
+        args=(job_id, str(video_path), title, description, page_id, target_ts),
         daemon=True,
     )
     thread.start()
@@ -3352,12 +3458,16 @@ def api_facebook_status(job_id):
 @app.route("/api/instagram/publish", methods=["POST"])
 def api_instagram_publish():
     data = request.get_json(force=True)
-    filename = data.get("filename", "").strip()
+    filename = secure_filename_safe(data.get("filename", "").strip())
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
 
     if not filename:
         return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
+
+    page_id, page_err = _resolve_page_id(data)
+    if page_err:
+        return jsonify(page_err), 400
 
     video_path = video_maker.VIDEO_OUT_DIR / filename
     precheck_error = _video_precheck(video_path)
@@ -3385,7 +3495,7 @@ def api_instagram_publish():
 
     thread = threading.Thread(
         target=_run_instagram_job,
-        args=(job_id, str(video_path), title, description, target_ts),
+        args=(job_id, str(video_path), title, description, page_id, target_ts),
         daemon=True,
     )
     thread.start()
@@ -3406,19 +3516,26 @@ def api_instagram_status(job_id):
     return jsonify(response)
 
 
+@app.route("/api/meta/pages")
+def api_meta_pages():
+    """Páginas de Facebook configuradas, para el selector de la sección Publicar."""
+    return jsonify({"ok": True, "pages": meta_auth.list_pages()})
+
+
 @app.route("/api/meta/token-status")
 def api_meta_token_status():
-    """Estado del token de Meta (Facebook + Instagram usan el mismo)."""
-    return jsonify(meta_auth.validate())
+    """Estado del token de Meta de la página pedida (Facebook + Instagram usan el mismo)."""
+    return jsonify(meta_auth.validate(request.args.get("page_id")))
 
 
 @app.route("/api/meta/reload-token", methods=["POST"])
 def api_meta_reload_token():
     """
-    Vuelve a leer .env y revalida el token. Es lo que permite pegar un token
-    nuevo y seguir publicando sin reiniciar el servidor.
+    Vuelve a leer .env y revalida el token de la página pedida. Es lo que
+    permite pegar un token nuevo y seguir publicando sin reiniciar el servidor.
     """
-    return jsonify(meta_auth.reload_env())
+    data = request.get_json(silent=True) or {}
+    return jsonify(meta_auth.reload_env(data.get("page_id")))
 
 
 # ─────────────────────────────────────────────
@@ -3475,7 +3592,7 @@ def _run_youtube_job(job_id: str, video_path: str, title: str, description: str,
 @app.route("/api/youtube/publish", methods=["POST"])
 def api_youtube_publish():
     data = request.get_json(force=True)
-    filename = data.get("filename", "").strip()
+    filename = secure_filename_safe(data.get("filename", "").strip())
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
     privacy_status = data.get("privacy_status", "public").strip()
@@ -3663,19 +3780,27 @@ def api_thumbnail_variants():
     return jsonify({"ok": True, "variants": variants})
 
 
-def _analytics_rows(path: Path, id_field: str, stats_fn) -> list:
+def _analytics_rows(path: Path, id_field: str, stats_fn, multi_page: bool = False) -> list:
     """Lee un JSON de publicados y le mezcla las stats (views/likes/comments) ya
     frescas. Si la consulta a la API funciona, esas stats quedan guardadas en
     el mismo archivo -- así, si una consulta futura falla (token vencido,
     rate limit, etc.) la fila conserva el último dato real en vez de quedar
-    sin vistas."""
+    sin vistas.
+
+    multi_page=True (Facebook/Instagram, con una página distinta por
+    registro) también manda a stats_fn el mapeo {id: page_id} para que
+    consulte cada uno con el token de su propia página."""
     try:
         items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     except Exception:
         items = []
 
     ids = [i[id_field] for i in items]
-    stats_by_id = stats_fn(ids) if ids else {}
+    if multi_page:
+        id_to_page = {i[id_field]: i.get("page_id") for i in items}
+        stats_by_id = stats_fn(ids, id_to_page) if ids else {}
+    else:
+        stats_by_id = stats_fn(ids) if ids else {}
 
     changed = False
     for item in items:
@@ -3703,43 +3828,51 @@ def api_youtube_analytics():
 
 _PUBLISHED_FB_PATH = OUTPUT_DIR / "facebook_published.json"
 _PUBLISHED_IG_PATH = OUTPUT_DIR / "instagram_published.json"
+_published_records_lock = threading.Lock()  # protege el read-modify-write de estos JSON (varios jobs pueden terminar casi juntos)
 
 
-def _record_published_item(path: Path, id_field: str, item_id, title: str, filename: str = "") -> None:
-    try:
-        items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
-    except Exception:
-        items = []
-    items.append({id_field: item_id, "title": title, "filename": filename, "published_at": datetime.now().isoformat()})
-    try:
-        path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+def _record_published_item(path: Path, id_field: str, item_id, title: str, filename: str = "", page_id: Optional[str] = None) -> None:
+    with _published_records_lock:
+        try:
+            items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        except Exception:
+            items = []
+        items.append({
+            id_field: item_id,
+            "title": title,
+            "filename": filename,
+            "page_id": page_id,
+            "published_at": datetime.now().isoformat(),
+        })
+        try:
+            path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
 
-def _record_published_facebook(video_id, title: str, filename: str = "") -> None:
+def _record_published_facebook(video_id, title: str, filename: str = "", page_id: Optional[str] = None) -> None:
     """Guarda cada video publicado en Facebook para poder consultar su analítica después."""
     if not video_id:
         return
-    _record_published_item(_PUBLISHED_FB_PATH, "video_id", video_id, title, filename)
+    _record_published_item(_PUBLISHED_FB_PATH, "video_id", video_id, title, filename, page_id)
 
 
-def _record_published_instagram(media_id, title: str, filename: str = "") -> None:
+def _record_published_instagram(media_id, title: str, filename: str = "", page_id: Optional[str] = None) -> None:
     """Guarda cada media publicado en Instagram para poder consultar su analítica después."""
     if not media_id:
         return
-    _record_published_item(_PUBLISHED_IG_PATH, "media_id", media_id, title, filename)
+    _record_published_item(_PUBLISHED_IG_PATH, "media_id", media_id, title, filename, page_id)
 
 
 @app.route("/api/facebook/analytics")
 def api_facebook_analytics():
-    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
+    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats, multi_page=True)
     return jsonify({"ok": True, "videos": rows})
 
 
 @app.route("/api/instagram/analytics")
 def api_instagram_analytics():
-    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
     return jsonify({"ok": True, "videos": rows})
 
 
@@ -3747,8 +3880,8 @@ def api_instagram_analytics():
 def api_analytics_feedback():
     all_rows = (
         _analytics_rows(_PUBLISHED_VIDEOS_PATH, "video_id", youtube_publisher.get_video_stats)
-        + _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
-        + _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+        + _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats, multi_page=True)
+        + _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
     )
     result = feedback_analyzer.analyze_from_rows(all_rows)
     return jsonify({"ok": True, **result})
@@ -3756,14 +3889,14 @@ def api_analytics_feedback():
 
 @app.route("/api/facebook/best-time")
 def api_facebook_best_time():
-    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats)
+    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats, multi_page=True)
     result = feedback_analyzer.best_posting_hour(rows)
     return jsonify({"ok": True, **result})
 
 
 @app.route("/api/instagram/best-time")
 def api_instagram_best_time():
-    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats)
+    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
     result = feedback_analyzer.best_posting_hour(rows)
     return jsonify({"ok": True, **result})
 

@@ -603,7 +603,7 @@ def resume_index(download_dir: Path) -> int:
     if not download_dir.exists():
         return 0
     existing = set()
-    for p in download_dir.glob("scene_*.mp4"):
+    for p in list(download_dir.glob("scene_*.mp4")) + list(download_dir.glob("scene_*.jpg")):
         try:
             existing.add(int(p.stem.split("_")[1]))
         except (IndexError, ValueError):
@@ -765,7 +765,41 @@ def _download_last_video(session: str, dest_path: Path) -> None:
     dest_path.write_bytes(base64.b64decode(b64_data))
 
 
-def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, is_first: bool) -> None:
+def _download_last_image(session: str, dest_path: Path) -> None:
+    """
+    Descarga la ultima imagen del chat. Mismo mecanismo que
+    _download_last_video pero apuntando a <img> en vez de <video>.
+    """
+    js = (
+        "(async () => {"
+        "  const imgs = document.querySelectorAll('img');"
+        "  const im = imgs[imgs.length - 1];"
+        "  if (!im || !im.src) return null;"
+        "  const resp = await fetch(im.src);"
+        "  const buf = await resp.arrayBuffer();"
+        "  let binary = '';"
+        "  const bytes = new Uint8Array(buf);"
+        "  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);"
+        "  return btoa(binary);"
+        "})()"
+    )
+    result = subprocess.run(
+        _base_cmd(session) + ["eval", js],
+        capture_output=True, text=True, timeout=60, shell=(sys.platform == "win32"),
+        encoding="utf-8", errors="replace",
+    )
+    if result.returncode != 0 or not result.stdout.strip() or result.stdout.strip() == "null":
+        raise PipelineError(
+            f"No pude descargar la imagen para {dest_path.name} "
+            "(el mecanismo de descarga de imagenes en WhatsApp Web puede haber cambiado)."
+        )
+    import base64
+    b64_data = result.stdout.strip().strip('"')
+    dest_path.write_bytes(base64.b64decode(b64_data))
+
+
+def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, is_first: bool,
+                                 generate_video: bool = True) -> None:
     """Genera+anima UNA imagen en el chat de Meta IA ya abierto y descarga el
     clip resultante en scene_path. Cuerpo por-item de _generate_clips_whatsapp,
     reusado tambien por _generate_clips_mixed."""
@@ -805,6 +839,10 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
                     f"Meta AI no pudo generar la Imagen {item['index']} tras {IMAGE_RETRY_ATTEMPTS} intentos."
                 )
 
+    if not generate_video:
+        _download_last_image(WHATSAPP_SESSION, scene_path)
+        return
+
     if is_first:
         _confirm("Imagen generada. Mando 'animar'?", unattended)
 
@@ -816,18 +854,20 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
 
 
 def _generate_clips_whatsapp(story: dict, download_dir: Path, unattended: bool, start_index: int,
-                              report) -> list:
+                              report, generate_video: bool = True) -> list:
     _confirm("Voy a abrir WhatsApp Web y entrar al chat de Meta IA. Confirmas?", unattended)
     _open_meta_ai(unattended)
 
+    ext = "mp4" if generate_video else "jpg"
     generated = []
     for i, item in enumerate(story["prompts"]):
         if i < start_index:
             continue
-        scene_path = download_dir / f"scene_{i:03d}.mp4"
+        scene_path = download_dir / f"scene_{i:03d}.{ext}"
         report(f"[{i + 1}/{len(story['prompts'])}] Imagen {item['index']}: {item['frase'][:60]}...")
 
-        _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(i == start_index))
+        _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(i == start_index),
+                                     generate_video=generate_video)
         generated.append(str(scene_path))
         report(f"  -> guardado en {scene_path}")
 
@@ -1087,8 +1127,19 @@ def _generate_one_clip_qwen(session: str, item: dict, scene_path: Path) -> None:
     _download_url(video_url, scene_path)
 
 
+def _generate_one_clip_qwen_image(session: str, item: dict, scene_path: Path) -> None:
+    """Genera UNA imagen (modo 'Create Image') desde el prompt en la sesion Qwen
+    ya abierta y la descarga en scene_path. Equivalente a _generate_one_clip_qwen
+    pero sin animar -- misma base que generate_qwen_image."""
+    baseline_srcs = _get_qwen_image_srcs(session)
+    _select_qwen_image_mode(session)
+    _send_chat_message(session, item["prompt"], textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
+    image_url = _wait_for_qwen_image(session, baseline_srcs, QWEN_IMAGE_TIMEOUT_SECONDS)
+    _download_url(image_url, scene_path)
+
+
 def _generate_clips_qwen(story: dict, download_dir: Path, unattended: bool, start_index: int,
-                          report) -> list:
+                          report, generate_video: bool = True) -> list:
     """Qwen genera el video directamente desde el prompt (sin paso previo de imagen).
 
     Secuencial, una sola sesion: la cuenta de Qwen solo permite 1 generacion de
@@ -1100,14 +1151,19 @@ def _generate_clips_qwen(story: dict, download_dir: Path, unattended: bool, star
     _confirm("Voy a abrir chat.qwen.ai. Confirmas?", unattended)
     _open_qwen(unattended)
 
+    ext = "mp4" if generate_video else "jpg"
     generated = []
     for i, item in enumerate(story["prompts"]):
         if i < start_index:
             continue
-        scene_path = download_dir / f"scene_{i:03d}.mp4"
-        report(f"[{i + 1}/{len(story['prompts'])}] Video {item['index']}: {item['frase'][:60]}...")
+        scene_path = download_dir / f"scene_{i:03d}.{ext}"
+        label = "Video" if generate_video else "Imagen"
+        report(f"[{i + 1}/{len(story['prompts'])}] {label} {item['index']}: {item['frase'][:60]}...")
 
-        _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
+        if generate_video:
+            _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
+        else:
+            _generate_one_clip_qwen_image(QWEN_SESSION, item, scene_path)
         generated.append(str(scene_path))
         report(f"  -> guardado en {scene_path}")
 
@@ -1115,7 +1171,7 @@ def _generate_clips_qwen(story: dict, download_dir: Path, unattended: bool, star
 
 
 def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, start_index: int,
-                           report) -> list:
+                           report, generate_video: bool = True) -> list:
     """Paraleliza de verdad repartiendo los prompts pendientes entre WhatsApp/Meta
     IA y Qwen a la vez (round-robin) -- son cuentas/servicios independientes, sin
     el limite de 1-concurrente-por-cuenta que tiene Qwen entre sesiones propias."""
@@ -1131,17 +1187,20 @@ def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, sta
         with report_lock:
             report(msg)
 
+    ext = "mp4" if generate_video else "jpg"
+
     def worker_whatsapp(items: list) -> list:
         if not items:
             return []
         _open_meta_ai(unattended)
         generated_local = []
         for n, (i, item) in enumerate(items):
-            scene_path = download_dir / f"scene_{i:03d}.mp4"
+            scene_path = download_dir / f"scene_{i:03d}.{ext}"
             if scene_path.exists():
                 continue  # ya generado por una corrida anterior (reintento parcial)
             report_safe(f"[whatsapp] [{i + 1}/{len(story['prompts'])}] Imagen {item['index']}: {item['frase'][:60]}...")
-            _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(n == 0))
+            _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(n == 0),
+                                        generate_video=generate_video)
             generated_local.append(str(scene_path))
             report_safe(f"  [whatsapp] -> guardado en {scene_path}")
         return generated_local
@@ -1152,11 +1211,15 @@ def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, sta
         _open_qwen(unattended)
         generated_local = []
         for i, item in items:
-            scene_path = download_dir / f"scene_{i:03d}.mp4"
+            scene_path = download_dir / f"scene_{i:03d}.{ext}"
             if scene_path.exists():
                 continue
-            report_safe(f"[qwen] [{i + 1}/{len(story['prompts'])}] Video {item['index']}: {item['frase'][:60]}...")
-            _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
+            label = "Video" if generate_video else "Imagen"
+            report_safe(f"[qwen] [{i + 1}/{len(story['prompts'])}] {label} {item['index']}: {item['frase'][:60]}...")
+            if generate_video:
+                _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
+            else:
+                _generate_one_clip_qwen_image(QWEN_SESSION, item, scene_path)
             generated_local.append(str(scene_path))
             report_safe(f"  [qwen] -> guardado en {scene_path}")
         return generated_local
@@ -1191,7 +1254,7 @@ def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, sta
 
 
 def generate_clips(story: dict, download_dir: Path, unattended: bool, start_index: int = 0,
-                    on_progress=None, provider: str = "whatsapp") -> list:
+                    on_progress=None, provider: str = "whatsapp", generate_video: bool = True) -> list:
     if provider not in PROVIDERS:
         raise PipelineError(f"Proveedor desconocido: {provider} (opciones: {', '.join(PROVIDERS)})")
 
@@ -1204,15 +1267,18 @@ def generate_clips(story: dict, download_dir: Path, unattended: bool, start_inde
     download_dir.mkdir(parents=True, exist_ok=True)
 
     n_prompts = len(story.get("prompts", []))
-    logger.info("generate_clips: provider=%s start_index=%d prompts=%d dir=%s",
-                provider, start_index, n_prompts, download_dir)
+    logger.info("generate_clips: provider=%s start_index=%d prompts=%d dir=%s generate_video=%s",
+                provider, start_index, n_prompts, download_dir, generate_video)
     try:
         if provider == "qwen":
-            clips = _generate_clips_qwen(story, download_dir, unattended, start_index, report)
+            clips = _generate_clips_qwen(story, download_dir, unattended, start_index, report,
+                                          generate_video=generate_video)
         elif provider == "mixed":
-            clips = _generate_clips_mixed(story, download_dir, unattended, start_index, report)
+            clips = _generate_clips_mixed(story, download_dir, unattended, start_index, report,
+                                           generate_video=generate_video)
         else:
-            clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report)
+            clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report,
+                                              generate_video=generate_video)
         logger.info("generate_clips: listo, %d clips generados en %s", len(clips), download_dir)
         return clips
     except Exception:

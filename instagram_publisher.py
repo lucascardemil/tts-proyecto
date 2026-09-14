@@ -1,7 +1,7 @@
 """
 Publicación de videos (Reels) en la cuenta de Instagram vinculada a la
 Página de Facebook, vía Graph API. Reutiliza las mismas credenciales que
-facebook_publisher.py (FB_PAGE_ID / FB_PAGE_ACCESS_TOKEN) — Instagram ya
+facebook_publisher.py (FB_PAGE_<N>_ID / FB_PAGE_<N>_TOKEN, vía meta_auth.py) — Instagram ya
 está vinculado a esa Página, no hace falta login OAuth aparte.
 
 El token necesita además los permisos instagram_basic +
@@ -66,23 +66,30 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     return payload, None
 
 
-def get_media_stats(media_ids: list) -> dict:
+def get_media_stats(media_ids: list, id_to_page: Optional[dict] = None) -> dict:
     """
     Consulta reproducciones/likes/comentarios de reels ya publicados (Graph API).
 
     Args:
         media_ids: lista de IDs de media de Instagram.
+        id_to_page: mapeo {media_id: page_id} para usar el token de la
+            página que publicó cada reel (varias páginas, cada una con su
+            propio token). Los reels sin entrada (registros previos a esta
+            función) usan la primera página configurada.
 
     Returns:
         dict {media_id: {"views": int, "likes": int, "comments": int}}. Si no
         hay token configurado o falla la consulta, devuelve {} (sin cortar el flujo).
     """
-    _, access_token, err = meta_auth.get_credentials()
-    if err or not media_ids:
+    if not media_ids:
         return {}
+    id_to_page = id_to_page or {}
 
     stats = {}
     for media_id in media_ids:
+        _, access_token, err = meta_auth.get_credentials(id_to_page.get(media_id))
+        if err:
+            continue
         try:
             response = requests.get(
                 f"{GRAPH_URL}/{media_id}",
@@ -130,16 +137,23 @@ def _get_ig_user_id(page_id: str, access_token: str) -> tuple[Optional[str], Opt
     return ig_account["id"], None
 
 
-def publish_video(video_path: str, title: str, description: str, on_status: Optional[Callable[[str], None]] = None) -> dict:
+def publish_video(
+    video_path: str,
+    title: str,
+    description: str,
+    page_id: Optional[str] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
     """
     Sube un video como Reel a la cuenta de Instagram vinculada a la Página
-    de Facebook configurada, marcado como contenido generado con IA.
+    de Facebook indicada (o la primera configurada si no se pasa page_id),
+    marcado como contenido generado con IA.
 
     Returns:
         {"ok": True, "media_id": str} si se publicó, o
         {"ok": False, "error": str} si algo falló.
     """
-    page_id, access_token, err = meta_auth.get_credentials()
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
     if err:
         return err
 
@@ -148,7 +162,7 @@ def publish_video(video_path: str, title: str, description: str, on_status: Opti
         return {"ok": False, "error": f"No se encontró el video: {video_path}"}
 
     # Ver el comentario equivalente en facebook_publisher.publish_video.
-    token_check = meta_auth.validate()
+    token_check = meta_auth.validate(page_id)
     if not token_check["ok"]:
         return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
 

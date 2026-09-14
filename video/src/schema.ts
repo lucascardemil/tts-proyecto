@@ -5,6 +5,7 @@ export const kenBurnsDirection = z.enum([
   "zoomOut",
   "panLeft",
   "panRight",
+  "none",
 ]);
 
 export const sceneType = z.enum(["image", "video"]);

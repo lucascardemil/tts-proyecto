@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from "remotion";
 import { loadFont as loadCinzel } from "@remotion/google-fonts/Cinzel";
 import { loadFont as loadPlayfairDisplay } from "@remotion/google-fonts/PlayfairDisplay";
@@ -37,8 +37,12 @@ const positionMap: Record<SubtitlePosition, React.CSSProperties> = {
   bottom: { justifyContent: "flex-end" },
 };
 
-// Margen del subtítulo sobre el borde inferior pedido por specs de entrega.
-const BOTTOM_MARGIN_PX = 280;
+// Margen del subtítulo sobre el borde inferior: cubre la UI que TikTok/Reels
+// pisan abajo del video (caption/audio bar + botones nuevos de fines de 2025,
+// ~320-360px en 1080x1920) para que el subtítulo no quede tapado al republicar
+// el mismo video en varias redes.
+const BOTTOM_MARGIN_REFERENCE_HEIGHT = 1920;
+const BOTTOM_MARGIN_PX_AT_REFERENCE = 380;
 
 // Contorno vía 4 text-shadow diagonales en vez de -webkit-text-stroke: este
 // último produce manchas/flecos de color en tamaños chicos (visto en el
@@ -59,15 +63,19 @@ export const Subtitles: React.FC<{ words: SubtitleWord[]; style: SubtitleStyle }
   style,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
   const t = frame / fps;
+  const bottomMargin = (BOTTOM_MARGIN_PX_AT_REFERENCE * height) / BOTTOM_MARGIN_REFERENCE_HEIGHT;
+
+  const lines: SubtitleWord[][] = useMemo(() => {
+    const result: SubtitleWord[][] = [];
+    for (let i = 0; i < words.length; i += WORDS_PER_LINE) {
+      result.push(words.slice(i, i + WORDS_PER_LINE));
+    }
+    return result;
+  }, [words]);
 
   if (words.length === 0) return null;
-
-  const lines: SubtitleWord[][] = [];
-  for (let i = 0; i < words.length; i += WORDS_PER_LINE) {
-    lines.push(words.slice(i, i + WORDS_PER_LINE));
-  }
 
   const activeLine = lines.find(
     (line) => t >= line[0].start - 0.05 && t <= line[line.length - 1].end + 0.25
@@ -85,7 +93,7 @@ export const Subtitles: React.FC<{ words: SubtitleWord[]; style: SubtitleStyle }
           : {
               alignItems: "center",
               ...positionMap[style.position],
-              ...(style.position === "bottom" ? { paddingBottom: BOTTOM_MARGIN_PX } : {}),
+              ...(style.position === "bottom" ? { paddingBottom: bottomMargin } : {}),
             }
       }
     >

@@ -477,6 +477,7 @@ def _build_timeline(
     title: str,
     subtitle_style: Optional[dict] = None,
     frases: Optional[list] = None,
+    animate_images: bool = True,
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -584,7 +585,7 @@ def _build_timeline(
                 # bajamos la velocidad para que una sola pasada llene el slot.
                 clip["playbackRate"] = native / slot_duration
         else:
-            clip["kenBurns"] = directions[i]
+            clip["kenBurns"] = directions[i] if animate_images else "none"
 
         clips.append(clip)
         t = end_t
@@ -693,6 +694,7 @@ def build_props(
     subtitles_enabled: bool = True,
     subtitle_style: Optional[dict] = None,
     frases: Optional[list] = None,
+    animate_images: bool = True,
     on_progress=None,
 ) -> Optional[dict]:
     """
@@ -715,6 +717,8 @@ def build_props(
             defecto (ajustables después a mano en Remotion Studio).
         frases: lista opcional de "frase del guion" por escena, en el mismo
             orden que image_paths — ver _align_boundaries_to_script.
+        animate_images: si es False, las imágenes quedan estáticas (sin
+            Ken Burns); no afecta a los clips de video.
         on_progress: función opcional callback(str) para reportar avance.
 
     Returns:
@@ -789,7 +793,10 @@ def build_props(
         report("🔇 Subtítulos desactivados — se omite la transcripción.")
 
     # 4. Timeline (qué escena se ve cuándo, con qué efecto o si es un clip de video)
-    timeline = _build_timeline(scenes, audio_name, duration, words, title, subtitle_style, frases=frases)
+    timeline = _build_timeline(
+        scenes, audio_name, duration, words, title, subtitle_style,
+        frases=frases, animate_images=animate_images,
+    )
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 

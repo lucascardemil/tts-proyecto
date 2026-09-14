@@ -1,8 +1,10 @@
 """
 Credenciales de Meta (Graph API) compartidas por facebook_publisher.py e
-instagram_publisher.py: ambos usan el mismo par FB_PAGE_ID /
-FB_PAGE_ACCESS_TOKEN, así que la lectura del entorno, la clasificación de
-los errores de la Graph API y la validación del token viven acá una sola vez.
+instagram_publisher.py: ambos publican en una de varias Páginas configuradas
+(FB_PAGE_<N>_ID / FB_PAGE_<N>_TOKEN / FB_PAGE_<N>_NAME, N=1,2,...), cada una
+con su propio Page Access Token, así que la lectura del entorno, la
+clasificación de los errores de la Graph API y la validación del token viven
+acá una sola vez.
 
 El caso que este módulo resuelve: los Page Access Token de Meta se
 invalidan solos (expiran a los ~60 días, o Meta los mata si el usuario
@@ -17,10 +19,11 @@ arregla nada — hay que pegar un token nuevo en .env. Por eso:
 
 Para dejar de renovar tokens a mano conviene usar un token de Sistema
 (System User) desde Meta Business Suite: no expira. Ver los comentarios de
-FB_PAGE_ACCESS_TOKEN en .env.
+FB_PAGE_<N>_TOKEN en .env.
 """
 
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -31,11 +34,11 @@ from dotenv import load_dotenv
 GRAPH_API_VERSION = "v21.0"
 GRAPH_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
-MISSING_CREDENTIALS_ERROR = "Falta configurar FB_PAGE_ID y FB_PAGE_ACCESS_TOKEN en .env"
+MISSING_CREDENTIALS_ERROR = "Falta configurar al menos una página (FB_PAGE_1_ID / FB_PAGE_1_TOKEN) en .env"
 
 RENEW_HINT = (
     "El token de Meta dejó de ser válido (expiró o Meta lo invalidó). "
-    "Generá uno nuevo, pegalo en .env como FB_PAGE_ACCESS_TOKEN y tocá "
+    "Generá uno nuevo, pegalo en .env como FB_PAGE_<N>_TOKEN y tocá "
     "«Recargar token» — no hace falta reiniciar el servidor."
 )
 
@@ -48,26 +51,64 @@ _AUTH_ERROR_CODES = {102, 190, 463, 467}
 _PERMISSION_ERROR_CODES = {10}
 
 # validate() se llama desde la UI (badge de estado) y antes de cada
-# publicación; se cachea el resultado para no pegarle a Graph cada vez.
+# publicación; se cachea el resultado por página para no pegarle a Graph
+# cada vez (cada página tiene su propio token, que puede vencer aparte).
 _CACHE_TTL_SECONDS = 300
-_cache: Optional[dict] = None
-_cache_ts: float = 0.0
+_cache: dict[str, tuple[dict, float]] = {}
+_cache_lock = threading.Lock()
 
 
-def get_credentials() -> tuple[Optional[str], Optional[str], Optional[dict]]:
+def list_pages() -> list[dict]:
     """
-    Devuelve (page_id, access_token, err). err es None si ambas están
-    configuradas, o el dict de error listo para devolver al usuario si falta
-    alguna — para poder hacer:
+    Páginas configuradas en .env (FB_PAGE_<N>_ID / _NAME / _TOKEN, N=1,2,...
+    sin huecos). Se corta en el primer N sin _ID. No incluye el token: es lo
+    que se manda al frontend para el selector de página.
+    """
+    pages = []
+    n = 1
+    while True:
+        page_id = os.environ.get(f"FB_PAGE_{n}_ID")
+        if not page_id:
+            break
+        pages.append({"page_id": page_id, "name": os.environ.get(f"FB_PAGE_{n}_NAME") or f"Página {n}"})
+        n += 1
+    return pages
 
-        page_id, access_token, err = meta_auth.get_credentials()
+
+def _page_token(page_id: str) -> Optional[str]:
+    n = 1
+    while True:
+        pid = os.environ.get(f"FB_PAGE_{n}_ID")
+        if not pid:
+            return None
+        if pid == page_id:
+            return os.environ.get(f"FB_PAGE_{n}_TOKEN")
+        n += 1
+
+
+def get_credentials(page_id: Optional[str] = None) -> tuple[Optional[str], Optional[str], Optional[dict]]:
+    """
+    Devuelve (page_id, access_token, err) para la página pedida (o la
+    primera configurada si no se especifica ninguna — usado en chequeos
+    generales que no dependen de una página en particular). err es None si
+    hay credenciales, o el dict de error listo para devolver al usuario si
+    falta algo — para poder hacer:
+
+        page_id, access_token, err = meta_auth.get_credentials(page_id)
         if err:
             return err
     """
-    page_id = os.environ.get("FB_PAGE_ID")
-    access_token = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-    if not page_id or not access_token:
+    pages = list_pages()
+    if not pages:
         return None, None, {"ok": False, "error": MISSING_CREDENTIALS_ERROR}
+
+    if page_id is None:
+        page_id = pages[0]["page_id"]
+
+    access_token = _page_token(page_id)
+    if not access_token:
+        return None, None, {"ok": False, "error": f"No hay ninguna página configurada con id {page_id}."}
+
     return page_id, access_token, None
 
 
@@ -128,22 +169,23 @@ def _debug_token(access_token: str) -> dict:
     return result
 
 
-def validate(force: bool = False) -> dict:
+def validate(page_id: Optional[str] = None, force: bool = False) -> dict:
     """
-    Chequea que el token siga sirviendo, con un GET liviano a la Página.
+    Chequea que el token de la página pedida (o la primera configurada)
+    siga sirviendo, con un GET liviano a esa Página.
 
     Returns:
         {"ok": True, "page_name": str, "expires_at": iso|None, "scopes": list|None}
         o {"ok": False, "error": str, "auth_error": bool}.
     """
-    global _cache, _cache_ts
-
-    if not force and _cache is not None and time.time() - _cache_ts < _CACHE_TTL_SECONDS:
-        return _cache
-
-    page_id, access_token, err = get_credentials()
+    page_id, access_token, err = get_credentials(page_id)
     if err:
         return {**err, "auth_error": True}  # sin credenciales no hay nada que reintentar
+
+    with _cache_lock:
+        cached = _cache.get(page_id)
+        if not force and cached is not None and time.time() - cached[1] < _CACHE_TTL_SECONDS:
+            return cached[0]
 
     try:
         response = requests.get(
@@ -170,15 +212,16 @@ def validate(force: bool = False) -> dict:
     else:
         result = {"ok": True, "page_name": payload.get("name"), **_debug_token(access_token)}
 
-    _cache, _cache_ts = result, time.time()
+    with _cache_lock:
+        _cache[page_id] = (result, time.time())
     return result
 
 
-def reload_env() -> dict:
+def reload_env(page_id: Optional[str] = None) -> dict:
     """
     Vuelve a leer .env pisando lo que ya esté en el entorno (load_dotenv()
-    normal no sobreescribe) y revalida. Es lo que permite aplicar un token
-    nuevo sin reiniciar el servidor.
+    normal no sobreescribe) y revalida la página pedida. Es lo que permite
+    aplicar un token nuevo sin reiniciar el servidor.
     """
     load_dotenv(override=True)
-    return validate(force=True)
+    return validate(page_id, force=True)

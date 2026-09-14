@@ -42,6 +42,10 @@ export const KenBurnsImage: React.FC<{
       scale = MAX_ZOOM;
       translateX = interpolate(progress, [0, 1], [-MAX_PAN_PERCENT, MAX_PAN_PERCENT]);
       break;
+    case "none":
+      scale = 1;
+      translateX = 0;
+      break;
   }
 
   return (
