@@ -42,6 +42,7 @@ import feedback_analyzer
 import job_store
 import seo_optimizer
 import thumbnail_maker
+import batch_pipeline
 from tts_engine import (
     text_to_speech_long,
     VOICE_LIBRARY,
@@ -225,7 +226,7 @@ HTML = r"""<!DOCTYPE html>
   }
   .char-count.near-limit { color: var(--red-light); }
 
-  input[type=text], select {
+  input[type=text], input[type=number], select {
     width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--surface-3);
     color: var(--text-primary); font-size: 14px; font-family: inherit;
@@ -235,8 +236,9 @@ HTML = r"""<!DOCTYPE html>
     background-repeat: no-repeat; background-position: right 14px center;
     padding-right: 36px;
   }
-  input[type=text]:focus, select:focus { outline: none; border-color: var(--red-primary); }
-  input[type=text]:hover, select:hover { border-color: var(--border-hover); }
+  input[type=number] { background-image: none; padding-right: 14px; }
+  input[type=text]:focus, input[type=number]:focus, select:focus { outline: none; border-color: var(--red-primary); }
+  input[type=text]:hover, input[type=number]:hover, select:hover { border-color: var(--border-hover); }
   select option { background: var(--surface-3); color: var(--text-primary); }
 
   .voice-section-label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--text-secondary); margin: 22px 0 10px; }
@@ -445,7 +447,12 @@ HTML = r"""<!DOCTYPE html>
   .analytics-empty { text-align: center; padding: 24px 12px; color: var(--text-secondary); font-size: 13.5px; }
 
   .progress-bar { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 10px; }
-  .progress-bar-fill { height: 100%; background: var(--red-light); border-radius: 999px; }
+  .progress-bar-fill { height: 100%; background: var(--red-light); border-radius: 999px; transition: width .4s; }
+
+  .lote-video-list { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--surface-3); display: flex; flex-direction: column; gap: 8px; }
+  .lote-video-row { font-size: 12.5px; color: var(--text-secondary); }
+  .lote-video-row .progress-bar { margin-top: 5px; height: 5px; }
+  .lote-video-row-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
   @media (max-width: 1199px) {
     .voice-grid { grid-template-columns: repeat(2, 1fr); }
@@ -519,6 +526,10 @@ HTML = r"""<!DOCTYPE html>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
     Historial
   </a>
+  <a class="nav-item" id="nav-lote" data-tab="lote">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    Generación en lote
+  </a>
   <a class="nav-item" id="nav-ajustes" data-tab="ajustes">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     Ajustes
@@ -589,7 +600,21 @@ HTML = r"""<!DOCTYPE html>
         </div>
       </div>
 
-      <div class="field-label-row">
+      <div class="field-label-row" style="margin-top:14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        <label for="pipeline-duration">Duración del video</label>
+      </div>
+      <select id="pipeline-duration">
+        <option value="">Automático</option>
+        <option value="15">15 segundos</option>
+        <option value="30">30 segundos</option>
+        <option value="60">60 segundos</option>
+        <option value="180" class="duration-long-option">3 minutos</option>
+        <option value="300" class="duration-long-option">5 minutos</option>
+        <option value="600" class="duration-long-option">10 minutos</option>
+      </select>
+
+      <div class="field-label-row" style="margin-top:14px">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3l14 9-14 9V3z"/></svg>
         <label for="pipeline-provider">Generador de clips</label>
       </div>
@@ -813,6 +838,137 @@ HTML = r"""<!DOCTYPE html>
 
   </div> <!-- /tab-analytics -->
 
+  <div id="tab-lote" style="display:none">
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> Nuevo proyecto de lote</h2>
+      <p class="card-desc">
+        Genera y publica varios videos completos de forma automática, sacando
+        guion y prompts de un Project de Qwen (chat.qwen.ai). Los videos se
+        publican espaciados en varios días, revisando antes de cada uno cuándo
+        se publicó el anterior en cada red.
+      </p>
+
+      <div class="field-label-row">
+        <label for="lote-nombre">Nombre del proyecto</label>
+      </div>
+      <input type="text" id="lote-nombre" placeholder="Ej: Historias de animales - tanda 1">
+
+      <div class="field-label-row" style="margin-top:14px">
+        <label for="lote-qwen-project">Proyecto de Qwen (nombre exacto en el sidebar de Projects)</label>
+      </div>
+      <input type="text" id="lote-qwen-project" placeholder="Ej: HISTORIAS DE ANIMALES EMOCIONALES">
+
+      <div class="field-label-row" style="margin-top:14px">
+        <label for="lote-trigger-message">Mensaje inicial a Qwen (lo que espera ese Project para responder con el formato)</label>
+      </div>
+      <input type="text" id="lote-trigger-message" placeholder="dame una historia" value="dame una historia">
+
+      <div class="row-2col">
+        <div>
+          <div class="field-label-row">
+            <label for="lote-total">Cantidad de videos a generar</label>
+          </div>
+          <input type="number" id="lote-total" min="1" value="10">
+        </div>
+        <div>
+          <div class="field-label-row">
+            <label for="lote-per-day">Videos a subir por día</label>
+          </div>
+          <input type="number" id="lote-per-day" min="1" value="3">
+        </div>
+      </div>
+
+      <div class="field-label-row" style="margin-top:22px">
+        <label>Redes donde publicar</label>
+      </div>
+      <div class="pub-target-row">
+        <label><input type="checkbox" id="lote-fb" checked> 📘 Facebook</label>
+        <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
+        <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
+      </div>
+      <div id="lote-page-wrap" style="display:none;margin-top:10px">
+        <label for="lote-page">Página de Facebook/Instagram</label>
+        <select id="lote-page"></select>
+      </div>
+
+      <div class="row-2col">
+        <div>
+          <div class="field-label-row">
+            <label for="lote-voice">Voz</label>
+          </div>
+          <select id="lote-voice"><option>Cargando...</option></select>
+        </div>
+        <div>
+          <div class="field-label-row">
+            <label for="lote-subtitle-preset">Subtítulos — estilo</label>
+          </div>
+          <select id="lote-subtitle-preset"><option>Cargando...</option></select>
+        </div>
+      </div>
+
+      <div class="row-2col">
+        <div>
+          <div class="field-label-row">
+            <label for="lote-orientation">Formato</label>
+          </div>
+          <select id="lote-orientation">
+            <option value="vertical">Vertical 9:16 (Reels / Shorts / TikTok)</option>
+            <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
+          </select>
+        </div>
+        <div>
+          <div class="field-label-row">
+            <label for="lote-provider">Generador de clips</label>
+          </div>
+          <select id="lote-provider">
+            <option value="whatsapp">WhatsApp / Meta IA</option>
+            <option value="qwen">Qwen (chat.qwen.ai)</option>
+            <option value="mixed">Mixto (WhatsApp + Qwen en paralelo)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-label-row" style="margin-top:14px">
+        <label for="lote-duration">Duración del video</label>
+      </div>
+      <select id="lote-duration">
+        <option value="">Automático</option>
+        <option value="15">15 segundos</option>
+        <option value="30">30 segundos</option>
+        <option value="60">60 segundos</option>
+        <option value="180" class="duration-long-option">3 minutos</option>
+        <option value="300" class="duration-long-option">5 minutos</option>
+        <option value="600" class="duration-long-option">10 minutos</option>
+      </select>
+
+      <label class="checkbox-row" for="lote-subtitles-enabled">
+        <input type="checkbox" id="lote-subtitles-enabled" checked>
+        Incluir subtítulos
+      </label>
+      <label class="checkbox-row" for="lote-animate-images">
+        <input type="checkbox" id="lote-animate-images" checked>
+        Animar imágenes (Ken Burns)
+      </label>
+      <label class="checkbox-row" for="lote-generate-video-clips">
+        <input type="checkbox" id="lote-generate-video-clips" checked>
+        Animar clips al generarlos (si no, solo imagen estática)
+      </label>
+
+      <button class="btn btn-primary" id="lote-create-btn" style="margin-top:16px">
+        Crear proyecto de lote
+      </button>
+      <div id="lote-create-status" class="pub-status"></div>
+    </div>
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> Proyectos de lote</h2>
+      <button class="btn-sm" id="lote-refresh-btn">⟳ Actualizar</button>
+      <div id="lote-list" style="margin-top:14px"></div>
+    </div>
+
+  </div> <!-- /tab-lote -->
+
   <div id="tab-ajustes" style="display:none">
 
     <div class="card">
@@ -851,6 +1007,24 @@ HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de Qwen (Generación en lote)</h2>
+      <p class="card-desc">Sesión aparte, solo para el módulo de "Generación en lote" (independiente de la sesión de Qwen normal). Si aparece "Necesita reconectar", tocá el botón para iniciar sesión de nuevo.</p>
+      <div class="status-rows">
+        <div class="status-row" id="ajustes-row-qwen_batch">
+          <div class="status-row-text">
+            <strong>Qwen (lote)</strong>
+            <span id="ajustes-msg-qwen_batch">Sin comprobar todavía.</span>
+          </div>
+          <div class="ring pending" id="ajustes-ring-qwen_batch"></div>
+        </div>
+      </div>
+      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn-sm" id="ajustes-check-qwen_batch-btn">Comprobar conexión</button>
+        <button class="btn-sm" id="ajustes-reconnect-qwen_batch-btn" style="display:none">Reconectar</button>
+      </div>
+    </div>
+
   </div> <!-- /tab-ajustes -->
 
   <div id="app-modal-backdrop" class="qr-modal-backdrop" style="display:none">
@@ -866,7 +1040,8 @@ HTML = r"""<!DOCTYPE html>
       <button id="qr-modal-close" class="qr-modal-close" aria-label="Cerrar">&times;</button>
       <h3 id="qr-modal-title">Escaneá el código QR</h3>
       <img id="qr-modal-img" alt="Código QR" />
-      <p class="qr-modal-hint">WhatsApp → Menú → Dispositivos vinculados → Vincular un dispositivo, y escaneá esto con la cámara del celular.</p>
+      <p class="qr-modal-hint" id="qr-modal-hint">WhatsApp → Menú → Dispositivos vinculados → Vincular un dispositivo, y escaneá esto con la cámara del celular.</p>
+      <a id="qr-modal-devtools-link" href="#" target="_blank" rel="noopener" class="btn-primary" style="display:none; text-align:center; text-decoration:none;">Abrir sesión para loguearme</a>
     </div>
   </div>
 
@@ -943,6 +1118,7 @@ function activateTab(tab) {
   $("tab-historial").style.display = tab === "historial" ? "" : "none";
   $("tab-analytics").style.display = tab === "analytics" ? "" : "none";
   $("tab-ajustes").style.display = tab === "ajustes" ? "" : "none";
+  $("tab-lote").style.display = tab === "lote" ? "" : "none";
   if (tab === "video") {
     checkYoutubeConnection();
     loadMetaPages().then(checkMetaToken);
@@ -960,6 +1136,12 @@ function activateTab(tab) {
     loadYoutubeAnalytics();
     loadInstagramAnalytics();
     loadAnalyticsFeedback();
+  }
+  if (tab === "lote") {
+    loadLotePages();
+    loadLoteVoices();
+    loadLoteSubtitlePresets();
+    loadLoteProjects();
   }
   closeSidebar();
 }
@@ -1454,6 +1636,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
         subtitle_preset: pipelineSubtitlePreset,
         animate_images: $("pipeline-animate-images").checked,
         generate_video_clips: $("pipeline-generate-video-clips").checked,
+        duration_seconds: $("pipeline-duration").value ? parseInt($("pipeline-duration").value, 10) : null,
       }),
     });
     const data = await res.json();
@@ -1580,6 +1763,250 @@ async function loadAnalyticsFeedback() {
   }
 }
 $("feedback-analytics-refresh-btn").addEventListener("click", loadAnalyticsFeedback);
+
+// ── Generación en lote ──
+async function loadLotePages() {
+  try {
+    const res = await fetch("/api/meta/pages");
+    const data = await res.json();
+    const pages = (data.ok && data.pages) || [];
+    const sel = $("lote-page");
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
+    $("lote-page-wrap").style.display = pages.length > 1 ? "" : "none";
+  } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
+}
+
+async function loadLoteVoices() {
+  try {
+    const res = await fetch("/api/voices");
+    const data = await res.json();
+    const sel = $("lote-voice");
+    sel.innerHTML = Object.entries(data).map(([key, info]) => `<option value="${key}">${info.label}</option>`).join("");
+  } catch (e) { console.error("No se pudieron cargar las voces", e); }
+}
+
+async function loadLoteSubtitlePresets() {
+  try {
+    const res = await fetch("/api/subtitle-presets");
+    const presets = await res.json();
+    const sel = $("lote-subtitle-preset");
+    sel.innerHTML = presets.map(p => `<option value="${p.id}">${p.label}</option>`).join("");
+  } catch (e) { console.error("No se pudieron cargar los presets de subtítulos", e); }
+}
+
+function _loteStatusLabel(status) {
+  return {
+    running: "▶️ Corriendo", paused: "⏸️ Pausado", done: "✅ Terminado", cancelled: "🚫 Cancelado",
+  }[status] || status;
+}
+
+function _loteVideoSummary(project) {
+  const videos = project.videos || [];
+  const generated = videos.filter(v => v.status !== "pending" && v.status !== "generating").length;
+  const published = videos.filter(v => v.status === "published").length;
+  const next = videos.find(v => v.status === "ready" || v.status === "pending");
+  const errores = videos.filter(v => v.status === "error").length;
+  let next_txt = "—";
+  if (next) {
+    try { next_txt = new Date(next.scheduled_at).toLocaleString(); } catch (e) { next_txt = next.scheduled_at; }
+  }
+  let extra = errores ? ` — ⚠️ ${errores} con error` : "";
+  return `${generated}/${videos.length} generados · ${published}/${videos.length} publicados · próximo: ${next_txt}${extra}`;
+}
+
+const _LOTE_STAGE_INFO = {
+  guion: { label: "Escribiendo guion (Qwen)", pct: 10 },
+  imagenes: { label: "Generando imágenes/clips", pct: 35 },
+  audio: { label: "Generando audio (TTS)", pct: 65 },
+  render: { label: "Renderizando video", pct: 85 },
+};
+
+function _loteDate(iso) {
+  try { return new Date(iso).toLocaleString(); } catch (e) { return iso || "—"; }
+}
+
+function _loteVideoRowHtml(v, projectId) {
+  const n = v.index + 1;
+  if (v.status === "generating") {
+    const info = _LOTE_STAGE_INFO[v.stage] || { label: "Generando...", pct: 5 };
+    return `
+      <div class="lote-video-row">
+        <div>#${n} — ⚙️ ${_escapeHtml(info.label)}</div>
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:${info.pct}%"></div></div>
+      </div>`;
+  }
+  if (v.status === "publishing") {
+    return `<div class="lote-video-row">#${n} — 📤 Publicando...</div>`;
+  }
+  if (v.status === "error") {
+    return `
+      <div class="lote-video-row lote-video-row-line">
+        <div>#${n} — ❌ Error: ${_escapeHtml(v.error || "desconocido")}</div>
+        <button class="btn-sm" data-lote-retry="${projectId}" data-lote-retry-index="${v.index}">Reintentar</button>
+      </div>`;
+  }
+  if (v.status === "published") {
+    const redes = Object.keys(v.published_at || {}).filter(k => v.published_at[k]).join(", ") || "—";
+    return `<div class="lote-video-row">#${n} — ✅ Publicado (${_escapeHtml(redes)})</div>`;
+  }
+  if (v.status === "ready") {
+    const redesListas = Object.keys(v.published_at || {}).filter(k => v.published_at[k]);
+    const parcial = redesListas.length ? ` — ya publicado en ${_escapeHtml(redesListas.join(", "))}, falta el resto` : "";
+    return `<div class="lote-video-row">#${n} — 🟡 Listo, espera publicación (${_loteDate(v.scheduled_at)})${parcial}</div>`;
+  }
+  return `<div class="lote-video-row">#${n} — ⏳ Pendiente (programado ${_loteDate(v.scheduled_at)})</div>`;
+}
+
+function _loteVideoRows(project) {
+  const videos = project.videos || [];
+  if (!videos.length) return "";
+  return `<div class="lote-video-list">${videos.map(v => _loteVideoRowHtml(v, project.id)).join("")}</div>`;
+}
+
+async function loadLoteProjects() {
+  const wrap = $("lote-list");
+  try {
+    const res = await fetch("/api/batch/list");
+    const data = await res.json();
+    const projects = (data.ok && data.projects) || [];
+    if (!projects.length) {
+      wrap.innerHTML = `<div class="analytics-empty">Todavía no creaste ningún proyecto de lote.</div>`;
+      return;
+    }
+    wrap.innerHTML = projects.map(p => `
+      <div class="card" style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div>
+            <strong>${_escapeHtml(p.name)}</strong> — ${_loteStatusLabel(p.status)}
+            <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${_loteVideoSummary(p)}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            ${p.status === "running" ? `<button class="btn-sm" data-lote-pause="${p.id}">Pausar</button>` : ""}
+            ${p.status === "paused" ? `<button class="btn-sm" data-lote-resume="${p.id}">Reanudar</button>` : ""}
+            ${(p.status === "running" || p.status === "paused") ? `<button class="btn-sm" data-lote-cancel="${p.id}">Cancelar</button>` : ""}
+            ${(p.status === "cancelled" || p.status === "done") ? `<button class="btn-sm" data-lote-delete="${p.id}">Eliminar</button>` : ""}
+          </div>
+        </div>
+        ${_loteVideoRows(p)}
+      </div>`).join("");
+    wrap.querySelectorAll("[data-lote-pause]").forEach(btn =>
+      btn.addEventListener("click", () => loteProjectAction(btn.dataset.lotePause, "pause")));
+    wrap.querySelectorAll("[data-lote-resume]").forEach(btn =>
+      btn.addEventListener("click", () => loteProjectAction(btn.dataset.loteResume, "resume")));
+    wrap.querySelectorAll("[data-lote-cancel]").forEach(btn =>
+      btn.addEventListener("click", () => loteProjectAction(btn.dataset.loteCancel, "cancel")));
+    wrap.querySelectorAll("[data-lote-delete]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (confirm("¿Eliminar este proyecto de lote? No se borran los videos ya publicados.")) {
+          loteProjectAction(btn.dataset.loteDelete, "delete");
+        }
+      }));
+    wrap.querySelectorAll("[data-lote-retry]").forEach(btn =>
+      btn.addEventListener("click", async () => {
+        try {
+          await fetch(`/api/batch/retry/${btn.dataset.loteRetry}/${btn.dataset.loteRetryIndex}`, { method: "POST" });
+        } catch (e) {}
+        loadLoteProjects();
+      }));
+
+    const anyRunning = projects.some(p => p.status === "running");
+    if (anyRunning && !lotePollTimer) {
+      lotePollTimer = setInterval(loadLoteProjects, 5000);
+    } else if (!anyRunning && lotePollTimer) {
+      clearInterval(lotePollTimer);
+      lotePollTimer = null;
+    }
+  } catch (e) {
+    wrap.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
+  }
+}
+let lotePollTimer = null;
+
+async function loteProjectAction(projectId, action) {
+  try {
+    await fetch(`/api/batch/${action}/${projectId}`, { method: "POST" });
+  } catch (e) {}
+  loadLoteProjects();
+}
+
+$("lote-fb").addEventListener("change", () => { $("lote-page-wrap").style.display = ($("lote-fb").checked || $("lote-ig").checked) ? "" : "none"; });
+$("lote-ig").addEventListener("change", () => { $("lote-page-wrap").style.display = ($("lote-fb").checked || $("lote-ig").checked) ? "" : "none"; });
+$("lote-refresh-btn").addEventListener("click", loadLoteProjects);
+
+function updateDurationOptions(orientationId, durationId) {
+  const isHorizontal = $(orientationId).value === "horizontal";
+  const durationSelect = $(durationId);
+  durationSelect.querySelectorAll(".duration-long-option").forEach((opt) => {
+    opt.hidden = !isHorizontal;
+    opt.disabled = !isHorizontal;
+  });
+  const selected = durationSelect.querySelector(`option[value="${durationSelect.value}"]`);
+  if (!isHorizontal && selected && selected.classList.contains("duration-long-option")) {
+    durationSelect.value = "";
+  }
+}
+$("pipeline-orientation").addEventListener("change", () => updateDurationOptions("pipeline-orientation", "pipeline-duration"));
+$("lote-orientation").addEventListener("change", () => updateDurationOptions("lote-orientation", "lote-duration"));
+updateDurationOptions("pipeline-orientation", "pipeline-duration");
+updateDurationOptions("lote-orientation", "lote-duration");
+
+$("lote-create-btn").addEventListener("click", async () => {
+  const btn = $("lote-create-btn");
+  const statusEl = $("lote-create-status");
+  const name = $("lote-nombre").value.trim();
+  const qwenProject = $("lote-qwen-project").value.trim();
+  if (!name || !qwenProject) {
+    statusEl.innerHTML = `<div class="analytics-empty">Completá el nombre del proyecto y el proyecto de Qwen.</div>`;
+    return;
+  }
+  const pageId = $("lote-page").value || null;
+  const networks = {};
+  if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
+  if ($("lote-ig").checked) networks.instagram = { page_id: pageId };
+  if ($("lote-yt").checked) networks.youtube = true;
+  if (!Object.keys(networks).length) {
+    statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
+    return;
+  }
+  const payload = {
+    name, qwen_project: qwenProject,
+    trigger_message: $("lote-trigger-message").value.trim() || "dame una historia",
+    total_videos: parseInt($("lote-total").value, 10) || 1,
+    per_day: parseInt($("lote-per-day").value, 10) || 1,
+    networks,
+    video_settings: {
+      voice: $("lote-voice").value,
+      subtitle_preset: $("lote-subtitle-preset").value,
+      orientation: $("lote-orientation").value,
+      provider: $("lote-provider").value,
+      duration_seconds: $("lote-duration").value ? parseInt($("lote-duration").value, 10) : null,
+      subtitles_enabled: $("lote-subtitles-enabled").checked,
+      animate_images: $("lote-animate-images").checked,
+      generate_video_clips: $("lote-generate-video-clips").checked,
+    },
+  };
+  btn.disabled = true;
+  statusEl.textContent = "Creando proyecto...";
+  try {
+    const res = await fetch("/api/batch/create", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      statusEl.innerHTML = `<div class="analytics-empty">❌ ${_escapeHtml(data.error || "No se pudo crear el proyecto.")}</div>`;
+      return;
+    }
+    statusEl.innerHTML = `<div class="analytics-empty">✅ Proyecto "${_escapeHtml(name)}" creado.</div>`;
+    $("lote-nombre").value = "";
+    $("lote-qwen-project").value = "";
+    $("lote-trigger-message").value = "dame una historia";
+    loadLoteProjects();
+  } catch (e) {
+    statusEl.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ── Publicación en redes sociales ──
 function updatePublishExtras() {
@@ -2104,7 +2531,7 @@ $("publish-btn").addEventListener("click", async () => {
 // ── Ajustes: estado y reconexión de sesiones (WhatsApp / Qwen) ──
 const _ajustesPollTimers = {};
 
-const _ajustesProviderLabel = { whatsapp: "WhatsApp", qwen: "Qwen" };
+const _ajustesProviderLabel = { whatsapp: "WhatsApp", qwen: "Qwen", qwen_batch: "Qwen (lote)" };
 
 function closeQrModal() {
   $("qr-modal-backdrop").style.display = "none";
@@ -2175,9 +2602,38 @@ async function reconnectSession(provider) {
     if (state === "needs_login") {
       const backdrop = $("qr-modal-backdrop");
       const qrImg = $("qr-modal-img");
+      const hint = $("qr-modal-hint");
+      const devtoolsLink = $("qr-modal-devtools-link");
+      const label = _ajustesProviderLabel[provider] || provider;
       backdrop.dataset.provider = provider;
-      $("qr-modal-title").textContent = `Escaneá el QR de ${_ajustesProviderLabel[provider] || provider}`;
-      qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
+      const isQwen = provider === "qwen" || provider === "qwen_batch";
+      if (isQwen) {
+        // Qwen no tiene QR (no renderiza <canvas>) -- esta sesion es un Chrome
+        // aparte, sin relacion con el Chrome personal del usuario aunque ahi
+        // ya este logueado. Hay que loguear ESTA sesion puntual via DevTools.
+        $("qr-modal-title").textContent = `Iniciar sesión en ${label}`;
+        qrImg.style.display = "none";
+        hint.textContent = "Esta es una sesión de navegador aislada, separada de tu Chrome personal. Estar logueado en tu Chrome no la loguea a ella. Hacé clic abajo para abrir esta sesión en una pestaña de DevTools y loguearte ahí (con tu cuenta de Qwen).";
+        devtoolsLink.style.display = "block";
+        devtoolsLink.textContent = "Cargando enlace...";
+        fetch(`/api/session/devtools-url/${provider}`)
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.ok) {
+              devtoolsLink.href = d.url;
+              devtoolsLink.textContent = "Abrir sesión para loguearme";
+            } else {
+              devtoolsLink.textContent = "No se pudo generar el enlace";
+            }
+          })
+          .catch(() => { devtoolsLink.textContent = "No se pudo generar el enlace"; });
+      } else {
+        $("qr-modal-title").textContent = `Escaneá el QR de ${label}`;
+        qrImg.style.display = "block";
+        hint.textContent = "WhatsApp → Menú → Dispositivos vinculados → Vincular un dispositivo, y escaneá esto con la cámara del celular.";
+        devtoolsLink.style.display = "none";
+        qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
+      }
       backdrop.style.display = "flex";
       if (_ajustesPollTimers[provider]) clearInterval(_ajustesPollTimers[provider]);
       _ajustesPollTimers[provider] = setInterval(async () => {
@@ -2185,7 +2641,7 @@ async function reconnectSession(provider) {
         if (s === "ok") {
           clearInterval(_ajustesPollTimers[provider]);
           _ajustesPollTimers[provider] = null;
-        } else if (s === "needs_login" && backdrop.dataset.provider === provider) {
+        } else if (s === "needs_login" && !isQwen && backdrop.dataset.provider === provider) {
           qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
         }
       }, 5000);
@@ -2200,8 +2656,10 @@ async function reconnectSession(provider) {
 
 $("ajustes-check-whatsapp-btn").addEventListener("click", () => checkSessionStatus("whatsapp"));
 $("ajustes-check-qwen-btn").addEventListener("click", () => checkSessionStatus("qwen"));
+$("ajustes-check-qwen_batch-btn").addEventListener("click", () => checkSessionStatus("qwen_batch"));
 $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSession("whatsapp"));
 $("ajustes-reconnect-qwen-btn").addEventListener("click", () => reconnectSession("qwen"));
+$("ajustes-reconnect-qwen_batch-btn").addEventListener("click", () => reconnectSession("qwen_batch"));
 </script>
 </body>
 </html>"""
@@ -2497,6 +2955,8 @@ def _session_for_provider(provider):
     # vez) -- solo whatsapp/qwen tienen estado de login individual chequeable.
     if provider == "qwen":
         return auto_pipeline.QWEN_SESSION
+    if provider == "qwen_batch":
+        return auto_pipeline.QWEN_BATCH_SESSION
     if provider == "whatsapp":
         return auto_pipeline.WHATSAPP_SESSION
     return None
@@ -2542,6 +3002,18 @@ def api_session_screenshot(provider):
     except auto_pipeline.PipelineError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     return send_file(str(png_path), mimetype="image/png")
+
+
+@app.route("/api/session/devtools-url/<provider>", methods=["GET"])
+def api_session_devtools_url(provider):
+    session = _session_for_provider(provider)
+    if session is None:
+        return jsonify({"ok": False, "error": f"Proveedor desconocido: {provider}"}), 400
+    try:
+        url = auto_pipeline.get_remote_devtools_url(session)
+    except auto_pipeline.PipelineError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "url": url})
 
 
 @app.route("/api/clipgen/status/<job_id>")
@@ -2815,6 +3287,9 @@ def api_pipeline_start():
     if not story_text:
         return jsonify({"ok": False, "error": "Pega el texto completo de la historia."}), 400
     script_text = data.get("script_text", "").strip() or None
+    duration_seconds = data.get("duration_seconds") or None
+    if script_text and duration_seconds:
+        script_text = auto_pipeline.cap_script_to_duration(script_text, int(duration_seconds))
 
     story_id = uuid.uuid4().hex[:8]
     clips_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
@@ -3595,7 +4070,7 @@ def api_youtube_publish():
     filename = secure_filename_safe(data.get("filename", "").strip())
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
-    privacy_status = data.get("privacy_status", "public").strip()
+    privacy_status = data.get("privacy_status", "unlisted").strip()
     tags = [t.strip() for t in data.get("tags", "").split(",") if t.strip()]
     is_ai_generated = bool(data.get("is_ai_generated"))
     thumbnail_name = data.get("thumbnail", "").strip()
@@ -3902,8 +4377,74 @@ def api_instagram_best_time():
 
 
 # ─────────────────────────────────────────────
+# Generación en lote (módulo independiente, ver batch_pipeline.py)
+# ─────────────────────────────────────────────
+
+@app.route("/api/batch/create", methods=["POST"])
+def api_batch_create():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    qwen_project = (data.get("qwen_project") or "").strip()
+    if not name or not qwen_project:
+        return jsonify({"ok": False, "error": "Falta el nombre del proyecto o el proyecto de Qwen."})
+    try:
+        project = batch_pipeline.create_project(
+            name=name,
+            qwen_project=qwen_project,
+            total_videos=data.get("total_videos", 1),
+            per_day=data.get("per_day", 1),
+            networks=data.get("networks") or {},
+            video_settings=data.get("video_settings") or {},
+            trigger_message=(data.get("trigger_message") or "").strip() or "dame una historia",
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": True, "project": project})
+
+
+@app.route("/api/batch/list")
+def api_batch_list():
+    return jsonify({"ok": True, "projects": batch_pipeline.list_projects()})
+
+
+@app.route("/api/batch/status/<project_id>")
+def api_batch_status(project_id):
+    project = batch_pipeline.get_project(project_id)
+    if not project:
+        return jsonify({"ok": False, "error": "Proyecto no encontrado."})
+    return jsonify({"ok": True, "project": project})
+
+
+@app.route("/api/batch/pause/<project_id>", methods=["POST"])
+def api_batch_pause(project_id):
+    return jsonify({"ok": batch_pipeline.pause_project(project_id)})
+
+
+@app.route("/api/batch/resume/<project_id>", methods=["POST"])
+def api_batch_resume(project_id):
+    return jsonify({"ok": batch_pipeline.resume_project(project_id)})
+
+
+@app.route("/api/batch/cancel/<project_id>", methods=["POST"])
+def api_batch_cancel(project_id):
+    return jsonify({"ok": batch_pipeline.cancel_project(project_id)})
+
+
+@app.route("/api/batch/delete/<project_id>", methods=["POST"])
+def api_batch_delete(project_id):
+    return jsonify({"ok": batch_pipeline.delete_project(project_id)})
+
+
+@app.route("/api/batch/retry/<project_id>/<int:index>", methods=["POST"])
+def api_batch_retry(project_id, index):
+    return jsonify({"ok": batch_pipeline.retry_video(project_id, index)})
+
+
+# ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
+
+batch_pipeline.start_scheduler()
 
 if __name__ == "__main__":
     print("\n" + "=" * 55)

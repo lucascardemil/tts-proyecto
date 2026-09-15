@@ -28,8 +28,10 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Optional
 import threading
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -128,6 +130,13 @@ _SINGLETON_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 QWEN_SESSION = "qwen"
 QWEN_URL = "https://chat.qwen.ai/"
 
+# Sesion separada para el modulo de "Generacion en lote": evita que la
+# automatizacion desatendida (corre sola, sin confirmar cada paso) se
+# entrelace con el uso manual del pipeline normal sobre QWEN_SESSION. Requiere
+# loguearse una vez a mano en esta sesion tambien (--restore es por nombre de
+# sesion, no comparte cookies con "qwen").
+QWEN_BATCH_SESSION = "qwen_batch"
+
 PROVIDERS = ("whatsapp", "qwen", "mixed")
 
 POLL_INTERVAL_SECONDS = 4
@@ -136,6 +145,7 @@ CLIP_TIMEOUT_SECONDS = 600
 QWEN_CLIP_TIMEOUT_SECONDS = 1200
 QWEN_IMAGE_TIMEOUT_SECONDS = 180  # generar una sola imagen es mucho mas rapido que un video
 QWEN_TEXT_TIMEOUT_SECONDS = 60  # una respuesta de texto corta (ej. un titular) es casi instantanea
+QWEN_STORY_TIMEOUT_SECONDS = 300  # "dame una historia" devuelve guion + N prompts, tarda mas que un titular
 
 
 class PipelineError(Exception):
@@ -430,8 +440,11 @@ def check_session_status(session: str, force_reload: bool = True) -> dict:
         if "Meta AI" in snap:
             return {"state": "ok", "message": "Sesion de WhatsApp Web activa."}
         return {"state": "needs_login", "message": "WhatsApp Web no esta logueado (falta escanear QR)."}
-    elif session == QWEN_SESSION:
-        if re.search(r"textbox", snap):
+    elif session in (QWEN_SESSION, QWEN_BATCH_SESSION):
+        # El textbox "Ask Qwen" esta presente tanto logueado como deslogueado
+        # (chat.qwen.ai permite escribir sin cuenta) -- la señal real de sesion
+        # activa es que NO aparezcan los botones "Log in"/"Sign up".
+        if re.search(r"textbox", snap) and 'button "Log in"' not in snap:
             return {"state": "ok", "message": "Sesion de Qwen activa."}
         return {"state": "needs_login", "message": "Qwen no esta logueado (falta iniciar sesion)."}
     return {"state": "unreachable", "message": f"Sesion desconocida: {session}"}
@@ -480,6 +493,26 @@ def open_login_page(session: str) -> None:
         _run_agent_browser(["open", url], session)
 
 
+def get_remote_devtools_url(session: str) -> str:
+    """Qwen no muestra un QR (canvas) para loguearse -- a diferencia de WhatsApp,
+    la sesion headless de agent-browser no tiene forma de escanear nada. Esta
+    funcion expone la sesion via Chrome DevTools remoto (CDP) para que el usuario
+    pueda abrir esa pagina en vivo desde su propio Chrome y loguearse a mano
+    (email/Google/lo que sea) directo en el navegador automatizado."""
+    out = _run_agent_browser(["get", "cdp-url"], session)
+    m = re.search(r"ws://([\d.:]+)/devtools/browser/", out)
+    if not m:
+        raise PipelineError("No pude obtener el endpoint CDP de la sesion.")
+    host_port = m.group(1)
+    with urllib.request.urlopen(f"http://{host_port}/json/list", timeout=5) as resp:
+        pages = json.loads(resp.read())
+    page = next(
+        (p for p in pages if p.get("type") == "page" and not p.get("url", "").startswith("chrome://")),
+        pages[0],
+    )
+    return page["devtoolsFrontendUrl"]
+
+
 def _confirm(prompt: str, unattended: bool) -> None:
     if unattended:
         return
@@ -520,6 +553,14 @@ def _parse_story(text: str, story_id: str = None) -> dict:
     # el heading empiece la linea (a veces queda pegado al final del guion,
     # p. ej. "...oportunidad? Imagen 1"), solo que no venga pegado a otra
     # palabra.
+    # Qwen suele resaltar las etiquetas "Frase"/"Prompt" en negrita markdown
+    # (p. ej. "**Frase:** \"...\""), formato que usa literalmente el archivo
+    # workflow_maestro_reels_9x16.md (Project CONTENIDO DIARIO DE MAGRAME).
+    # El "**" entre "Frase:"/"Prompt:" y el valor rompe el regex de abajo, que
+    # exige la comilla/valor inmediatamente después del ":" -- se lo saca acá
+    # antes de parsear, ya que nunca es contenido real del guion/prompt.
+    text = text.replace("**", "")
+
     HEADING = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*(\d+)[ \t]*$"
     HEADING_NOCAP = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*\d+[ \t]*$"
 
@@ -590,6 +631,42 @@ def extract_script(raw_text: str) -> str:
         return script
     logger.warning("extract_script: no se encontro marcador, usando texto completo (%d chars)", len(raw_text))
     return raw_text.strip()
+
+
+SPANISH_WORDS_PER_MINUTE = 170  # calibrado contra .subs.json reales generados con Chatterbox (158-189 wpm observado)
+
+
+def cap_script_to_duration(script: str, duration_seconds: Optional[int]) -> str:
+    """Recorta el guion a las oraciones que quepan en el presupuesto de
+    palabras de duration_seconds (estimado a SPANISH_WORDS_PER_MINUTE).
+    None/0 = "Automatico" (sin recorte). Nunca corta a mitad de oracion, y
+    siempre conserva al menos la primera aunque sola ya exceda el
+    presupuesto, para no devolver un guion vacio."""
+    if not duration_seconds:
+        return script
+    word_budget = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
+    sentences = re.split(r"(?<=[.!?])\s+", script.strip())
+    kept = []
+    count = 0
+    for s in sentences:
+        n = len(s.split())
+        if kept and count + n > word_budget:
+            break
+        kept.append(s)
+        count += n
+    return " ".join(kept)
+
+
+def build_qwen_trigger_message(base_message: str, duration_seconds: Optional[int]) -> str:
+    """Si hay una duracion objetivo, le agrega al mensaje disparador un pedido
+    de longitud aproximada en palabras, para que Qwen genere directamente un
+    guion cercano al objetivo en vez de depender solo del recorte posterior
+    de cap_script_to_duration (que nunca puede alargar una historia corta,
+    solo acortarla si se pasa)."""
+    if not duration_seconds:
+        return base_message
+    word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
+    return f"{base_message} (el guion de narracion debe tener aproximadamente {word_target} palabras)"
 
 
 def resume_index(download_dir: Path) -> int:
@@ -1073,27 +1150,83 @@ def _deselect_qwen_mode(session: str) -> None:
             return
 
 
-def _get_last_ai_text_reply(session: str) -> "str | None":
+_QWEN_TEXT_REPLY_NOISE = {
+    "Thinking completed", "Copy", "Good Response", "Bad Response", "Regenerate",
+    "I prefer this response", "Response 1", "Response 2",
+    "Which response do you prefer? Select one to continue.",
+    "This feedback will help us evaluate and improve Qwen Studio's performance.",
+    "AI-generated content may not be accurate.", "Auto", "Voice Input",
+}
+
+
+def _get_last_ai_text_reply(session: str, skip_text: "str | None" = None) -> "str | None":
     """Devuelve el texto de la ultima respuesta de Qwen (chat de texto plano),
-    o None si la ultima burbuja todavia no termino de generarse. Se apoya en
-    que los botones de accion (Copy/Good Response/Bad Response) solo aparecen
-    debajo de una respuesta ya completa -- mientras esta en streaming no
-    matchea nada."""
+    o None si todavia no hay respuesta nueva o esta generandose.
+
+    El markdown de la respuesta se renderiza como VARIOS StaticText separados
+    (uno por parrafo/bloque), no uno solo -- hay que concatenar todos los que
+    vienen despues del mensaje recien mandado (`skip_text`), no quedarse con
+    el ultimo nomas (eso solo devolvia el ultimo parrafo, ej. el ultimo
+    "Imagen N", y rompia el parseo de historias largas). Si `skip_text` no
+    esta en el snapshot todavia (el mensaje ni se mando o no se termino de
+    renderizar el echo), se considera que no hay respuesta nueva.
+
+    A veces Qwen ofrece elegir entre dos respuestas ("Which response do you
+    prefer? Select one to continue.") en vez de contestar directo -- ahi se
+    elige siempre la primera (clickear su "I prefer this response") para
+    colapsarlo a una respuesta normal y seguir con el mismo caso de abajo."""
     snap = _run_agent_browser(["snapshot"], session)
-    matches = list(re.finditer(r'StaticText "((?:[^"\\]|\\.)*)"', snap))
-    for i in range(len(matches) - 1, -1, -1):
-        tail = snap[matches[i].end():matches[i].end() + 400]
-        if 'button "Copy"' in tail:
-            return matches[i].group(1).replace('\\"', '"')
-    return None
+
+    if "Which response do you prefer" in snap:
+        prefer_ref = _find_ref(snap, r'button "I prefer this response"\s*\[ref=(\w+)\]')
+        if not prefer_ref:
+            return None
+        _run_agent_browser(["click", f"@{prefer_ref}"], session)
+        time.sleep(1.5)
+        snap = _run_agent_browser(["snapshot"], session)
+
+    if skip_text:
+        anchor = f'StaticText "{skip_text}"'
+        idx = snap.rfind(anchor)
+        if idx == -1:
+            return None
+        region = snap[idx + len(anchor):]
+    else:
+        main_match = re.search(r"\n\s*-\s*main\b", snap)
+        region = snap[main_match.start():] if main_match else snap
+
+    if 'button "Copy"' not in region and 'button "I prefer this response"' not in region:
+        return None
+
+    texts = [
+        _unescape_snapshot_text(m.group(1))
+        for m in re.finditer(r'StaticText "((?:[^"\\]|\\.)*)"', region)
+    ]
+    texts = [t for t in texts if t.strip() not in _QWEN_TEXT_REPLY_NOISE]
+    return "\n\n".join(texts) if texts else None
 
 
-def _wait_for_qwen_text_reply(session: str, baseline: "str | None", timeout_seconds: int) -> str:
+def _unescape_snapshot_text(raw: str) -> str:
+    """El snapshot escapa el texto como si fuera un string de codigo (comillas,
+    saltos de linea, tabs) -- si no se desescapan los `\\n`/`\\t` quedan como
+    backslash+letra literal en vez de whitespace real, y las heading regexes
+    de `_parse_story` (que anclan con `$` de fin de linea) dejan de matchear."""
+    return (
+        raw.replace('\\"', '"')
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\\", "\\")
+    )
+
+
+def _wait_for_qwen_text_reply(
+    session: str, baseline: "str | None", timeout_seconds: int, skip_text: "str | None" = None
+) -> str:
     deadline = time.time() + timeout_seconds
     last_report = time.time()
     while time.time() < deadline:
         time.sleep(POLL_INTERVAL_SECONDS)
-        reply = _get_last_ai_text_reply(session)
+        reply = _get_last_ai_text_reply(session, skip_text=skip_text)
         if reply is not None and reply != baseline:
             return reply
         if time.time() - last_report > 30:
@@ -1110,9 +1243,77 @@ def generate_qwen_text(prompt: str, unattended: bool = True) -> str:
     _open_qwen(unattended)
     with _get_session_lock(QWEN_SESSION):
         _deselect_qwen_mode(QWEN_SESSION)
-        baseline = _get_last_ai_text_reply(QWEN_SESSION)
+        baseline = _get_last_ai_text_reply(QWEN_SESSION, skip_text=prompt)
         _send_chat_message(QWEN_SESSION, prompt, textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-        reply = _wait_for_qwen_text_reply(QWEN_SESSION, baseline, QWEN_TEXT_TIMEOUT_SECONDS)
+        reply = _wait_for_qwen_text_reply(QWEN_SESSION, baseline, QWEN_TEXT_TIMEOUT_SECONDS, skip_text=prompt)
+    return reply.strip()
+
+
+def _open_qwen_project(session: str, project_name: str) -> None:
+    """Entra a un Project de chat.qwen.ai por nombre (sidebar de Projects) y
+    arranca un chat nuevo adentro, para que 'dame una historia' no continue
+    una conversacion vieja de una corrida anterior del lote.
+
+    Sin precedente en el codigo (el pipeline manual solo usa el chat raiz) --
+    el rol accesible exacto del link del proyecto en el snapshot no esta
+    confirmado; si el regex no lo encuentra en la primera corrida real, ajustar
+    el patron de abajo (mismo tipo de ajuste que ya necesitaron en su momento
+    _find_select_mode_ref / _select_qwen_image_mode)."""
+    project_ref = None
+    for attempt in range(5):
+        snap = _run_agent_browser(["snapshot", "-i"], session)
+        project_ref = _find_ref(
+            snap, rf'(?:link|button|treeitem|listitem|generic) "{re.escape(project_name)}"\s*\[ref=(\w+)\]'
+        )
+        if project_ref:
+            break
+        time.sleep(1.5)
+    if not project_ref:
+        raise PipelineError(
+            f"No encontre el proyecto '{project_name}' en el sidebar de Qwen "
+            "(revisar el nombre exacto o si el sidebar de Projects esta colapsado)."
+        )
+    _run_agent_browser(["click", f"@{project_ref}"], session)
+
+    # No clickear "New Chat": ese boton es el global del sidebar y navega
+    # afuera del proyecto (chat.qwen.ai/p/<id> -> chat.qwen.ai/), perdiendo
+    # las Instructions/Files del proyecto. La pagina de aterrizaje del
+    # proyecto ya trae su propio textbox, que arranca un chat nuevo scoped
+    # al proyecto en cuanto se manda el primer mensaje -- alcanza con
+    # esperarlo.
+    for _ in range(6):
+        snap = _run_agent_browser(["snapshot", "-i"], session)
+        if re.search(r'textbox "Ask Qwen"', snap):
+            return
+        time.sleep(2)
+    raise PipelineError(
+        f"Entre al proyecto '{project_name}' pero no encontre el textbox del chat despues."
+    )
+
+
+def generate_story_from_qwen_project(
+    project_name: str, unattended: bool = True, trigger_message: str = "dame una historia"
+) -> str:
+    """Pide una historia completa (guion + prompts de imagen) al Project de
+    Qwen indicado, mandando trigger_message en un chat nuevo de ese
+    proyecto. Devuelve el texto crudo para pasar tal cual a
+    load_story_from_text/extract_script -- el formato esperado (heading
+    'Guion...' + bloques 'Imagen N'/'Frase:'/'Prompt:') lo define el propio
+    system prompt del proyecto en Qwen, no esta funcion. trigger_message
+    tiene que ser el mensaje que ese Project puntual espera para responder
+    con el formato estructurado -- no todos los Projects usan la misma
+    frase disparadora."""
+    _confirm(f"Voy a pedir una historia al proyecto de Qwen '{project_name}'. Confirmas?", unattended)
+    _open_qwen(unattended, session=QWEN_BATCH_SESSION)
+    with _get_session_lock(QWEN_BATCH_SESSION):
+        _open_qwen_project(QWEN_BATCH_SESSION, project_name)
+        _deselect_qwen_mode(QWEN_BATCH_SESSION)
+        baseline = _get_last_ai_text_reply(QWEN_BATCH_SESSION, skip_text=trigger_message)
+        _send_chat_message(QWEN_BATCH_SESSION, trigger_message,
+                            textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
+        reply = _wait_for_qwen_text_reply(
+            QWEN_BATCH_SESSION, baseline, QWEN_STORY_TIMEOUT_SECONDS, skip_text=trigger_message
+        )
     return reply.strip()
 
 

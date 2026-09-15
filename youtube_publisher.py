@@ -79,7 +79,7 @@ def publish_video(
     video_path: str,
     title: str,
     description: str,
-    privacy_status: str = "public",
+    privacy_status: str = "unlisted",
     tags: Optional[list] = None,
     is_ai_generated: bool = False,
     on_status: Optional[Callable[[str], None]] = None,
