@@ -240,6 +240,16 @@ def _best_hour_for_networks(networks: dict) -> Optional[int]:
     return None if result.get("insufficient_data") else result.get("best_hour")
 
 
+def _into_publish_window(dt: datetime) -> datetime:
+    """Lleva `dt` al rango BATCH_HOUR_START-BATCH_HOUR_END: antes de abrir
+    -> hoy a la apertura; despues de cerrar -> manana a la apertura."""
+    if dt.hour < BATCH_HOUR_START:
+        return dt.replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
+    if dt.hour > BATCH_HOUR_END:
+        return (dt + timedelta(days=1)).replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
+    return dt
+
+
 def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
@@ -972,7 +982,9 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
         else:
             v["status"] = "ready"
             if rescheduled:
-                v["scheduled_at"] = (datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS)).isoformat()
+                v["scheduled_at"] = _into_publish_window(
+                    datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS)
+                ).isoformat()
         _save(projects)
 
 
@@ -1043,11 +1055,34 @@ def _generate_batch_item(project_id: str, index: int, content_type: str) -> None
         _generate_batch_video(project_id, index)
 
 
+def _record_publish_failure(project_id: str, index: int, exc: Exception) -> None:
+    """El hilo de publicacion murio con una excepcion inesperada (fuera del
+    try de cada red): sin esto el video queda en "publishing" para siempre,
+    porque nadie mas lo suelta hasta el proximo reinicio. Mismo presupuesto
+    de reintentos que un fallo de red normal (ver _publish_networks)."""
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return
+        v = project["videos"][index]
+        if v["status"] != "publishing":
+            return
+        v["publish_attempts"] = v.get("publish_attempts", 0) + 1
+        v["error"] = str(exc)
+        v["status"] = "ready" if v["publish_attempts"] < MAX_AUTO_RETRIES else "publish_error"
+        _save(projects)
+
+
 def _publish_batch_item(project_id: str, index: int, content_type: str) -> None:
-    if content_type == "gaming_image":
-        _publish_batch_image_post(project_id, index)
-    else:
-        _publish_batch_video(project_id, index)
+    try:
+        if content_type == "gaming_image":
+            _publish_batch_image_post(project_id, index)
+        else:
+            _publish_batch_video(project_id, index)
+    except Exception as exc:
+        logger.exception("batch %s item %d: fallo inesperado publicando", project_id, index)
+        _record_publish_failure(project_id, index, exc)
 
 
 def _batch_scheduler_tick() -> None:
@@ -1076,11 +1111,14 @@ def _batch_scheduler_tick() -> None:
                 break
 
     now = datetime.now()
+    in_window = BATCH_HOUR_START <= now.hour <= BATCH_HOUR_END
     for project in running:
         project_id = project["id"]
         videos = project["videos"]
         for v in videos:
-            if v["status"] != "ready":
+            # Fuera de 9-20 no se publica nada, ni siquiera lo vencido (caida
+            # larga, espera de espaciado): sale a la primera hora habil.
+            if v["status"] != "ready" or not in_window:
                 continue
             try:
                 scheduled = datetime.fromisoformat(v["scheduled_at"])

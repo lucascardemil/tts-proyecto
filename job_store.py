@@ -35,6 +35,10 @@ def load(name: str) -> dict:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        # Bajo el mismo lock que save(): write_text trunca el archivo antes de
+        # escribirlo, y un lector sin lock veia JSON a medias -> {} silencioso
+        # (un proyecto "desaparecia" y el hilo de publicacion moria).
+        with _write_lock:
+            return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
