@@ -100,6 +100,7 @@ _HEALABLE_EXTRA_MARKERS = (
     "no encontre el boton 'meta ai'", "no encontre (habilitado)",
     "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
     "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
+    "is covered by",  # overlay de carga (splash) tapando el clic en Qwen/WhatsApp: pasa solo
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
