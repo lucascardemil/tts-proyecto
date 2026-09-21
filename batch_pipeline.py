@@ -15,6 +15,7 @@ import json
 import logging
 import msvcrt
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -561,6 +562,10 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 )
         story = auto_pipeline.load_story_from_text(story_text, story_id)
         clips_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
+        # Historia nueva: los clips de un intento anterior (reinicio de app.py,
+        # video vuelto a "pending") son de OTRA historia. resume_index solo
+        # sirve para los reintentos de esta misma historia, mas abajo.
+        shutil.rmtree(clips_dir, ignore_errors=True)
 
         _set_stage(project_id, index, "imagenes")
         provider = vs.get("provider", "whatsapp")
