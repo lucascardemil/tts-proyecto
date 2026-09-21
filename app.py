@@ -1080,6 +1080,25 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de YouTube</h2>
+      <p class="card-desc">Necesaria para publicar en YouTube. Si aparece "Necesita reconectar" (el token venció o fue revocado), tocá el botón: se abre el navegador de esta PC para aprobar el acceso con tu cuenta de Google. Después reintentá las publicaciones con error.
+        Si el token vence cada ~7 días, la app OAuth está en modo "Testing" en Google Cloud Console: pasala a "En producción" para que no vuelva a pasar.</p>
+      <div class="status-rows">
+        <div class="status-row" id="ajustes-row-youtube">
+          <div class="status-row-text">
+            <strong>YouTube</strong>
+            <span id="ajustes-msg-youtube">Sin comprobar todavía.</span>
+          </div>
+          <div class="ring pending" id="ajustes-ring-youtube"></div>
+        </div>
+      </div>
+      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn-sm" id="ajustes-check-youtube-btn">Comprobar conexión</button>
+        <button class="btn-sm" id="ajustes-reconnect-youtube-btn" style="display:none">Reconectar</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>🌐 URL pública (Cloudflare Tunnel)</h2>
       <p class="card-desc">
         La app lanza <code>cloudflared</code> sola al arrancar (Quick Tunnel) y
@@ -1210,6 +1229,7 @@ function activateTab(tab) {
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
     checkSessionStatus("qwen");
+    checkYoutubeSettings();
     loadPublicUrl();
   }
   if (tab === "analytics") {
@@ -2414,26 +2434,30 @@ async function checkYoutubeConnection() {
   } catch (e) { console.error("No se pudo consultar la conexión con YouTube", e); }
 }
 
-$("yt-connect-btn").addEventListener("click", async () => {
-  const btn = $("yt-connect-btn");
-  const status = $("yt-connect-status");
+// Login OAuth de YouTube: bloquea hasta que el usuario aprueba/cancela en el
+// navegador de la PC del servidor. Compartido por la pestaña Video y Ajustes.
+async function runYoutubeConnect(btn, setStatus) {
   btn.disabled = true;
-  status.textContent = "Abriendo el navegador para conectar tu cuenta de Google...";
+  setStatus("Abriendo el navegador para conectar tu cuenta de Google...");
   try {
     const res = await fetch("/api/youtube/connect", { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      status.textContent = "";
+      setStatus("");
       checkYoutubeConnection();
+      checkYoutubeSettings();
     } else {
-      status.textContent = `❌ ${data.error || "No se pudo conectar."}`;
+      setStatus(`❌ ${data.error || "No se pudo conectar."}`);
     }
   } catch (e) {
-    status.textContent = "❌ Error de conexión con el servidor.";
+    setStatus("❌ Error de conexión con el servidor.");
   } finally {
     btn.disabled = false;
   }
-});
+}
+
+$("yt-connect-btn").addEventListener("click", () =>
+  runYoutubeConnect($("yt-connect-btn"), (t) => { $("yt-connect-status").textContent = t; }));
 
 async function pollYoutubeJob(jobId) {
   while (true) {
@@ -2786,6 +2810,29 @@ $("ajustes-check-qwen_batch-btn").addEventListener("click", () => checkSessionSt
 $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSession("whatsapp"));
 $("ajustes-reconnect-qwen-btn").addEventListener("click", () => reconnectSession("qwen"));
 $("ajustes-reconnect-qwen_batch-btn").addEventListener("click", () => reconnectSession("qwen_batch"));
+
+// ── Ajustes: conexión de YouTube (OAuth) ──
+async function checkYoutubeSettings() {
+  const ring = $("ajustes-ring-youtube");
+  const msg = $("ajustes-msg-youtube");
+  const reconnectBtn = $("ajustes-reconnect-youtube-btn");
+  ring.className = "ring indeterminate";
+  try {
+    const res = await fetch("/api/youtube/connected");
+    const data = await res.json();
+    const connected = !!data.connected;
+    ring.className = connected ? "ring done" : "ring error";
+    msg.textContent = connected ? "Conectado." : "Necesita reconectar (sin token válido).";
+    reconnectBtn.style.display = connected ? "none" : "";
+  } catch (e) {
+    ring.className = "ring error";
+    msg.textContent = "Error de conexión con el servidor.";
+    reconnectBtn.style.display = "";
+  }
+}
+$("ajustes-check-youtube-btn").addEventListener("click", checkYoutubeSettings);
+$("ajustes-reconnect-youtube-btn").addEventListener("click", () =>
+  runYoutubeConnect($("ajustes-reconnect-youtube-btn"), (t) => { $("ajustes-msg-youtube").textContent = t; }));
 
 // ── Ajustes: URL pública del Cloudflare Tunnel (posts de imagen gaming) ──
 async function loadPublicUrl() {

@@ -101,7 +101,7 @@ def publish_video(
     """
     creds = _load_credentials()
     if creds is None:
-        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo."}
+        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo.", "auth_error": True}
 
     path = Path(video_path)
     if not path.exists():
@@ -140,7 +140,7 @@ def set_thumbnail(video_id: str, thumbnail_path: str) -> dict:
     """Sube una miniatura personalizada (.jpg, hasta 2MB) para un video ya publicado."""
     creds = _load_credentials()
     if creds is None:
-        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo."}
+        return {"ok": False, "error": "Se perdió la conexión con YouTube (el token venció o fue revocado). Conectá tu cuenta de nuevo.", "auth_error": True}
 
     path = Path(thumbnail_path)
     if not path.exists():
