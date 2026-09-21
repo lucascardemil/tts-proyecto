@@ -1,6 +1,7 @@
 # 🎬 Generador de video (Remotion)
 
-Convierte imágenes + audio de narración en un video vertical (1080×1920,
+Convierte imágenes y/o clips de video cortos + audio de narración en un
+video vertical (1080×1920,
 formato Reels/TikTok/Shorts) con efecto Ken Burns, transiciones, viñeta
 cinematográfica, luciérnagas animadas y subtítulos sincronizados palabra
 por palabra.
@@ -40,13 +41,21 @@ python app.py
 ```
 Abre la pestaña **🎬 Video**: escribe el título, sube las imágenes en
 orden, elige un audio ya generado en la pestaña de Audio (o sube uno
-nuevo) y presiona **Generar Video**.
+nuevo) y presiona **Generar Video**. En **🎛️ Opciones** podés desmarcar
+"Incluir subtítulos" si querés el video sin subtítulos — en ese caso se
+salta por completo la transcripción del audio (render más rápido). Si
+generás el video varias veces con el mismo audio, la transcripción de
+subtítulos se reutiliza en vez de rehacerse (queda cacheada en un
+archivo `<audio>.subs.json` junto al audio). La barra de estado muestra
+el progreso en vivo (preparando → transcribiendo → renderizando) en vez
+de quedarse congelada durante los minutos que tarda el render.
 
 ### Desde Python directo
 ```cmd
 python video_maker.py "El viejo perro que esperaba junto al faro" ^
     imagen1.jpg imagen2.jpg imagen3.jpg ^
-    --audio narracion.mp3 --output mi_video.mp4
+    --audio narracion.mp3 --output mi_video.mp4 ^
+    --no-subtitles
 ```
 
 ### Desde Remotion Studio (para ajustar el diseño a mano)

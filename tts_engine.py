@@ -345,7 +345,7 @@ def _transcript_mismatch(expected_text: str, audio_path: str, max_mismatches: in
     True si la transcripción de audio_path difiere de expected_text en más
     palabras de las toleradas. El umbral escala con el largo del texto (8%
     de las palabras esperadas) en vez de ser un número fijo — con un número
-    fijo, un fragmento largo (hasta CHUNK_SIZE=550 caracteres, ~90 palabras)
+    fijo, un fragmento largo (hasta ~90 palabras)
     dispararía reintentos por cualquier variación menor de transcripción;
     max_mismatches queda como piso mínimo para textos cortos. 8% (no 15%):
     con 15% dos palabras alucinadas en una frase de 20 pasaban sin disparar
@@ -586,9 +586,6 @@ def tts_chatterbox(
 # oraciones típicas de un cuento sin acercarse al rango donde el motor
 # autoregresivo empieza a derivar/alucinar más.
 PACK_CHUNK_SIZE = 220
-# CHUNK_SIZE queda como techo de seguridad para partir por palabras una
-# "oración" anormalmente larga (texto sin puntuación).
-CHUNK_SIZE = 550
 
 
 def split_text_chunks(text: str, max_len: int, pack: bool = True) -> list:

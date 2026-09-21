@@ -193,7 +193,6 @@ def get_subtitle_preset_style(preset_id: str) -> dict:
     preset = SUBTITLE_PRESETS.get(preset_id, SUBTITLE_PRESETS[DEFAULT_SUBTITLE_PRESET])
     return {k: v for k, v in preset.items() if k != "label"}
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv"}
 
 _whisper_model = None  # se cachea en memoria tras la primera carga
