@@ -17,7 +17,7 @@ _FORBIDDEN_RESCUE_PATTERN = re.compile(
     r"torturad[oa]s?|mutilad[oa]s?|agoniz\w+|moribund[oa]s?|cad[aá]ver(?:es)?|muert[oa]s?|"
     r"brutal(?:es|mente)?|impactante(?:s)?|escalofriante(?:s)?|aterrador(?:a|es|as)?|"
     r"no apto para sensibles|c[aá]maras? (?:captaron|grabaron)|video real|im[aá]genes reales|"
-    r"testigos? lo grabaron)\b",
+    r"testigos? lo grabaron|envenen\w+)\b",
     re.IGNORECASE,
 )
 
