@@ -99,6 +99,7 @@ _HEALABLE_EXTRA_MARKERS = (
     "meta ai no pudo generar", "algunas sesiones de qwen",
     "no encontre el boton 'meta ai'", "no encontre (habilitado)",
     "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
+    "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -613,6 +614,11 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             (str(p) for p in clips_dir.glob("scene_*.*") if p.suffix in (".mp4", ".jpg")),
             key=lambda s: int(Path(s).stem.split("_")[1]),
         )
+        if len(clip_paths) != len(frases):
+            raise RuntimeError(
+                f"Los clips no coinciden con la historia: {len(clip_paths)} clips "
+                f"para {len(frases)} escenas"
+            )
         subtitle_style = video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
 
         def _do_render():
