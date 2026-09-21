@@ -18,6 +18,7 @@ export const StoryVideo: React.FC<StoryVideoProps> = ({
   scenes,
   subtitles,
   subtitleStyle,
+  aiLabel,
 }) => {
   const { fps } = useVideoConfig();
   const titleDurationInFrames = Math.round(fps * 3.5);
@@ -60,6 +61,26 @@ export const StoryVideo: React.FC<StoryVideoProps> = ({
         <Sequence from={0} durationInFrames={titleDurationInFrames}>
           <TitleCard title={title} durationInFrames={titleDurationInFrames} />
         </Sequence>
+      ) : null}
+
+      {/* Rótulo fijo de contenido recreado con IA, arriba y centrado para no tapar la acción */}
+      {aiLabel ? (
+        <AbsoluteFill style={{ alignItems: "center", justifyContent: "flex-start", paddingTop: "7%" }}>
+          <div
+            style={{
+              padding: "8px 22px",
+              borderRadius: 999,
+              background: "rgba(0,0,0,0.5)",
+              color: "#fff",
+              fontFamily: "Poppins, Arial, sans-serif",
+              fontSize: 30,
+              fontWeight: 500,
+              letterSpacing: 0.5,
+            }}
+          >
+            {aiLabel}
+          </div>
+        </AbsoluteFill>
       ) : null}
 
       {/* Subtítulos sincronizados con la narración */}

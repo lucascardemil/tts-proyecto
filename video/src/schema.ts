@@ -66,6 +66,9 @@ export const storyVideoSchema = z.object({
   totalDurationSeconds: z.number().default(10),
   scenes: z.array(sceneClipSchema),
   subtitles: z.array(subtitleWordSchema),
+  // Rótulo fijo durante todo el video (p. ej. "Historia recreada con IA").
+  // Sin definir = no se muestra.
+  aiLabel: z.string().optional(),
   subtitleStyle: subtitleStyleSchema.default({
     fontFamily: "cinzel",
     fontSize: 44,

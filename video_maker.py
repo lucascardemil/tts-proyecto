@@ -477,6 +477,7 @@ def _build_timeline(
     subtitle_style: Optional[dict] = None,
     frases: Optional[list] = None,
     animate_images: bool = True,
+    ai_label: Optional[str] = None,
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -599,6 +600,8 @@ def _build_timeline(
         "subtitles": words,
     }
     timeline["subtitleStyle"] = {**SUBTITLE_STYLE_DEFAULTS, **(subtitle_style or {})}
+    if ai_label:
+        timeline["aiLabel"] = ai_label
     return timeline
 
 
@@ -694,6 +697,7 @@ def build_props(
     subtitle_style: Optional[dict] = None,
     frases: Optional[list] = None,
     animate_images: bool = True,
+    ai_label: Optional[str] = None,
     on_progress=None,
 ) -> Optional[dict]:
     """
@@ -718,6 +722,8 @@ def build_props(
             orden que image_paths — ver _align_boundaries_to_script.
         animate_images: si es False, las imágenes quedan estáticas (sin
             Ken Burns); no afecta a los clips de video.
+        ai_label: rótulo fijo durante todo el video (p. ej. "Historia
+            recreada con IA"); None = sin rótulo.
         on_progress: función opcional callback(str) para reportar avance.
 
     Returns:
@@ -794,7 +800,7 @@ def build_props(
     # 4. Timeline (qué escena se ve cuándo, con qué efecto o si es un clip de video)
     timeline = _build_timeline(
         scenes, audio_name, duration, words, title, subtitle_style,
-        frases=frases, animate_images=animate_images,
+        frases=frases, animate_images=animate_images, ai_label=ai_label,
     )
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")

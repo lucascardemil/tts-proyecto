@@ -7,7 +7,41 @@ que funciona siempre y es gratis.
 import re
 from collections import Counter
 
-POWER_WORDS = ["Real", "Increíble", "Impactante", "Secreto", "Definitivo", "Explicado"]
+POWER_WORDS = ["Definitivo", "Explicado"]
+
+# Perfil "rescate_animal" (Manual maestro v3.2, §2.1/§7): vocabulario de daño
+# explícito y adjetivos de shock que YouTube puede leer como contenido violento.
+# Se valida sobre el guion antes de renderizar (batch_pipeline).
+_FORBIDDEN_RESCUE_PATTERN = re.compile(
+    r"\b(?:sangre|sangrando|sangriento|sangrienta|herida(?:s)? abierta(?:s)?|golpead[oa]s?|"
+    r"torturad[oa]s?|mutilad[oa]s?|agoniz\w+|moribund[oa]s?|cad[aá]ver(?:es)?|muert[oa]s?|"
+    r"brutal(?:es|mente)?|impactante(?:s)?|escalofriante(?:s)?|aterrador(?:a|es|as)?|"
+    r"no apto para sensibles|c[aá]maras? (?:captaron|grabaron)|video real|im[aá]genes reales|"
+    r"testigos? lo grabaron)\b",
+    re.IGNORECASE,
+)
+
+RESCUE_AI_NOTICE = "Historia recreada con IA con fines narrativos."
+
+# Hashtags validados (§7.7), en orden de prioridad por defecto.
+_RESCUE_HASHTAGS_DEFAULT = [
+    "#RescateAnimal", "#HistoriasDeRescate", "#SegundaOportunidad",
+    "#AmorAnimal", "#FinalFeliz", "#HistoriasEmotivas",
+]
+_RESCUE_HASHTAG_TRIGGERS = [
+    (r"adopt", "#AdoptaNoCompres"),
+    (r"santuario|refugio permanente", "#Santuario"),
+    (r"segunda oportunidad|nueva vida|nuevo comienzo", "#SegundaOportunidad"),
+    (r"amor incondicional|lealtad|nunca (?:lo|la) abandon", "#AmorIncondicional"),
+    (r"final feliz|hogar|familia", "#FinalFeliz"),
+]
+# Cierres con pregunta que invitan a compartir (§7.3/§7.8); se rotan por guion.
+_RESCUE_CTA_QUESTIONS = [
+    "¿Qué habrías hecho tú en su lugar?",
+    "¿Crees que podrá volver a confiar? Compártelo con quien lo necesite.",
+    "¿Alguna vez un animal cambió tu vida? Cuéntanos.",
+    "Si esta historia te tocó el corazón, envíasela a alguien que ame a los animales.",
+]
 
 STOPWORDS = {
     "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
@@ -32,7 +66,12 @@ def _extract_keywords(text: str, limit: int = 12) -> list:
     return [w for w, _ in counts.most_common(limit)]
 
 
-def _build_title(script_text: str, keywords: list) -> str:
+def find_forbidden_terms(text: str) -> list:
+    """Términos del filtro de seguridad de contenido (§2.1) presentes en `text`."""
+    return sorted({m.group(0).lower() for m in _FORBIDDEN_RESCUE_PATTERN.finditer(text or "")})
+
+
+def _build_title(script_text: str, keywords: list, power_word: bool = True) -> str:
     """
     El título sale siempre del gancho real del guion (su primera oración),
     nunca de un título previo — reusar un título ya generado como semilla
@@ -48,7 +87,7 @@ def _build_title(script_text: str, keywords: list) -> str:
     if len(title) > 90:
         title = title[:87].rsplit(" ", 1)[0] + "..."
 
-    if len(title) <= 75:
+    if power_word and len(title) <= 75:
         power = next((p for p in POWER_WORDS if p.lower() not in title.lower()), None)
         if power:
             title = f"{title} ({power})"
@@ -68,6 +107,80 @@ def _build_description(script_text: str, keywords: list, title: str) -> str:
     ]
     description = "\n".join(l for l in lines if l is not None)
     return description[:5000]
+
+
+def _sentences(text: str) -> list:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if s.strip()]
+
+
+def _clip_at_word(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _rescue_hashtags(script_text: str, count: int) -> list:
+    """Hashtags validados (§7.7) que calzan con el guion; completa con los
+    de uso general hasta `count`, sin repetir."""
+    text = script_text.lower()
+    chosen = ["#RescateAnimal"]
+    for pattern, tag in _RESCUE_HASHTAG_TRIGGERS:
+        if re.search(pattern, text) and tag not in chosen:
+            chosen.append(tag)
+    for tag in _RESCUE_HASHTAGS_DEFAULT:
+        if tag not in chosen:
+            chosen.append(tag)
+    return chosen[:count]
+
+
+def _rescue_cta(script_text: str, offset: int = 0) -> str:
+    """Pregunta de cierre: la del propio guion si termina en una pregunta
+    corta (nace de la historia, §7.8); si no, una del set rotando por guion."""
+    last = (_sentences(script_text) or [""])[-1]
+    if last.endswith("?") and len(last) <= 90:
+        return last
+    return _RESCUE_CTA_QUESTIONS[(sum(map(ord, script_text)) + offset) % len(_RESCUE_CTA_QUESTIONS)]
+
+
+def _build_rescue_description(script_text: str) -> str:
+    """Descripción de YouTube según §7.5: gancho arriba, aviso de IA dentro
+    de las dos primeras líneas, keyword validada, CTA y 3-5 hashtags."""
+    sentences = _sentences(script_text)
+    hook = _clip_at_word(sentences[0], 200) if sentences else ""
+    context = _clip_at_word(" ".join(sentences[1:3]), 400)
+    blocks = [
+        f"{hook}\n{RESCUE_AI_NOTICE}",
+        f"{context}\nUna historia sobre animales rescatados y segundas oportunidades.".strip(),
+        _rescue_cta(script_text),
+        " ".join(_rescue_hashtags(script_text, 4)),
+    ]
+    return "\n\n".join(blocks)[:5000]
+
+
+def suggest_rescue_copy(script_text: str, network: str) -> str:
+    """Texto listo para pegar en Facebook o Instagram (§7.3/§7.4): 200-300
+    caracteres totales, gancho completo dentro de los primeros ~125, cierre
+    con pregunta que invita a compartir y hashtags validados (1-3 en
+    Facebook, 3-5 en Instagram). Facebook e Instagram rotan distinto la
+    pregunta de cierre para no publicar texto idéntico en ambas redes."""
+    is_instagram = network == "instagram"
+    sentences = _sentences(script_text)
+    hook = _clip_at_word(sentences[0], 120) if sentences else ""
+    cta = _rescue_cta(script_text, offset=1 if is_instagram else 0)
+    tags = " ".join(_rescue_hashtags(script_text, 4 if is_instagram else 2))
+
+    def assemble(body: str) -> str:
+        return f"{body}\n\n{cta}\n\n{tags}"
+
+    body = hook
+    for extra in sentences[1:]:
+        if len(assemble(body)) >= 200:
+            break
+        candidate = f"{body} {extra}"
+        if len(assemble(candidate)) > 300:
+            break
+        body = candidate
+    return assemble(body)
 
 
 def _build_tags(keywords: list, title: str) -> list:
@@ -136,21 +249,29 @@ def suggest_social_caption(script_text: str) -> dict:
     return {"caption": caption, "hashtags": hashtags}
 
 
-def suggest_seo(script_text: str, base_title: str = "") -> dict:
+def suggest_seo(script_text: str, base_title: str = "", rescue: bool = False) -> dict:
     """
     Genera título, descripción y etiquetas optimizadas a partir del guion.
 
     Args:
         script_text: texto completo de la narración.
         base_title: ya no se usa (se ignora) — ver _build_title().
+        rescue: perfil "rescate_animal" (Manual v3.2): título sin power words,
+            descripción con aviso de IA en las 2 primeras líneas y hashtags
+            validados, sin el "Suscribite/Dejá tu like" genérico.
 
     Returns:
         {"title": str, "description": str, "tags": list[str], "score": int}
     """
     keywords = _extract_keywords(script_text)
-    title = _build_title(script_text, keywords)
-    description = _build_description(script_text, keywords, title)
+    title = _build_title(script_text, keywords, power_word=not rescue)
+    description = (
+        _build_rescue_description(script_text) if rescue
+        else _build_description(script_text, keywords, title)
+    )
     tags = _build_tags(keywords, title)
+    if rescue:
+        tags = list(dict.fromkeys(["rescate de animales", "animales rescatados", *tags]))
     return {
         "title": title,
         "description": description,

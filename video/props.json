@@ -1,896 +1,873 @@
 {
   "title": "",
   "audioSrc": "narracion.wav",
-  "totalDurationSeconds": 60.00208333333333,
+  "totalDurationSeconds": 63.593875,
   "scenes": [
     {
       "src": "scene_000.mp4",
       "type": "video",
       "startFrame": 0,
-      "endFrame": 280,
+      "endFrame": 244,
       "nativeDurationInFrames": 156,
-      "playbackRate": 0.558356536584533
+      "playbackRate": 0.6408619334027272
     },
     {
-      "src": "scene_001.mp4",
-      "type": "video",
-      "startFrame": 280,
-      "endFrame": 530,
-      "nativeDurationInFrames": 156,
-      "playbackRate": 0.6246521675774197
+      "src": "scene_001.jpg",
+      "type": "image",
+      "startFrame": 244,
+      "endFrame": 688,
+      "kenBurns": "panRight"
     },
     {
       "src": "scene_002.mp4",
       "type": "video",
-      "startFrame": 530,
-      "endFrame": 682,
-      "nativeDurationInFrames": 156
+      "startFrame": 688,
+      "endFrame": 1082,
+      "nativeDurationInFrames": 156,
+      "playbackRate": 0.39672405401121225
     },
     {
       "src": "scene_003.mp4",
       "type": "video",
-      "startFrame": 682,
-      "endFrame": 912,
+      "startFrame": 1082,
+      "endFrame": 1531,
       "nativeDurationInFrames": 156,
-      "playbackRate": 0.6783471963090029
+      "playbackRate": 0.3481004930739047
     },
     {
       "src": "scene_004.mp4",
       "type": "video",
-      "startFrame": 912,
-      "endFrame": 1091,
+      "startFrame": 1531,
+      "endFrame": 1988,
       "nativeDurationInFrames": 156,
-      "playbackRate": 0.8735910387890852
-    },
-    {
-      "src": "scene_005.mp4",
-      "type": "video",
-      "startFrame": 1091,
-      "endFrame": 1426,
-      "nativeDurationInFrames": 156,
-      "playbackRate": 0.4669490562363745
-    },
-    {
-      "src": "scene_006.mp4",
-      "type": "video",
-      "startFrame": 1426,
-      "endFrame": 1628,
-      "nativeDurationInFrames": 156,
-      "playbackRate": 0.7736704951367391
-    },
-    {
-      "src": "scene_007.mp4",
-      "type": "video",
-      "startFrame": 1628,
-      "endFrame": 1881,
-      "nativeDurationInFrames": 156,
-      "playbackRate": 0.6165186758120887
-    },
-    {
-      "src": "scene_008.mp4",
-      "type": "video",
-      "startFrame": 1881,
-      "endFrame": 1917,
-      "nativeDurationInFrames": 156
-    },
-    {
-      "src": "scene_009.mp4",
-      "type": "video",
-      "startFrame": 1917,
-      "endFrame": 1980,
-      "nativeDurationInFrames": 156
+      "playbackRate": 0.34205322548203465
     }
   ],
   "subtitles": [
     {
       "word": "Todos",
       "start": 0.0,
-      "end": 0.22
+      "end": 0.2
     },
     {
-      "word": "huían",
-      "start": 0.22,
-      "end": 0.72
+      "word": "cruzaban",
+      "start": 0.2,
+      "end": 0.74
     },
     {
-      "word": "de",
-      "start": 0.72,
-      "end": 0.92
+      "word": "la",
+      "start": 0.74,
+      "end": 0.94
     },
     {
-      "word": "ese",
-      "start": 0.92,
-      "end": 1.12
+      "word": "calle",
+      "start": 0.94,
+      "end": 1.24
     },
     {
-      "word": "gato",
-      "start": 1.12,
-      "end": 1.42
-    },
-    {
-      "word": "callejero",
-      "start": 1.42,
-      "end": 2.04
-    },
-    {
-      "word": "porque",
-      "start": 2.04,
-      "end": 2.66
-    },
-    {
-      "word": "protegía",
-      "start": 2.66,
-      "end": 3.3
-    },
-    {
-      "word": "ferozmente",
-      "start": 3.3,
-      "end": 4.04
-    },
-    {
-      "word": "una",
-      "start": 4.04,
-      "end": 4.42
-    },
-    {
-      "word": "caja",
-      "start": 4.42,
-      "end": 4.78
-    },
-    {
-      "word": "de",
-      "start": 4.78,
-      "end": 4.94
-    },
-    {
-      "word": "zapatos",
-      "start": 4.94,
-      "end": 5.4
-    },
-    {
-      "word": "vacía",
-      "start": 5.4,
-      "end": 5.96
-    },
-    {
-      "word": "hasta",
-      "start": 5.96,
-      "end": 6.54
-    },
-    {
-      "word": "que",
-      "start": 6.54,
-      "end": 6.72
-    },
-    {
-      "word": "una",
-      "start": 6.72,
-      "end": 6.86
-    },
-    {
-      "word": "voluntaria",
-      "start": 6.86,
-      "end": 7.46
-    },
-    {
-      "word": "miró",
-      "start": 7.46,
-      "end": 7.76
-    },
-    {
-      "word": "dentro.",
-      "start": 7.76,
-      "end": 8.08
-    },
-    {
-      "word": "Llamaban",
-      "start": 8.48,
-      "end": 9.06
-    },
-    {
-      "word": "a",
-      "start": 9.06,
-      "end": 9.2
+      "word": "cuando",
+      "start": 1.24,
+      "end": 1.48
     },
     {
       "word": "este",
-      "start": 9.2,
-      "end": 9.38
+      "start": 1.48,
+      "end": 1.8
     },
     {
-      "word": "gato",
-      "start": 9.38,
-      "end": 9.72
+      "word": "perro",
+      "start": 1.8,
+      "end": 2.18
     },
     {
-      "word": "el",
-      "start": 9.72,
-      "end": 9.88
-    },
-    {
-      "word": "guardián.",
-      "start": 9.88,
-      "end": 10.3
-    },
-    {
-      "word": "Pasaban",
-      "start": 10.6,
-      "end": 11.1
-    },
-    {
-      "word": "los",
-      "start": 11.1,
-      "end": 11.32
-    },
-    {
-      "word": "días",
-      "start": 11.32,
-      "end": 11.52
-    },
-    {
-      "word": "y",
-      "start": 11.52,
-      "end": 11.74
-    },
-    {
-      "word": "noches",
-      "start": 11.74,
-      "end": 12.02
-    },
-    {
-      "word": "acrucados",
-      "start": 12.02,
-      "end": 12.68
-    },
-    {
-      "word": "sobre",
-      "start": 12.68,
-      "end": 12.96
-    },
-    {
-      "word": "el",
-      "start": 12.96,
-      "end": 13.14
-    },
-    {
-      "word": "cartón,",
-      "start": 13.14,
-      "end": 13.52
-    },
-    {
-      "word": "bufando",
-      "start": 13.7,
-      "end": 14.2
-    },
-    {
-      "word": "a",
-      "start": 14.2,
-      "end": 14.36
-    },
-    {
-      "word": "cualquiera",
-      "start": 14.36,
-      "end": 14.78
-    },
-    {
-      "word": "que",
-      "start": 14.78,
-      "end": 14.94
-    },
-    {
-      "word": "se",
-      "start": 14.94,
-      "end": 15.06
-    },
-    {
-      "word": "acercara.",
-      "start": 15.06,
-      "end": 15.58
-    },
-    {
-      "word": "Estaba",
-      "start": 16.06,
-      "end": 16.44
-    },
-    {
-      "word": "desnutrido,",
-      "start": 16.44,
-      "end": 17.06
-    },
-    {
-      "word": "con",
-      "start": 17.32,
-      "end": 17.56
-    },
-    {
-      "word": "el",
-      "start": 17.56,
-      "end": 17.7
-    },
-    {
-      "word": "pelaje",
-      "start": 17.7,
-      "end": 17.96
-    },
-    {
-      "word": "opaco",
-      "start": 17.96,
-      "end": 18.4
-    },
-    {
-      "word": "y",
-      "start": 18.4,
-      "end": 18.54
-    },
-    {
-      "word": "cojera",
-      "start": 18.54,
-      "end": 18.84
-    },
-    {
-      "word": "evidente",
-      "start": 18.84,
-      "end": 19.3
+      "word": "gruñe",
+      "start": 2.18,
+      "end": 2.62
     },
     {
       "word": "en",
-      "start": 19.3,
-      "end": 19.4
-    },
-    {
-      "word": "su",
-      "start": 19.4,
-      "end": 19.52
-    },
-    {
-      "word": "pata",
-      "start": 19.52,
-      "end": 19.82
-    },
-    {
-      "word": "trasera.",
-      "start": 19.82,
-      "end": 20.3
-    },
-    {
-      "word": "Cuando",
-      "start": 20.66,
-      "end": 20.92
-    },
-    {
-      "word": "por",
-      "start": 20.92,
-      "end": 21.16
-    },
-    {
-      "word": "fin",
-      "start": 21.16,
-      "end": 21.36
-    },
-    {
-      "word": "lograron",
-      "start": 21.36,
-      "end": 21.78
-    },
-    {
-      "word": "acercarse,",
-      "start": 21.78,
-      "end": 22.42
+      "start": 2.62,
+      "end": 2.76
     },
     {
       "word": "el",
-      "start": 22.7,
-      "end": 22.76
+      "start": 2.76,
+      "end": 2.92
     },
     {
-      "word": "gato",
-      "start": 22.76,
-      "end": 22.98
+      "word": "Lote",
+      "start": 2.92,
+      "end": 3.06
     },
     {
-      "word": "no",
-      "start": 22.98,
-      "end": 23.18
+      "word": "Valdío,",
+      "start": 3.06,
+      "end": 3.58
     },
     {
-      "word": "atacó.",
-      "start": 23.18,
-      "end": 23.56
-    },
-    {
-      "word": "Sólo",
-      "start": 23.9,
-      "end": 24.28
-    },
-    {
-      "word": "empujó",
-      "start": 24.28,
-      "end": 24.66
-    },
-    {
-      "word": "la",
-      "start": 24.66,
-      "end": 24.8
-    },
-    {
-      "word": "caja",
-      "start": 24.8,
-      "end": 25.22
-    },
-    {
-      "word": "hacia",
-      "start": 25.22,
-      "end": 25.46
-    },
-    {
-      "word": "la",
-      "start": 25.46,
-      "end": 25.58
-    },
-    {
-      "word": "voluntaria",
-      "start": 25.58,
-      "end": 26.16
-    },
-    {
-      "word": "con",
-      "start": 26.16,
-      "end": 26.38
-    },
-    {
-      "word": "un",
-      "start": 26.38,
-      "end": 26.54
-    },
-    {
-      "word": "maullido",
-      "start": 26.54,
-      "end": 26.92
-    },
-    {
-      "word": "desesperado.",
-      "start": 26.92,
-      "end": 27.64
-    },
-    {
-      "word": "Al",
-      "start": 27.64,
-      "end": 28.34
-    },
-    {
-      "word": "levantar",
-      "start": 28.34,
-      "end": 28.76
-    },
-    {
-      "word": "la",
-      "start": 28.76,
-      "end": 28.86
-    },
-    {
-      "word": "tapa,",
-      "start": 28.86,
-      "end": 29.12
-    },
-    {
-      "word": "no",
-      "start": 29.48,
-      "end": 29.62
-    },
-    {
-      "word": "había",
-      "start": 29.62,
-      "end": 29.78
-    },
-    {
-      "word": "nada",
-      "start": 29.78,
-      "end": 30.02
-    },
-    {
-      "word": "dentro.",
-      "start": 30.02,
-      "end": 30.38
-    },
-    {
-      "word": "Sólo",
-      "start": 30.78,
-      "end": 31.18
-    },
-    {
-      "word": "un",
-      "start": 31.18,
-      "end": 31.36
-    },
-    {
-      "word": "viejo",
-      "start": 31.36,
-      "end": 31.6
-    },
-    {
-      "word": "collar",
-      "start": 31.6,
-      "end": 31.96
-    },
-    {
-      "word": "con",
-      "start": 31.96,
-      "end": 32.2
-    },
-    {
-      "word": "un",
-      "start": 32.2,
-      "end": 32.3
-    },
-    {
-      "word": "cascabel.",
-      "start": 32.3,
-      "end": 32.74
-    },
-    {
-      "word": "Pero",
-      "start": 33.06,
-      "end": 33.28
-    },
-    {
-      "word": "al",
-      "start": 33.28,
-      "end": 33.42
-    },
-    {
-      "word": "revisar",
-      "start": 33.42,
-      "end": 33.84
-    },
-    {
-      "word": "el",
-      "start": 33.84,
-      "end": 33.98
-    },
-    {
-      "word": "forro",
-      "start": 33.98,
-      "end": 34.2
-    },
-    {
-      "word": "interior,",
-      "start": 34.2,
-      "end": 34.56
-    },
-    {
-      "word": "encontraron",
-      "start": 34.88,
-      "end": 35.64
-    },
-    {
-      "word": "un",
-      "start": 35.64,
-      "end": 35.86
-    },
-    {
-      "word": "mapa",
-      "start": 35.86,
-      "end": 36.1
-    },
-    {
-      "word": "de",
-      "start": 36.1,
-      "end": 36.28
-    },
-    {
-      "word": "calor.",
-      "start": 36.28,
-      "end": 36.52
-    },
-    {
-      "word": "El",
-      "start": 37.0,
-      "end": 37.16
-    },
-    {
-      "word": "gato",
-      "start": 37.16,
-      "end": 37.44
-    },
-    {
-      "word": "no",
-      "start": 37.44,
-      "end": 37.64
-    },
-    {
-      "word": "protegía",
-      "start": 37.64,
-      "end": 38.18
-    },
-    {
-      "word": "un",
-      "start": 38.18,
-      "end": 38.32
-    },
-    {
-      "word": "objeto.",
-      "start": 38.32,
-      "end": 38.62
-    },
-    {
-      "word": "Protegía",
-      "start": 39.18,
-      "end": 39.74
-    },
-    {
-      "word": "el",
-      "start": 39.74,
-      "end": 39.9
-    },
-    {
-      "word": "último",
-      "start": 39.9,
-      "end": 40.18
-    },
-    {
-      "word": "rastro",
-      "start": 40.18,
-      "end": 40.72
-    },
-    {
-      "word": "de",
-      "start": 40.72,
-      "end": 40.84
-    },
-    {
-      "word": "calor",
-      "start": 40.84,
-      "end": 41.1
-    },
-    {
-      "word": "corporal",
-      "start": 41.1,
-      "end": 41.64
-    },
-    {
-      "word": "de",
-      "start": 41.64,
-      "end": 41.8
-    },
-    {
-      "word": "su",
-      "start": 41.8,
-      "end": 41.96
-    },
-    {
-      "word": "dueño",
-      "start": 41.96,
-      "end": 42.2
-    },
-    {
-      "word": "fallecido.",
-      "start": 42.2,
-      "end": 42.8
-    },
-    {
-      "word": "Lo",
-      "start": 43.2,
-      "end": 43.32
-    },
-    {
-      "word": "llevaron",
-      "start": 43.32,
-      "end": 43.74
-    },
-    {
-      "word": "al",
-      "start": 43.74,
-      "end": 43.94
-    },
-    {
-      "word": "refugio.",
-      "start": 43.94,
-      "end": 44.42
-    },
-    {
-      "word": "Las",
-      "start": 44.88,
-      "end": 45.04
-    },
-    {
-      "word": "primeras",
-      "start": 45.04,
-      "end": 45.44
-    },
-    {
-      "word": "semanas",
-      "start": 45.44,
-      "end": 45.78
-    },
-    {
-      "word": "durmió",
-      "start": 45.78,
-      "end": 46.54
-    },
-    {
-      "word": "sobre",
-      "start": 46.54,
-      "end": 46.74
-    },
-    {
-      "word": "una",
-      "start": 46.74,
-      "end": 46.96
-    },
-    {
-      "word": "manta",
-      "start": 46.96,
-      "end": 47.28
+      "word": "hasta",
+      "start": 4.06,
+      "end": 4.36
     },
     {
       "word": "que",
-      "start": 47.28,
-      "end": 47.52
+      "start": 4.36,
+      "end": 4.52
     },
     {
-      "word": "olía",
-      "start": 47.52,
-      "end": 47.78
+      "word": "una",
+      "start": 4.52,
+      "end": 4.66
+    },
+    {
+      "word": "voluntaria",
+      "start": 4.66,
+      "end": 5.18
+    },
+    {
+      "word": "descubrió",
+      "start": 5.18,
+      "end": 5.78
+    },
+    {
+      "word": "que",
+      "start": 5.78,
+      "end": 5.98
+    },
+    {
+      "word": "escondía",
+      "start": 5.98,
+      "end": 6.5
+    },
+    {
+      "word": "bajo",
+      "start": 6.5,
+      "end": 6.68
+    },
+    {
+      "word": "sus",
+      "start": 6.68,
+      "end": 6.92
+    },
+    {
+      "word": "patas.",
+      "start": 6.92,
+      "end": 7.36
+    },
+    {
+      "word": "El",
+      "start": 7.8,
+      "end": 7.98
+    },
+    {
+      "word": "perro,",
+      "start": 7.98,
+      "end": 8.38
+    },
+    {
+      "word": "llamado",
+      "start": 8.5,
+      "end": 8.78
+    },
+    {
+      "word": "Bruno,",
+      "start": 8.78,
+      "end": 9.08
+    },
+    {
+      "word": "llevaba",
+      "start": 9.54,
+      "end": 9.8
+    },
+    {
+      "word": "semanas",
+      "start": 9.8,
+      "end": 10.14
+    },
+    {
+      "word": "defendiendo",
+      "start": 10.14,
+      "end": 10.88
+    },
+    {
+      "word": "un",
+      "start": 10.88,
+      "end": 11.18
+    },
+    {
+      "word": "montón",
+      "start": 11.18,
+      "end": 11.5
+    },
+    {
+      "word": "de",
+      "start": 11.5,
+      "end": 11.64
+    },
+    {
+      "word": "escombros.",
+      "start": 11.64,
+      "end": 12.06
+    },
+    {
+      "word": "La",
+      "start": 12.58,
+      "end": 12.76
+    },
+    {
+      "word": "gente",
+      "start": 12.76,
+      "end": 13.0
+    },
+    {
+      "word": "pensaba",
+      "start": 13.0,
+      "end": 13.56
+    },
+    {
+      "word": "que",
+      "start": 13.56,
+      "end": 13.78
+    },
+    {
+      "word": "era",
+      "start": 13.78,
+      "end": 13.92
+    },
+    {
+      "word": "un",
+      "start": 13.92,
+      "end": 14.06
+    },
+    {
+      "word": "animal",
+      "start": 14.06,
+      "end": 14.32
+    },
+    {
+      "word": "agresivo",
+      "start": 14.32,
+      "end": 15.06
+    },
+    {
+      "word": "y",
+      "start": 15.06,
+      "end": 15.16
+    },
+    {
+      "word": "peligroso,",
+      "start": 15.16,
+      "end": 16.14
+    },
+    {
+      "word": "pero",
+      "start": 16.14,
+      "end": 16.42
+    },
+    {
+      "word": "cuando",
+      "start": 16.42,
+      "end": 16.64
+    },
+    {
+      "word": "la",
+      "start": 16.64,
+      "end": 16.84
+    },
+    {
+      "word": "voluntaria,",
+      "start": 16.84,
+      "end": 17.52
+    },
+    {
+      "word": "Elena,",
+      "start": 17.76,
+      "end": 18.06
+    },
+    {
+      "word": "se",
+      "start": 18.42,
+      "end": 18.48
+    },
+    {
+      "word": "acercó",
+      "start": 18.48,
+      "end": 18.86
+    },
+    {
+      "word": "con",
+      "start": 18.86,
+      "end": 19.04
+    },
+    {
+      "word": "calma",
+      "start": 19.04,
+      "end": 19.44
+    },
+    {
+      "word": "y",
+      "start": 19.44,
+      "end": 19.66
+    },
+    {
+      "word": "le",
+      "start": 19.66,
+      "end": 19.74
+    },
+    {
+      "word": "ofreció",
+      "start": 19.74,
+      "end": 20.14
+    },
+    {
+      "word": "agua,",
+      "start": 20.14,
+      "end": 20.42
+    },
+    {
+      "word": "Bruno",
+      "start": 20.72,
+      "end": 20.92
+    },
+    {
+      "word": "no",
+      "start": 20.92,
+      "end": 21.14
+    },
+    {
+      "word": "atacó,",
+      "start": 21.14,
+      "end": 21.54
+    },
+    {
+      "word": "solo",
+      "start": 22.02,
+      "end": 22.28
+    },
+    {
+      "word": "se",
+      "start": 22.28,
+      "end": 22.48
+    },
+    {
+      "word": "hizo",
+      "start": 22.48,
+      "end": 22.68
     },
     {
       "word": "a",
-      "start": 47.78,
-      "end": 48.0
+      "start": 22.68,
+      "end": 22.76
+    },
+    {
+      "word": "un",
+      "start": 22.76,
+      "end": 22.84
+    },
+    {
+      "word": "lado,",
+      "start": 22.84,
+      "end": 23.1
+    },
+    {
+      "word": "temblando",
+      "start": 23.36,
+      "end": 23.78
+    },
+    {
+      "word": "de",
+      "start": 23.78,
+      "end": 23.96
+    },
+    {
+      "word": "agotamiento.",
+      "start": 23.96,
+      "end": 24.44
+    },
+    {
+      "word": "Bajo",
+      "start": 24.44,
+      "end": 25.24
+    },
+    {
+      "word": "los",
+      "start": 25.24,
+      "end": 25.42
+    },
+    {
+      "word": "ladrillos",
+      "start": 25.42,
+      "end": 25.86
+    },
+    {
+      "word": "rotos",
+      "start": 25.86,
+      "end": 26.32
+    },
+    {
+      "word": "no",
+      "start": 26.32,
+      "end": 26.6
+    },
+    {
+      "word": "había",
+      "start": 26.6,
+      "end": 26.84
+    },
+    {
+      "word": "comida,",
+      "start": 26.84,
+      "end": 27.26
+    },
+    {
+      "word": "sino",
+      "start": 27.6,
+      "end": 27.86
+    },
+    {
+      "word": "una",
+      "start": 27.86,
+      "end": 28.14
+    },
+    {
+      "word": "pequeña",
+      "start": 28.14,
+      "end": 28.44
+    },
+    {
+      "word": "manta",
+      "start": 28.44,
+      "end": 28.82
+    },
+    {
+      "word": "empapada.",
+      "start": 28.82,
+      "end": 29.3
+    },
+    {
+      "word": "Dentro,",
+      "start": 29.86,
+      "end": 30.3
+    },
+    {
+      "word": "un",
+      "start": 30.64,
+      "end": 30.74
+    },
+    {
+      "word": "gatito",
+      "start": 30.74,
+      "end": 31.1
+    },
+    {
+      "word": "recién",
+      "start": 31.1,
+      "end": 31.5
+    },
+    {
+      "word": "nacido,",
+      "start": 31.5,
+      "end": 31.92
+    },
+    {
+      "word": "completamente",
+      "start": 32.3,
+      "end": 32.78
+    },
+    {
+      "word": "indefenso",
+      "start": 32.78,
+      "end": 33.56
+    },
+    {
+      "word": "y",
+      "start": 33.56,
+      "end": 33.68
+    },
+    {
+      "word": "con",
+      "start": 33.68,
+      "end": 33.86
+    },
+    {
+      "word": "frío.",
+      "start": 33.86,
+      "end": 34.16
+    },
+    {
+      "word": "Bruno",
+      "start": 34.62,
+      "end": 34.82
+    },
+    {
+      "word": "no",
+      "start": 34.82,
+      "end": 35.08
+    },
+    {
+      "word": "estaba",
+      "start": 35.08,
+      "end": 35.34
+    },
+    {
+      "word": "cuidando",
+      "start": 35.34,
+      "end": 35.82
     },
     {
       "word": "su",
-      "start": 48.0,
-      "end": 48.12
+      "start": 35.82,
+      "end": 36.0
     },
     {
-      "word": "antiguo",
-      "start": 48.12,
-      "end": 48.54
+      "word": "territorio,",
+      "start": 36.0,
+      "end": 36.64
     },
     {
-      "word": "hogar.",
-      "start": 48.54,
-      "end": 48.84
+      "word": "estaba",
+      "start": 37.06,
+      "end": 37.42
     },
     {
-      "word": "Poco",
-      "start": 49.32,
-      "end": 49.52
+      "word": "protegiendo",
+      "start": 37.42,
+      "end": 38.08
     },
     {
       "word": "a",
+      "start": 38.08,
+      "end": 38.22
+    },
+    {
+      "word": "su",
+      "start": 38.22,
+      "end": 38.38
+    },
+    {
+      "word": "única",
+      "start": 38.38,
+      "end": 38.6
+    },
+    {
+      "word": "familia.",
+      "start": 38.6,
+      "end": 39.08
+    },
+    {
+      "word": "Elena",
+      "start": 39.62,
+      "end": 39.92
+    },
+    {
+      "word": "los",
+      "start": 39.92,
+      "end": 40.18
+    },
+    {
+      "word": "rescató",
+      "start": 40.18,
+      "end": 40.74
+    },
+    {
+      "word": "a",
+      "start": 40.74,
+      "end": 40.86
+    },
+    {
+      "word": "ambos",
+      "start": 40.86,
+      "end": 41.12
+    },
+    {
+      "word": "sin",
+      "start": 41.12,
+      "end": 41.4
+    },
+    {
+      "word": "separarlos.",
+      "start": 41.4,
+      "end": 42.04
+    },
+    {
+      "word": "Hoy,",
+      "start": 42.6,
+      "end": 42.82
+    },
+    {
+      "word": "Bruno",
+      "start": 42.98,
+      "end": 43.32
+    },
+    {
+      "word": "y",
+      "start": 43.32,
+      "end": 43.52
+    },
+    {
+      "word": "el",
+      "start": 43.52,
+      "end": 43.62
+    },
+    {
+      "word": "gatito,",
+      "start": 43.62,
+      "end": 44.06
+    },
+    {
+      "word": "ahora",
+      "start": 44.2,
+      "end": 44.42
+    },
+    {
+      "word": "llamado",
+      "start": 44.42,
+      "end": 44.74
+    },
+    {
+      "word": "Milo,",
+      "start": 44.74,
+      "end": 45.18
+    },
+    {
+      "word": "duermen",
+      "start": 45.6,
+      "end": 45.96
+    },
+    {
+      "word": "abrazados",
+      "start": 45.96,
+      "end": 46.54
+    },
+    {
+      "word": "en",
+      "start": 46.54,
+      "end": 46.76
+    },
+    {
+      "word": "el",
+      "start": 46.76,
+      "end": 46.9
+    },
+    {
+      "word": "mismo",
+      "start": 46.9,
+      "end": 47.16
+    },
+    {
+      "word": "sofá",
+      "start": 47.16,
+      "end": 47.58
+    },
+    {
+      "word": "de",
+      "start": 47.58,
+      "end": 47.8
+    },
+    {
+      "word": "su",
+      "start": 47.8,
+      "end": 47.96
+    },
+    {
+      "word": "nuevo",
+      "start": 47.96,
+      "end": 48.2
+    },
+    {
+      "word": "hogar.",
+      "start": 48.2,
+      "end": 48.56
+    },
+    {
+      "word": "El",
+      "start": 48.98,
+      "end": 49.2
+    },
+    {
+      "word": "perro",
+      "start": 49.2,
+      "end": 49.52
+    },
+    {
+      "word": "que",
       "start": 49.52,
       "end": 49.66
     },
     {
-      "word": "poco,",
+      "word": "todos",
       "start": 49.66,
-      "end": 49.92
+      "end": 49.9
     },
     {
-      "word": "su",
-      "start": 50.24,
-      "end": 50.36
+      "word": "temían,",
+      "start": 49.9,
+      "end": 50.44
     },
     {
-      "word": "cojera",
-      "start": 50.36,
-      "end": 50.68
+      "word": "resultó",
+      "start": 50.8,
+      "end": 51.44
     },
     {
-      "word": "mejoró.",
-      "start": 50.68,
-      "end": 51.22
-    },
-    {
-      "word": "Su",
-      "start": 51.58,
-      "end": 51.72
-    },
-    {
-      "word": "pelaje",
-      "start": 51.72,
-      "end": 52.1
-    },
-    {
-      "word": "recuperó",
-      "start": 52.1,
-      "end": 52.66
+      "word": "ser",
+      "start": 51.44,
+      "end": 51.7
     },
     {
       "word": "el",
-      "start": 52.66,
-      "end": 52.76
-    },
-    {
-      "word": "brillo",
-      "start": 52.76,
-      "end": 53.36
-    },
-    {
-      "word": "y",
-      "start": 53.36,
-      "end": 53.58
-    },
-    {
-      "word": "entendió",
-      "start": 53.58,
-      "end": 54.14
-    },
-    {
-      "word": "que",
-      "start": 54.14,
-      "end": 54.32
-    },
-    {
-      "word": "ya",
-      "start": 54.32,
-      "end": 54.56
-    },
-    {
-      "word": "no",
-      "start": 54.56,
-      "end": 54.7
-    },
-    {
-      "word": "necesitaba",
-      "start": 54.7,
-      "end": 55.3
-    },
-    {
-      "word": "defender",
-      "start": 55.3,
-      "end": 55.72
-    },
-    {
-      "word": "una",
-      "start": 55.72,
-      "end": 56.2
-    },
-    {
-      "word": "caja",
-      "start": 56.2,
-      "end": 56.52
-    },
-    {
-      "word": "vacía.",
-      "start": 56.52,
-      "end": 57.0
-    },
-    {
-      "word": "Hoy,",
-      "start": 57.0,
-      "end": 57.84
-    },
-    {
-      "word": "el",
-      "start": 58.06,
-      "end": 58.16
+      "start": 51.7,
+      "end": 51.86
     },
     {
       "word": "guardián",
-      "start": 58.16,
-      "end": 58.62
+      "start": 51.86,
+      "end": 52.26
     },
     {
-      "word": "tiene",
-      "start": 58.62,
-      "end": 58.92
+      "word": "más",
+      "start": 52.26,
+      "end": 52.52
     },
     {
-      "word": "una",
-      "start": 58.92,
-      "end": 59.14
+      "word": "amoroso",
+      "start": 52.52,
+      "end": 52.98
     },
     {
-      "word": "nueva",
-      "start": 59.14,
-      "end": 59.36
+      "word": "del",
+      "start": 52.98,
+      "end": 53.18
     },
     {
-      "word": "familia.",
-      "start": 59.36,
-      "end": 59.8
+      "word": "mundo.",
+      "start": 53.18,
+      "end": 53.46
+    },
+    {
+      "word": "¿Alguna",
+      "start": 53.46,
+      "end": 54.3
+    },
+    {
+      "word": "vez",
+      "start": 54.3,
+      "end": 54.46
+    },
+    {
+      "word": "un",
+      "start": 54.46,
+      "end": 54.64
+    },
+    {
+      "word": "animal",
+      "start": 54.64,
+      "end": 54.98
+    },
+    {
+      "word": "te",
+      "start": 54.98,
+      "end": 55.18
+    },
+    {
+      "word": "demostró",
+      "start": 55.18,
+      "end": 55.72
+    },
+    {
+      "word": "que",
+      "start": 55.72,
+      "end": 55.84
+    },
+    {
+      "word": "las",
+      "start": 55.84,
+      "end": 55.98
+    },
+    {
+      "word": "apariencias",
+      "start": 55.98,
+      "end": 56.54
+    },
+    {
+      "word": "engañan?",
+      "start": 56.54,
+      "end": 57.12
+    },
+    {
+      "word": "Cuéntamelo",
+      "start": 57.5,
+      "end": 58.18
+    },
+    {
+      "word": "en",
+      "start": 58.18,
+      "end": 58.4
+    },
+    {
+      "word": "los",
+      "start": 58.4,
+      "end": 58.52
+    },
+    {
+      "word": "comentarios",
+      "start": 58.52,
+      "end": 59.1
+    },
+    {
+      "word": "y",
+      "start": 59.1,
+      "end": 59.58
+    },
+    {
+      "word": "comparte",
+      "start": 59.58,
+      "end": 60.08
+    },
+    {
+      "word": "esta",
+      "start": 60.08,
+      "end": 60.3
+    },
+    {
+      "word": "historia",
+      "start": 60.3,
+      "end": 60.76
+    },
+    {
+      "word": "para",
+      "start": 60.76,
+      "end": 61.36
+    },
+    {
+      "word": "que",
+      "start": 61.36,
+      "end": 61.52
+    },
+    {
+      "word": "más",
+      "start": 61.52,
+      "end": 61.74
+    },
+    {
+      "word": "personas",
+      "start": 61.74,
+      "end": 62.28
+    },
+    {
+      "word": "abran",
+      "start": 62.28,
+      "end": 62.8
+    },
+    {
+      "word": "su",
+      "start": 62.8,
+      "end": 62.96
+    },
+    {
+      "word": "corazón.",
+      "start": 62.96,
+      "end": 63.24
     }
   ],
   "subtitleStyle": {

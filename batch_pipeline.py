@@ -97,7 +97,53 @@ MAX_HEAL_CYCLES = 4
 _HEALABLE_EXTRA_MARKERS = (
     "meta ai no pudo generar", "algunas sesiones de qwen",
     "no encontre el boton 'meta ai'", "no encontre (habilitado)",
+    "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
 )
+
+# Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
+# activa el filtro de vocabulario del guion, copy por red, rotulo de IA,
+# hook en pantalla, horario 20:00 sin lunes y anti-fatiga. Se guarda en
+# video_settings["copy_profile"] para no afectar a los demas proyectos.
+RESCUE_PROFILE = "rescate_animal"
+RESCUE_HISTORY_LIMIT = 8
+RESCUE_AI_LABEL = "Historia recreada con IA"
+_HOOK_TEXT_LINE = re.compile(r"^[ \t]*HOOK_TEXT:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+
+
+def _is_rescue_project(project: dict) -> bool:
+    return (project.get("video_settings") or {}).get("copy_profile") == RESCUE_PROFILE
+
+
+def _split_hook_text(story_text: str) -> tuple:
+    """Separa la linea `HOOK_TEXT: ...` (texto corto para la pantalla) del
+    resto de la respuesta de Qwen. Se quita SIEMPRE del texto: si quedara,
+    el parser la metería dentro del último prompt de imagen o de la narración."""
+    match = _HOOK_TEXT_LINE.search(story_text)
+    if not match:
+        return "", story_text
+    hook = match.group(1).strip().strip("«»\"“”*")
+    return hook, _HOOK_TEXT_LINE.sub("", story_text, count=1)
+
+
+def _rescue_history_block() -> str:
+    """Anti-fatiga (§9): lista los ganchos recientes de los proyectos de
+    rescate para que Qwen no repita animal/conflicto/final consecutivos."""
+    hooks = []
+    for project in _load().values():
+        if not _is_rescue_project(project):
+            continue
+        for v in project.get("videos", []):
+            sentences = seo_optimizer._sentences(v.get("script_text", ""))
+            if sentences:
+                hooks.append((v.get("scheduled_at", ""), seo_optimizer._clip_at_word(sentences[0], 120)))
+    recent = [h for _, h in sorted(hooks)][-RESCUE_HISTORY_LIMIT:]
+    if not recent:
+        return ""
+    lines = "\n".join(f"- {h}" for h in recent)
+    return (
+        "\n\nNo repitas el animal, el conflicto, el escenario ni el tipo de final "
+        f"de estas historias recientes:\n{lines}"
+    )
 
 
 def _is_healable_error(message: "str | None") -> bool:
@@ -191,7 +237,7 @@ def _best_hour_for_networks(networks: dict) -> Optional[int]:
     return None if result.get("insufficient_data") else result.get("best_hour")
 
 
-def _compute_schedule(total: int, per_day: int, best_hour: Optional[int]) -> list:
+def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -200,9 +246,13 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int]) -> lis
     `per_day` supera la cantidad de dayparts filtrados, agrega horas extra
     1h despues de la ultima, recortando (wrap) a BATCH_HOUR_START al llegar
     a BATCH_HOUR_END para que la extension tampoco se escape del rango.
+    Con `rescue` (Manual v3.2 §8) se publica en el bloque 20:00 -> 16:00 y
+    nunca en lunes (el dia de menor alcance del historico de la pagina).
     Devuelve `total` timestamps ISO."""
     base_hours = [h for _, _, h in feedback_analyzer.DAYPARTS if BATCH_HOUR_START <= h <= BATCH_HOUR_END]
-    if best_hour is not None:
+    if rescue:
+        base_hours = [20, 19, 18, 17, 16]
+    elif best_hour is not None:
         base_hours = sorted(base_hours, key=lambda h: min(abs(h - best_hour), 24 - abs(h - best_hour)))
     hours_for_day = list(base_hours)
     while len(hours_for_day) < per_day:
@@ -212,12 +262,20 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int]) -> lis
         hours_for_day.append(next_hour)
 
     now = datetime.now()
+    days_needed = -(-total // per_day)
+    publish_days = []
+    offset = 0
+    while len(publish_days) < days_needed:
+        day_date = (now + timedelta(days=offset)).date()
+        offset += 1
+        if rescue and day_date.weekday() == 0:  # lunes
+            continue
+        publish_days.append(day_date)
+
     schedule = []
     for i in range(total):
-        day = i // per_day
-        slot = i % per_day
-        hour = hours_for_day[slot] % 24
-        day_date = (now + timedelta(days=day)).date()
+        day_date = publish_days[i // per_day]
+        hour = hours_for_day[i % per_day] % 24
         when = datetime(day_date.year, day_date.month, day_date.day, hour)
         schedule.append(when.isoformat())
     return schedule
@@ -240,7 +298,8 @@ def create_project(name: str, qwen_project: str, total_videos: int, per_day: int
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     best_hour = _best_hour_for_networks(networks)
-    schedule = _compute_schedule(total_videos, per_day, best_hour)
+    rescue = (video_settings or {}).get("copy_profile") == RESCUE_PROFILE
+    schedule = _compute_schedule(total_videos, per_day, best_hour, rescue=rescue)
 
     project = {
         "id": uuid.uuid4().hex[:10],
@@ -475,6 +534,9 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         project.get("trigger_message", "dame una historia"),
         vs.get("duration_seconds"),
     )
+    rescue = _is_rescue_project(project)
+    if rescue:
+        trigger_message += _rescue_history_block()
     try:
         story_text = _run_stage_with_retry(
             lambda: auto_pipeline.generate_story_from_qwen_project(
@@ -485,8 +547,18 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             on_retry=lambda attempt: _reset_session(auto_pipeline.QWEN_BATCH_SESSION),
             stage_label="guion",
         )
+        hook_text = ""
+        if rescue:
+            hook_text, story_text = _split_hook_text(story_text)
         script_text = auto_pipeline.extract_script(story_text)
         script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
+        if rescue:
+            forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
+            if forbidden:
+                raise RuntimeError(
+                    "Guion rechazado por el filtro de seguridad de contenido "
+                    f"(vocabulario de daño explicito o de shock): {', '.join(forbidden)}"
+                )
         story = auto_pipeline.load_story_from_text(story_text, story_id)
         clips_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
 
@@ -543,11 +615,12 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 timeline = video_maker.build_props(
                     image_paths=clip_paths,
                     audio_path=audio_path,
-                    title="",
+                    title=hook_text,
                     subtitles_enabled=vs.get("subtitles_enabled", True),
                     subtitle_style=subtitle_style,
                     frases=frases,
                     animate_images=vs.get("animate_images", True),
+                    ai_label=RESCUE_AI_LABEL if rescue else None,
                 )
                 if not timeline:
                     return None
@@ -784,24 +857,34 @@ def _public_image_url(project_id: str, index: int) -> Optional[str]:
     return f"{base}/api/batch/cover/{project_id}/{index}"
 
 
-def _build_publish_content(script_text: str, fallback_title: str) -> dict:
+def _build_publish_content(script_text: str, fallback_title: str, rescue: bool = False) -> dict:
     """Genera titulo/descripcion/tags igual que el flujo manual (mismas
     funciones que usan /api/seo/suggest y /api/seo/suggest-social) para que
     el lote nunca publique con esos campos vacios. El titulo se comparte
     entre las 3 redes -- el flujo manual hace lo mismo (una sola caja de
-    titulo reusada para YouTube/Facebook/Instagram)."""
+    titulo reusada para YouTube/Facebook/Instagram). Con `rescue` (perfil
+    rescate animal) Facebook e Instagram reciben cada uno su propio texto."""
     if not script_text:
-        return {"title": fallback_title, "yt_description": "", "yt_tags": [], "social_description": ""}
-    seo = seo_optimizer.suggest_seo(script_text)
-    social = seo_optimizer.suggest_social_caption(script_text)
-    social_description = social["caption"]
-    if social["hashtags"]:
-        social_description += "\n\n" + " ".join(social["hashtags"])
+        return {
+            "title": fallback_title, "yt_description": "", "yt_tags": [],
+            "facebook_description": "", "instagram_description": "",
+        }
+    seo = seo_optimizer.suggest_seo(script_text, rescue=rescue)
+    if rescue:
+        facebook_description = seo_optimizer.suggest_rescue_copy(script_text, "facebook")
+        instagram_description = seo_optimizer.suggest_rescue_copy(script_text, "instagram")
+    else:
+        social = seo_optimizer.suggest_social_caption(script_text)
+        facebook_description = social["caption"]
+        if social["hashtags"]:
+            facebook_description += "\n\n" + " ".join(social["hashtags"])
+        instagram_description = facebook_description
     return {
         "title": seo["title"] or fallback_title,
         "yt_description": seo["description"],
         "yt_tags": seo["tags"],
-        "social_description": social_description,
+        "facebook_description": facebook_description,
+        "instagram_description": instagram_description,
     }
 
 
@@ -886,7 +969,7 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     project = get_project(project_id)
     video = project["videos"][index]
-    content = _build_publish_content(video.get("script_text", ""), project["name"])
+    content = _build_publish_content(video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project))
     title = content["title"]
 
     def _yt(v, page_id):
@@ -899,7 +982,7 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     def _fb(v, page_id):
         result = facebook_publisher.publish_video(
-            v["video_path"], title, content["social_description"], page_id=page_id
+            v["video_path"], title, content["facebook_description"], page_id=page_id
         )
         if result.get("ok"):
             app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
@@ -907,7 +990,7 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     def _ig(v, page_id):
         result = instagram_publisher.publish_video(
-            v["video_path"], title, content["social_description"], page_id=page_id
+            v["video_path"], title, content["instagram_description"], page_id=page_id
         )
         if result.get("ok"):
             app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)

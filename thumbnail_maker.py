@@ -29,12 +29,13 @@ ANTON_FONT_PATH = FONTS_DIR / "Anton-Regular.ttf"
 AI_BACKGROUND_PROMPT_TEMPLATE = (
     "documentary premium photograph, hyperrealistic emotional rescue scene, "
     "action shot caught mid-moment (not a calm posed portrait). "
-    "This thumbnail is for this real story: \"{hook}\" — the main "
+    "This thumbnail is for this recreated story: \"{hook}\" — the main "
     "subject/animal in the image MUST be exactly the one mentioned there, "
     "no other animal or subject. Depict the single most dramatic, climactic, "
     "high-impact moment implied by that story — the peak of the action or "
-    "emotion (the danger, the struggle, the rescue in progress, the reveal, "
-    "the reunion) — the subject caught mid-motion or mid-emotion, not "
+    "emotion (the relief, the trust, the reunion, the first gentle contact, the "
+    "hopeful gaze) — show the emotional consequence, never harm, injury or "
+    "suffering — the subject caught mid-motion or mid-emotion, not "
     "standing still and calmly staring at the camera. Medium shot, NOT an "
     "extreme close-up: the subject's full body (or at least head, torso and "
     "legs) must be entirely visible inside the frame with a comfortable "
@@ -43,7 +44,7 @@ AI_BACKGROUND_PROMPT_TEMPLATE = (
     "room around it, sharp eyes, extreme fur/feather detail, a second "
     "smaller subject nearby creating scale contrast, cinematic depth of "
     "field, sharp subject with blurred background, warm dramatic backlight, "
-    "rim light, tense/emotional atmosphere matching that climactic moment. "
+    "rim light, warm emotional atmosphere matching that moment. "
     "Framing: shot from a slightly low angle so the subject's body sits "
     "within the LOWER two-thirds of the frame, fully contained with margin "
     "— the TOP quarter of the image must be empty open background (sky, "
@@ -56,8 +57,8 @@ AI_BACKGROUND_PROMPT_TEMPLATE = (
     "quality, blurry, cartoon, illustration, 3d render, deformed, extra "
     "limbs, bad anatomy, painting, drawing, generic calm portrait, subject "
     "touching the top edge of the frame, subject cropped or cut off by the "
-    "frame edges, extreme close-up, and avoid any animal/subject that "
-    "is not the one mentioned in the story."
+    "frame edges, extreme close-up, blood, open wounds, gore, visible injury, "
+    "and avoid any animal/subject that is not the one mentioned in the story."
 )
 
 CHATGPT_PROMPT_TEMPLATE = (
@@ -70,7 +71,7 @@ CHATGPT_PROMPT_TEMPLATE = (
     "luz de borde sobre el pelaje, composición en capas con espacio libre "
     "arriba para texto, foto de 35mm, contraste cinematográfico, colores "
     "naturales, terminación fotográfica profesional. La imagen tiene que "
-    "coincidir fielmente con la historia real relatada (mismo animal, mismo "
+    "coincidir fielmente con la historia recreada relatada (mismo animal, mismo "
     "contexto), sin inventar otro sujeto.\n\n"
     "Sumale un titular grande en MAYÚSCULAS que diga exactamente: "
     "\"{headline}\"\n"
@@ -334,14 +335,14 @@ def _shorten_hook(text: str, max_words: int = 8) -> str:
     """
     text = (text or "").strip()
     if not text:
-        return "HISTORIA REAL"
+        return "HISTORIA DE RESCATE"
     cut = re.split(r"[.!?;:,]", text, maxsplit=1)[0].strip()
     words = cut.split()
     if len(words) > max_words:
         words = words[:max_words]
         while len(words) > 2 and words[-1].lower().strip("¿?¡!") in _DANGLING_WORDS:
             words.pop()
-    return " ".join(words) or "HISTORIA REAL"
+    return " ".join(words) or "HISTORIA DE RESCATE"
 
 
 def _split_headline_lines(hook: str) -> list:
@@ -374,9 +375,10 @@ def _tracked_line_width(draw, text, font, tracking_ratio):
 
 HEADLINE_PROMPT_TEMPLATE = (
     "Escribí SOLO un titular corto y viral en español para la miniatura de un "
-    "video de YouTube Shorts, basado en esta historia real: \"{hook}\". "
-    "Estilo clickbait pero verídico (no inventes nada que no esté en la "
-    "historia): que genere curiosidad, 3 a 6 palabras, todo en MAYÚSCULAS, "
+    "video de YouTube Shorts, basado en esta historia recreada: \"{hook}\". "
+    "Que genere curiosidad y emoción sin exagerar (no inventes nada que no esté "
+    "en la historia, nunca digas que es real ni uses palabras de shock como "
+    "IMPACTANTE/BRUTAL/SANGRE/AGONIZANDO): 3 a 6 palabras, todo en MAYÚSCULAS, "
     "sin comillas, sin emojis, sin punto final. Respondé ÚNICAMENTE el "
     "titular y nada más."
 )
@@ -384,7 +386,7 @@ HEADLINE_PROMPT_TEMPLATE = (
 
 def _generate_viral_headline(title_text: str) -> str:
     """Le pide a Qwen (mismo chat/sesión que ya generó el fondo) un titular
-    corto y viral acorde a la historia real -- reemplaza el truncado mecánico
+    corto y viral acorde a la historia recreada -- reemplaza el truncado mecánico
     de _shorten_hook cuando Qwen está disponible."""
     prompt = HEADLINE_PROMPT_TEMPLATE.format(hook=_shorten_hook(title_text, max_words=25))
     reply = auto_pipeline.generate_qwen_text(prompt, unattended=True)

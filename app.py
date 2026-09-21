@@ -989,12 +989,18 @@ HTML = r"""<!DOCTYPE html>
           <option value="">Automático</option>
           <option value="15">15 segundos</option>
           <option value="30">30 segundos</option>
+          <option value="45">45 segundos</option>
+          <option value="55">55 segundos</option>
           <option value="60">60 segundos</option>
           <option value="180" class="duration-long-option">3 minutos</option>
           <option value="300" class="duration-long-option">5 minutos</option>
           <option value="600" class="duration-long-option">10 minutos</option>
         </select>
 
+        <label class="checkbox-row" for="lote-rescue-profile">
+          <input type="checkbox" id="lote-rescue-profile">
+          Perfil rescate animal (filtro de seguridad, copy por red, rótulo de IA, 20:00 sin lunes)
+        </label>
         <label class="checkbox-row" for="lote-subtitles-enabled">
           <input type="checkbox" id="lote-subtitles-enabled" checked>
           Incluir subtítulos
@@ -2128,6 +2134,7 @@ $("lote-create-btn").addEventListener("click", async () => {
       subtitles_enabled: $("lote-subtitles-enabled").checked,
       animate_images: $("lote-animate-images").checked,
       generate_video_clips: $("lote-generate-video-clips").checked,
+      copy_profile: $("lote-rescue-profile").checked ? "rescate_animal" : null,
     },
   };
   btn.disabled = true;
