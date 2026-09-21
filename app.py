@@ -4,10 +4,12 @@ Servidor web (Flask) para el sistema de Texto a Voz con Chatterbox
 Levanta un servidor local en http://localhost:5000
 """
 
+import atexit
 import os
 import json
 import logging
 import re
+import secrets
 import shutil
 import sys
 import time
@@ -43,6 +45,7 @@ import job_store
 import seo_optimizer
 import thumbnail_maker
 import batch_pipeline
+import cloudflare_tunnel
 from tts_engine import (
     text_to_speech_long,
     VOICE_LIBRARY,
@@ -55,9 +58,40 @@ from tts_engine import (
 load_dotenv()
 
 GDRIVE_VIDEOS_DIR = Path(os.environ.get("GDRIVE_VIDEOS_DIR", r"G:\Mi unidad\VIDEOS DE FACEBOOK"))
+PORT = int(os.environ.get("PORT", 5000))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB: tope de subida (imágenes/clips del pipeline manual)
+
+_PUBLIC_PATHS = ("/api/batch/cover/",)  # Instagram la baja directo vía el túnel, sin credenciales
+
+
+@app.before_request
+def _require_dashboard_auth():
+    if request.path.startswith(_PUBLIC_PATHS):
+        return None
+
+    dashboard_user = os.environ.get("DASHBOARD_USER")
+    dashboard_password = os.environ.get("DASHBOARD_PASSWORD")
+    if not dashboard_user or not dashboard_password:
+        # Fail-closed: la app puede quedar expuesta a internet vía el túnel,
+        # así que se prefiere romper todo con un error explícito antes que
+        # quedar abierta sin que nadie lo note.
+        return (
+            "Servidor mal configurado: faltan DASHBOARD_USER / DASHBOARD_PASSWORD "
+            "en .env. La app no sirve nada hasta que se configuren.",
+            500,
+        )
+
+    auth = request.authorization
+    valid = bool(auth) and secrets.compare_digest(auth.username or "", dashboard_user) \
+        and secrets.compare_digest(auth.password or "", dashboard_password)
+    if not valid:
+        resp = jsonify({"ok": False, "error": "Autenticación requerida"})
+        resp.status_code = 401
+        resp.headers["WWW-Authenticate"] = 'Basic realm="TTS Dashboard"'
+        return resp
+    return None
 
 
 HTML = r"""<!DOCTYPE html>
@@ -855,6 +889,24 @@ HTML = r"""<!DOCTYPE html>
       <input type="text" id="lote-nombre" placeholder="Ej: Historias de animales - tanda 1">
 
       <div class="field-label-row" style="margin-top:14px">
+        <label for="lote-type">Tipo de publicación</label>
+      </div>
+      <select id="lote-type">
+        <option value="video">Video completo (guion + clips + audio)</option>
+        <option value="gaming_image">Post de imagen — Gaming viral (1:1, Facebook + Instagram)</option>
+      </select>
+
+      <div id="lote-gaming-only-fields" style="display:none">
+        <div class="field-label-row" style="margin-top:14px">
+          <label for="lote-image-provider">Generador de la imagen de portada</label>
+        </div>
+        <select id="lote-image-provider">
+          <option value="qwen">Qwen (chat.qwen.ai)</option>
+          <option value="whatsapp">WhatsApp / Meta IA</option>
+        </select>
+      </div>
+
+      <div class="field-label-row" style="margin-top:14px">
         <label for="lote-qwen-project">Proyecto de Qwen (nombre exacto en el sidebar de Projects)</label>
       </div>
       <input type="text" id="lote-qwen-project" placeholder="Ej: HISTORIAS DE ANIMALES EMOCIONALES">
@@ -892,68 +944,70 @@ HTML = r"""<!DOCTYPE html>
         <select id="lote-page"></select>
       </div>
 
-      <div class="row-2col">
-        <div>
-          <div class="field-label-row">
-            <label for="lote-voice">Voz</label>
+      <div id="lote-video-only-fields">
+        <div class="row-2col">
+          <div>
+            <div class="field-label-row">
+              <label for="lote-voice">Voz</label>
+            </div>
+            <select id="lote-voice"><option>Cargando...</option></select>
           </div>
-          <select id="lote-voice"><option>Cargando...</option></select>
-        </div>
-        <div>
-          <div class="field-label-row">
-            <label for="lote-subtitle-preset">Subtítulos — estilo</label>
+          <div>
+            <div class="field-label-row">
+              <label for="lote-subtitle-preset">Subtítulos — estilo</label>
+            </div>
+            <select id="lote-subtitle-preset"><option>Cargando...</option></select>
           </div>
-          <select id="lote-subtitle-preset"><option>Cargando...</option></select>
         </div>
-      </div>
 
-      <div class="row-2col">
-        <div>
-          <div class="field-label-row">
-            <label for="lote-orientation">Formato</label>
+        <div class="row-2col">
+          <div>
+            <div class="field-label-row">
+              <label for="lote-orientation">Formato</label>
+            </div>
+            <select id="lote-orientation">
+              <option value="vertical">Vertical 9:16 (Reels / Shorts / TikTok)</option>
+              <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
+            </select>
           </div>
-          <select id="lote-orientation">
-            <option value="vertical">Vertical 9:16 (Reels / Shorts / TikTok)</option>
-            <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
-          </select>
-        </div>
-        <div>
-          <div class="field-label-row">
-            <label for="lote-provider">Generador de clips</label>
+          <div>
+            <div class="field-label-row">
+              <label for="lote-provider">Generador de clips</label>
+            </div>
+            <select id="lote-provider">
+              <option value="whatsapp">WhatsApp / Meta IA</option>
+              <option value="qwen">Qwen (chat.qwen.ai)</option>
+              <option value="mixed">Mixto (WhatsApp + Qwen en paralelo)</option>
+            </select>
           </div>
-          <select id="lote-provider">
-            <option value="whatsapp">WhatsApp / Meta IA</option>
-            <option value="qwen">Qwen (chat.qwen.ai)</option>
-            <option value="mixed">Mixto (WhatsApp + Qwen en paralelo)</option>
-          </select>
         </div>
-      </div>
 
-      <div class="field-label-row" style="margin-top:14px">
-        <label for="lote-duration">Duración del video</label>
-      </div>
-      <select id="lote-duration">
-        <option value="">Automático</option>
-        <option value="15">15 segundos</option>
-        <option value="30">30 segundos</option>
-        <option value="60">60 segundos</option>
-        <option value="180" class="duration-long-option">3 minutos</option>
-        <option value="300" class="duration-long-option">5 minutos</option>
-        <option value="600" class="duration-long-option">10 minutos</option>
-      </select>
+        <div class="field-label-row" style="margin-top:14px">
+          <label for="lote-duration">Duración del video</label>
+        </div>
+        <select id="lote-duration">
+          <option value="">Automático</option>
+          <option value="15">15 segundos</option>
+          <option value="30">30 segundos</option>
+          <option value="60">60 segundos</option>
+          <option value="180" class="duration-long-option">3 minutos</option>
+          <option value="300" class="duration-long-option">5 minutos</option>
+          <option value="600" class="duration-long-option">10 minutos</option>
+        </select>
 
-      <label class="checkbox-row" for="lote-subtitles-enabled">
-        <input type="checkbox" id="lote-subtitles-enabled" checked>
-        Incluir subtítulos
-      </label>
-      <label class="checkbox-row" for="lote-animate-images">
-        <input type="checkbox" id="lote-animate-images" checked>
-        Animar imágenes (Ken Burns)
-      </label>
-      <label class="checkbox-row" for="lote-generate-video-clips">
-        <input type="checkbox" id="lote-generate-video-clips" checked>
-        Animar clips al generarlos (si no, solo imagen estática)
-      </label>
+        <label class="checkbox-row" for="lote-subtitles-enabled">
+          <input type="checkbox" id="lote-subtitles-enabled" checked>
+          Incluir subtítulos
+        </label>
+        <label class="checkbox-row" for="lote-animate-images">
+          <input type="checkbox" id="lote-animate-images" checked>
+          Animar imágenes (Ken Burns)
+        </label>
+        <label class="checkbox-row" for="lote-generate-video-clips">
+          <input type="checkbox" id="lote-generate-video-clips" checked>
+          Animar clips al generarlos (si no, solo imagen estática)
+        </label>
+      </div>
 
       <button class="btn btn-primary" id="lote-create-btn" style="margin-top:16px">
         Crear proyecto de lote
@@ -1023,6 +1077,32 @@ HTML = r"""<!DOCTYPE html>
         <button class="btn-sm" id="ajustes-check-qwen_batch-btn">Comprobar conexión</button>
         <button class="btn-sm" id="ajustes-reconnect-qwen_batch-btn" style="display:none">Reconectar</button>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>🌐 URL pública (Cloudflare Tunnel)</h2>
+      <p class="card-desc">
+        La app lanza <code>cloudflared</code> sola al arrancar (Quick Tunnel) y
+        detecta la URL pública automáticamente — no hace falta correr nada a
+        mano ni pegarla acá. El campo de abajo se completa solo y sirve
+        como respaldo/override manual: si preferís usar un túnel con dominio
+        propio en vez del automático, pegalo acá y se usa ese en su lugar.
+        Recordá que la URL automática es efímera (cambia con cada reinicio del
+        servidor) — eso es normal.
+        <br><br>
+        Si en la consola del servidor ves un aviso de "cloudflared no está
+        instalado", instalalo una vez con
+        <code>winget install --id Cloudflare.cloudflared</code> y reiniciá la app.
+        Todo el dashboard (no solo esta imagen) queda accesible desde esa URL,
+        protegido con el usuario/clave de <code>DASHBOARD_USER</code> /
+        <code>DASHBOARD_PASSWORD</code> del <code>.env</code>.
+      </p>
+      <div class="field-label-row">
+        <label for="ajustes-public-url">URL del túnel (automática o manual)</label>
+      </div>
+      <input type="text" id="ajustes-public-url" placeholder="https://algo.trycloudflare.com">
+      <button class="btn-sm" id="ajustes-save-public-url-btn" style="margin-top:10px">Guardar</button>
+      <div id="ajustes-public-url-status" class="pub-status"></div>
     </div>
 
   </div> <!-- /tab-ajustes -->
@@ -1130,6 +1210,7 @@ function activateTab(tab) {
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
     checkSessionStatus("qwen");
+    loadPublicUrl();
   }
   if (tab === "analytics") {
     loadFacebookAnalytics();
@@ -1805,7 +1886,7 @@ function _loteVideoSummary(project) {
   const generated = videos.filter(v => v.status !== "pending" && v.status !== "generating").length;
   const published = videos.filter(v => v.status === "published").length;
   const next = videos.find(v => v.status === "ready" || v.status === "pending");
-  const errores = videos.filter(v => v.status === "error").length;
+  const errores = videos.filter(v => v.status === "error" || v.status === "publish_error").length;
   let next_txt = "—";
   if (next) {
     try { next_txt = new Date(next.scheduled_at).toLocaleString(); } catch (e) { next_txt = next.scheduled_at; }
@@ -1819,6 +1900,8 @@ const _LOTE_STAGE_INFO = {
   imagenes: { label: "Generando imágenes/clips", pct: 35 },
   audio: { label: "Generando audio (TTS)", pct: 65 },
   render: { label: "Renderizando video", pct: 85 },
+  idea: { label: "Generando idea y prompt de imagen (Qwen)", pct: 25 },
+  imagen: { label: "Generando imagen de portada (Qwen)", pct: 70 },
 };
 
 function _loteDate(iso) {
@@ -1839,20 +1922,41 @@ function _loteVideoRowHtml(v, projectId) {
     return `<div class="lote-video-row">#${n} — 📤 Publicando...</div>`;
   }
   if (v.status === "error") {
+    const intentos = v.gen_attempts || 0;
     return `
       <div class="lote-video-row lote-video-row-line">
-        <div>#${n} — ❌ Error: ${_escapeHtml(v.error || "desconocido")}</div>
+        <div>#${n} — ❌ Error tras ${intentos} intentos automáticos: ${_escapeHtml(v.error || "desconocido")}</div>
         <button class="btn-sm" data-lote-retry="${projectId}" data-lote-retry-index="${v.index}">Reintentar</button>
       </div>`;
   }
+  if (v.status === "publish_error") {
+    const redesListas = Object.keys(v.published_at || {}).filter(k => v.published_at[k]);
+    const parcial = redesListas.length ? ` (ya publicado en ${_escapeHtml(redesListas.join(", "))})` : "";
+    const authMsg = v.last_publish_auth_error
+      ? ` — el token de esa red venció o perdió permisos, renovalo en Ajustes antes de reintentar`
+      : "";
+    return `
+      <div class="lote-video-row lote-video-row-line">
+        <div>#${n} — ❌ Error publicando: ${_escapeHtml(v.error || "desconocido")}${parcial}${authMsg}</div>
+        <button class="btn-sm" data-lote-retry-publish="${projectId}" data-lote-retry-index="${v.index}">Reintentar publicación</button>
+      </div>`;
+  }
+  const captionLine = v.caption
+    ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${_escapeHtml(v.caption)}</div>` : "";
   if (v.status === "published") {
     const redes = Object.keys(v.published_at || {}).filter(k => v.published_at[k]).join(", ") || "—";
-    return `<div class="lote-video-row">#${n} — ✅ Publicado (${_escapeHtml(redes)})</div>`;
+    return `<div class="lote-video-row">#${n} — ✅ Publicado (${_escapeHtml(redes)})${captionLine}</div>`;
   }
   if (v.status === "ready") {
     const redesListas = Object.keys(v.published_at || {}).filter(k => v.published_at[k]);
     const parcial = redesListas.length ? ` — ya publicado en ${_escapeHtml(redesListas.join(", "))}, falta el resto` : "";
-    return `<div class="lote-video-row">#${n} — 🟡 Listo, espera publicación (${_loteDate(v.scheduled_at)})${parcial}</div>`;
+    if (v.publish_attempts > 0) {
+      return `<div class="lote-video-row">#${n} — 🔄 Reintentando publicación automáticamente (intento ${v.publish_attempts}/3)${parcial}${captionLine}</div>`;
+    }
+    return `<div class="lote-video-row">#${n} — 🟡 Listo, espera publicación (${_loteDate(v.scheduled_at)})${parcial}${captionLine}</div>`;
+  }
+  if (v.gen_attempts > 0) {
+    return `<div class="lote-video-row">#${n} — 🔄 Reintentando generación automáticamente (intento ${v.gen_attempts}/3)</div>`;
   }
   return `<div class="lote-video-row">#${n} — ⏳ Pendiente (programado ${_loteDate(v.scheduled_at)})</div>`;
 }
@@ -1908,6 +2012,13 @@ async function loadLoteProjects() {
         } catch (e) {}
         loadLoteProjects();
       }));
+    wrap.querySelectorAll("[data-lote-retry-publish]").forEach(btn =>
+      btn.addEventListener("click", async () => {
+        try {
+          await fetch(`/api/batch/retry-publish/${btn.dataset.loteRetryPublish}/${btn.dataset.loteRetryIndex}`, { method: "POST" });
+        } catch (e) {}
+        loadLoteProjects();
+      }));
 
     const anyRunning = projects.some(p => p.status === "running");
     if (anyRunning && !lotePollTimer) {
@@ -1950,6 +2061,17 @@ $("lote-orientation").addEventListener("change", () => updateDurationOptions("lo
 updateDurationOptions("pipeline-orientation", "pipeline-duration");
 updateDurationOptions("lote-orientation", "lote-duration");
 
+function updateLoteTypeVisibility() {
+  const isGaming = $("lote-type").value === "gaming_image";
+  $("lote-video-only-fields").style.display = isGaming ? "none" : "";
+  $("lote-gaming-only-fields").style.display = isGaming ? "" : "none";
+  $("lote-yt").checked = isGaming ? false : $("lote-yt").checked;
+  $("lote-yt").closest("label").style.display = isGaming ? "none" : "";
+  $("lote-trigger-message").placeholder = isGaming ? "dame el próximo post gaming" : "dame una historia";
+}
+$("lote-type").addEventListener("change", updateLoteTypeVisibility);
+updateLoteTypeVisibility();
+
 $("lote-create-btn").addEventListener("click", async () => {
   const btn = $("lote-create-btn");
   const statusEl = $("lote-create-status");
@@ -1959,22 +2081,25 @@ $("lote-create-btn").addEventListener("click", async () => {
     statusEl.innerHTML = `<div class="analytics-empty">Completá el nombre del proyecto y el proyecto de Qwen.</div>`;
     return;
   }
+  const contentType = $("lote-type").value;
+  const isGaming = contentType === "gaming_image";
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
   if ($("lote-ig").checked) networks.instagram = { page_id: pageId };
-  if ($("lote-yt").checked) networks.youtube = true;
+  if (!isGaming && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
     return;
   }
   const payload = {
-    name, qwen_project: qwenProject,
-    trigger_message: $("lote-trigger-message").value.trim() || "dame una historia",
+    name, qwen_project: qwenProject, type: contentType,
+    trigger_message: $("lote-trigger-message").value.trim()
+      || (isGaming ? "dame el próximo post gaming" : "dame una historia"),
     total_videos: parseInt($("lote-total").value, 10) || 1,
     per_day: parseInt($("lote-per-day").value, 10) || 1,
     networks,
-    video_settings: {
+    video_settings: isGaming ? { image_provider: $("lote-image-provider").value } : {
       voice: $("lote-voice").value,
       subtitle_preset: $("lote-subtitle-preset").value,
       orientation: $("lote-orientation").value,
@@ -1999,7 +2124,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     statusEl.innerHTML = `<div class="analytics-empty">✅ Proyecto "${_escapeHtml(name)}" creado.</div>`;
     $("lote-nombre").value = "";
     $("lote-qwen-project").value = "";
-    $("lote-trigger-message").value = "dame una historia";
+    $("lote-trigger-message").value = "";
     loadLoteProjects();
   } catch (e) {
     statusEl.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
@@ -2033,8 +2158,9 @@ function getScheduledTimeIso() {
 }
 
 function _nextDatetimeLocalAtHour(hour) {
+  const clampedHour = Math.min(20, Math.max(9, hour)); // nunca fuera de 9:00-20:00
   const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0);
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), clampedHour, 0, 0);
   if (target <= now) target.setDate(target.getDate() + 1);
   const pad = (n) => String(n).padStart(2, "0");
   return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
@@ -2660,6 +2786,34 @@ $("ajustes-check-qwen_batch-btn").addEventListener("click", () => checkSessionSt
 $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSession("whatsapp"));
 $("ajustes-reconnect-qwen-btn").addEventListener("click", () => reconnectSession("qwen"));
 $("ajustes-reconnect-qwen_batch-btn").addEventListener("click", () => reconnectSession("qwen_batch"));
+
+// ── Ajustes: URL pública del Cloudflare Tunnel (posts de imagen gaming) ──
+async function loadPublicUrl() {
+  try {
+    const res = await fetch("/api/batch/get-public-url");
+    const data = await res.json();
+    if (data.ok) $("ajustes-public-url").value = data.url || "";
+  } catch (e) { /* silencioso, no bloquea el resto de la pestaña */ }
+}
+$("ajustes-save-public-url-btn").addEventListener("click", async () => {
+  const btn = $("ajustes-save-public-url-btn");
+  const statusEl = $("ajustes-public-url-status");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/batch/set-public-url", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: $("ajustes-public-url").value.trim() }),
+    });
+    const data = await res.json();
+    statusEl.innerHTML = data.ok
+      ? `<div class="analytics-empty">✅ Guardado.</div>`
+      : `<div class="analytics-empty">❌ No se pudo guardar.</div>`;
+  } catch (e) {
+    statusEl.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
 </script>
 </body>
 </html>"""
@@ -4067,13 +4221,15 @@ def _run_youtube_job(job_id: str, video_path: str, title: str, description: str,
 @app.route("/api/youtube/publish", methods=["POST"])
 def api_youtube_publish():
     data = request.get_json(force=True)
-    filename = secure_filename_safe(data.get("filename", "").strip())
-    title = data.get("title", "").strip()
-    description = data.get("description", "").strip()
-    privacy_status = data.get("privacy_status", "unlisted").strip()
-    tags = [t.strip() for t in data.get("tags", "").split(",") if t.strip()]
+    # `or ""`: el front manda null (no ausente) para campos vacios, y
+    # data.get(k, "") solo cubre la clave ausente -> None.strip() reventaba.
+    filename = secure_filename_safe((data.get("filename") or "").strip())
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+    privacy_status = (data.get("privacy_status") or "unlisted").strip()
+    tags = [t.strip() for t in (data.get("tags") or "").split(",") if t.strip()]
     is_ai_generated = bool(data.get("is_ai_generated"))
-    thumbnail_name = data.get("thumbnail", "").strip()
+    thumbnail_name = (data.get("thumbnail") or "").strip()
 
     if not filename:
         return jsonify({"ok": False, "error": "Falta el video a publicar."}), 400
@@ -4387,19 +4543,49 @@ def api_batch_create():
     qwen_project = (data.get("qwen_project") or "").strip()
     if not name or not qwen_project:
         return jsonify({"ok": False, "error": "Falta el nombre del proyecto o el proyecto de Qwen."})
+    content_type = (data.get("type") or "video").strip()
+    default_trigger = "dame el próximo post gaming" if content_type == "gaming_image" else "dame una historia"
+    networks = data.get("networks") or {}
+    if content_type == "gaming_image":
+        networks = {k: v for k, v in networks.items() if k != "youtube"}
     try:
         project = batch_pipeline.create_project(
             name=name,
             qwen_project=qwen_project,
             total_videos=data.get("total_videos", 1),
             per_day=data.get("per_day", 1),
-            networks=data.get("networks") or {},
+            networks=networks,
             video_settings=data.get("video_settings") or {},
-            trigger_message=(data.get("trigger_message") or "").strip() or "dame una historia",
+            trigger_message=(data.get("trigger_message") or "").strip() or default_trigger,
+            content_type=content_type,
         )
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
     return jsonify({"ok": True, "project": project})
+
+
+@app.route("/api/batch/get-public-url")
+def api_batch_get_public_url():
+    return jsonify({"ok": True, "url": batch_pipeline.get_public_base_url() or ""})
+
+
+@app.route("/api/batch/set-public-url", methods=["POST"])
+def api_batch_set_public_url():
+    data = request.get_json(force=True) or {}
+    batch_pipeline.set_public_base_url(data.get("url") or "")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/batch/cover/<project_id>/<int:index>")
+def api_batch_cover(project_id, index):
+    """Sirve la imagen de portada de un post gaming del lote -- ruta publica
+    minima para que Instagram (via Cloudflare Tunnel) pueda descargarla; la
+    Graph API de Instagram no acepta subida de archivo local para imagenes."""
+    project = batch_pipeline.get_project(project_id)
+    video = project and next((v for v in project["videos"] if v["index"] == index), None)
+    if not video or not video.get("video_path") or not Path(video["video_path"]).exists():
+        return "No encontrado", 404
+    return send_file(video["video_path"])
 
 
 @app.route("/api/batch/list")
@@ -4440,6 +4626,11 @@ def api_batch_retry(project_id, index):
     return jsonify({"ok": batch_pipeline.retry_video(project_id, index)})
 
 
+@app.route("/api/batch/retry-publish/<project_id>/<int:index>", methods=["POST"])
+def api_batch_retry_publish(project_id, index):
+    return jsonify({"ok": batch_pipeline.retry_publish_video(project_id, index)})
+
+
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
@@ -4450,7 +4641,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("   🎙️  SERVIDOR TTS INICIADO")
     print("=" * 55)
-    print("   → Abre en tu navegador: http://localhost:5000")
+    print(f"   → Abre en tu navegador: http://localhost:{PORT}")
     print("   → Ctrl+C para detener")
     print("=" * 55 + "\n")
 
@@ -4458,4 +4649,19 @@ if __name__ == "__main__":
     if not _token_status["ok"]:
         logger.warning("Token de Meta no válido: %s", _token_status["error"])
 
-    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
+    if not (os.environ.get("DASHBOARD_USER") and os.environ.get("DASHBOARD_PASSWORD")):
+        print("!" * 55)
+        print("  AVISO: DASHBOARD_USER / DASHBOARD_PASSWORD no están en .env")
+        print("  La app va a responder 500 a TODAS las requests hasta que los agregues.")
+        print("!" * 55)
+        logger.warning("DASHBOARD_USER/DASHBOARD_PASSWORD no configurados en .env")
+
+    def _on_tunnel_url(url: str) -> None:
+        batch_pipeline.set_public_base_url(url)
+        print(f"   → URL pública (Cloudflare Quick Tunnel): {url}")
+        logger.info("Cloudflare Quick Tunnel activo: %s", url)
+
+    cloudflare_tunnel.start(PORT, _on_tunnel_url)
+    atexit.register(cloudflare_tunnel.stop)
+
+    app.run(debug=False, host="0.0.0.0", port=PORT, threaded=True)

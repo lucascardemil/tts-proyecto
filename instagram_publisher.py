@@ -288,3 +288,66 @@ def publish_video(
         return err
 
     return {"ok": True, "media_id": publish_payload["id"]}
+
+
+def publish_photo(
+    image_url: str,
+    caption: str,
+    page_id: Optional[str] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """
+    Publica una imagen a partir de una URL PUBLICA -- a diferencia del
+    video, la Graph API de Instagram no admite subida de archivo local para
+    imagenes (el container IMAGE exige "image_url" servida desde afuera). El
+    container IMAGE publica sincronicamente: no hace falta sondear
+    status_code como en REELS.
+
+    Returns:
+        {"ok": True, "media_id": str} si se publicó, o
+        {"ok": False, "error": str} si algo falló.
+    """
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return err
+
+    token_check = meta_auth.validate(page_id)
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
+
+    notify = on_status or (lambda msg: None)
+    ig_user_id, err = _get_ig_user_id(page_id, access_token)
+    if err:
+        return err
+
+    notify("Creando publicación de imagen en Instagram...")
+    try:
+        container_response = _request_with_retry(
+            "POST",
+            f"{GRAPH_URL}/{ig_user_id}/media",
+            params={"access_token": access_token},
+            json={"media_type": "IMAGE", "image_url": image_url, "caption": caption},
+            timeout=60,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"No se pudo conectar con Instagram: {e}"}
+    container_payload, err = _parse_response(container_response)
+    if err:
+        return err
+    container_id = container_payload["id"]
+
+    notify("Publicando en Instagram...")
+    try:
+        publish_response = _request_with_retry(
+            "POST",
+            f"{GRAPH_URL}/{ig_user_id}/media_publish",
+            params={"access_token": access_token},
+            json={"creation_id": container_id},
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"No se pudo publicar en Instagram: {e}"}
+    publish_payload, err = _parse_response(publish_response)
+    if err:
+        return err
+    return {"ok": True, "media_id": publish_payload["id"]}

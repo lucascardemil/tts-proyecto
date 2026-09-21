@@ -77,6 +77,11 @@ IMAGE_CONTENT_REFUSAL_MARKERS = (
     "no puedo generar esta imagen",
     "no puedo generar esa imagen",
 )
+# Meta AI redacta el rechazo con frases variables ("no pude generar esta
+# imagen" / "no pude generar esa toma extrema del cuello..." / etc) -- las
+# listas de arriba son frases exactas y no cubren toda la variacion. Este
+# regex generaliza el patron comun a todas: "no pud(e|o) generar".
+IMAGE_REFUSAL_RE = re.compile(r"no pud[eo] generar", re.IGNORECASE)
 IMAGE_RETRY_ATTEMPTS = 3
 
 # Vocabulario grafico que Meta AI rechaza seguido en el PRIMER intento (no solo
@@ -145,7 +150,7 @@ CLIP_TIMEOUT_SECONDS = 600
 QWEN_CLIP_TIMEOUT_SECONDS = 1200
 QWEN_IMAGE_TIMEOUT_SECONDS = 180  # generar una sola imagen es mucho mas rapido que un video
 QWEN_TEXT_TIMEOUT_SECONDS = 60  # una respuesta de texto corta (ej. un titular) es casi instantanea
-QWEN_STORY_TIMEOUT_SECONDS = 300  # "dame una historia" devuelve guion + N prompts, tarda mas que un titular
+QWEN_STORY_TIMEOUT_SECONDS = 300  # tope pedido por el usuario: es solo texto (idea/hook/prompt/caption), 5 min max
 
 
 class PipelineError(Exception):
@@ -155,6 +160,14 @@ class PipelineError(Exception):
 class MetaAIFailure(PipelineError):
     """Meta AI respondio con texto de fallo (ej. 'no pude retomar la imagen
     anterior') en vez de generar la imagen pedida."""
+    pass
+
+
+class MetaAIAlternativeOffered(MetaAIFailure):
+    """Meta AI rechazo el pedido pero ofrecio una version alternativa y
+    pregunto si la genera (el mensaje termina en '?'). A diferencia de un
+    rechazo liso, esto se resuelve aceptando ('Si') en vez de reformular
+    el prompt de cero."""
     pass
 
 
@@ -289,17 +302,6 @@ def _run_agent_browser(args: list, session: str, _retry_on_10061: bool = True) -
         return result.stdout
 
 
-def restart_browser_session(session: str) -> None:
-    """Cierra el daemon de agent-browser de una sesion (se relanza solo en el proximo uso,
-    conservando el login via --profile para WhatsApp o --restore para el resto). Util
-    cuando el daemon quedo colgado (error os 10060)."""
-    with _get_session_lock(session):
-        try:
-            _run_cmd([AGENT_BROWSER_CMD, "--session", session, "close"], timeout=30)
-        except subprocess.TimeoutExpired:
-            _force_kill_session(session)
-
-
 def _read_daemon_pid(session: str) -> "int | None":
     """Lee el PID vivo del daemon desde el archivo que agent-browser mismo mantiene."""
     try:
@@ -384,8 +386,7 @@ def hard_reset_browser_session(session: str) -> dict:
     """Reinicio agresivo de una sesion de agent-browser: cierre educado corto y,
     pase lo que pase, mata el proceso OS real del daemon (via su .pid) mas
     cualquier chrome.exe huerfano y locks viejos, y devuelve el estado real
-    verificado en vez de asumir exito a ciegas (a diferencia de restart_browser_session,
-    que solo le pide amablemente al daemon que cierre)."""
+    verificado en vez de asumir exito a ciegas."""
     with _get_session_lock(session):
         try:
             _run_cmd([AGENT_BROWSER_CMD, "--session", session, "close"], timeout=10)
@@ -473,6 +474,36 @@ def screenshot_session(session: str, selector: str = None) -> Path:
     return Path(match.group(1).strip())
 
 
+DIAG_DIR = LOG_DIR / "diag"
+DIAG_KEEP_FILES = 60
+
+
+def _save_failure_diagnostics(session: str, label: str) -> None:
+    """Guarda captura + cola del snapshot de la sesion en logs/diag/ justo antes
+    de fallar por timeout/descarga, para saber despues POR QUE fallo (login
+    vencido, modal, captcha, rate-limit, UI cambiada) -- sin esto el log solo
+    dice "Timeout" y la pantalla real se pierde. Best-effort: nunca lanza."""
+    try:
+        DIAG_DIR.mkdir(exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        base = DIAG_DIR / f"{stamp}_{session}_{label}"
+        try:
+            shot = screenshot_session(session)
+            base.with_suffix(".png").write_bytes(shot.read_bytes())
+        except Exception as e:
+            logger.warning("diag %s/%s: sin captura (%s)", session, label, e)
+        try:
+            snap = _run_agent_browser(["snapshot"], session)
+            base.with_suffix(".txt").write_text(snap[-6000:], encoding="utf-8")
+        except Exception as e:
+            logger.warning("diag %s/%s: sin snapshot (%s)", session, label, e)
+        logger.info("diag %s/%s guardado en %s", session, label, DIAG_DIR)
+        for old in sorted(DIAG_DIR.glob("*"), key=lambda p: p.stat().st_mtime)[:-DIAG_KEEP_FILES]:
+            old.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def screenshot_qr(session: str) -> Path:
     """Captura solo el <canvas> del QR (WhatsApp/Qwen lo renderizan como canvas),
     con fallback a la página completa si no encuentra el elemento."""
@@ -482,7 +513,7 @@ def screenshot_qr(session: str) -> Path:
 def open_login_page(session: str) -> None:
     """Abre la pagina de login del proveedor en la sesion dada (para reconexion).
     Reintenta una vez si el daemon anterior todavia estaba terminando de cerrarse
-    (error os 10061, "conexion denegada" justo tras un restart_browser_session)."""
+    (error os 10061, "conexion denegada" justo tras un hard_reset_browser_session)."""
     url = "https://web.whatsapp.com/" if session == WHATSAPP_SESSION else QWEN_URL
     try:
         _run_agent_browser(["open", url], session)
@@ -783,11 +814,26 @@ def _count_media_nodes(session: str, marker: str) -> str:
 
 
 def _send_chat_message(session: str, text: str, textbox_pattern: str = r'textbox "Escribir un mensaje[^"]*" \[ref=(\w+)\]') -> None:
+    """Escribe `text` en el textbox del chat y lo manda con Enter.
+
+    Si `text` tiene mas de una linea (ej. trigger_message con bloque de
+    historial pegado), NO se puede mandar todo de una con `fill`: confirmado
+    en vivo que el `\\n` embebido dispara el mismo submit-on-Enter que tiene
+    bindeado el chat (Qwen, WhatsApp) y trunca el resto del mensaje en
+    silencio -- ni se manda como texto ni aparece nada, se pierde. Por eso
+    despues de la primera linea se inserta cada linea siguiente a mano con
+    Shift+Enter (salto de linea real, sin submit) + `keyboard inserttext`,
+    en vez de tirarle el texto completo de un tiro a `fill`."""
     snap = _run_agent_browser(["snapshot", "-i"], session)
     textbox_ref = _find_ref(snap, textbox_pattern)
     if not textbox_ref:
         raise PipelineError(f"No encontre el textbox del chat ({session}).")
-    _run_agent_browser(["fill", f"@{textbox_ref}", text], session)
+    lines = text.split("\n")
+    _run_agent_browser(["fill", f"@{textbox_ref}", lines[0]], session)
+    for line in lines[1:]:
+        _run_agent_browser(["press", "Shift+Enter"], session)
+        if line:
+            _run_agent_browser(["keyboard", "inserttext", line], session)
     _run_agent_browser(["press", "Enter"], session)
 
 
@@ -801,7 +847,9 @@ def _wait_for_new_media(session: str, marker: str, baseline_block: str, timeout_
             return
         if current_block != baseline_block:
             lowered = current_block.lower()
-            if any(f in lowered for f in IMAGE_FAILURE_MARKERS):
+            if IMAGE_REFUSAL_RE.search(lowered) or any(f in lowered for f in IMAGE_FAILURE_MARKERS):
+                if current_block.strip().endswith("?"):
+                    raise MetaAIAlternativeOffered(current_block.strip())
                 raise MetaAIFailure(current_block.strip())
         if time.time() - last_report > 30:
             print(f"  ...esperando '{marker}' (sigo vivo, aun no aparece)")
@@ -816,10 +864,23 @@ def _download_last_video(session: str, dest_path: Path) -> None:
     """
     js = (
         "(async () => {"
-        "  const videos = document.querySelectorAll('video');"
-        "  const v = videos[videos.length - 1];"
-        "  if (!v || !v.src) return null;"
-        "  const resp = await fetch(v.src);"
+        # El <video> puede montarse antes de tener src (blob se asigna tarde) y
+        # a veces la URL vive en currentSrc o en un <source> hijo: se prueban
+        # las tres y se reintenta ~5s antes de rendirse.
+        "  const pick = () => {"
+        "    const videos = document.querySelectorAll('video');"
+        "    const v = videos[videos.length - 1];"
+        "    if (!v) return null;"
+        "    const s = v.currentSrc || v.src || (v.querySelector('source') || {}).src;"
+        "    return s || null;"
+        "  };"
+        "  let src = pick();"
+        "  for (let t = 0; !src && t < 10; t++) {"
+        "    await new Promise(r => setTimeout(r, 500));"
+        "    src = pick();"
+        "  }"
+        "  if (!src) return null;"
+        "  const resp = await fetch(src);"
         "  const buf = await resp.arrayBuffer();"
         "  let binary = '';"
         "  const bytes = new Uint8Array(buf);"
@@ -833,9 +894,16 @@ def _download_last_video(session: str, dest_path: Path) -> None:
         encoding="utf-8", errors="replace",
     )
     if result.returncode != 0 or not result.stdout.strip() or result.stdout.strip() == "null":
+        detail = result.stderr.strip()
+        logger.warning(
+            "_download_last_video: eval fallo (rc=%s) stderr=%s stdout=%s",
+            result.returncode, detail, result.stdout.strip()[:200],
+        )
+        _save_failure_diagnostics(session, "video_download")
         raise PipelineError(
             f"No pude descargar el clip para {dest_path.name} "
             "(el mecanismo de descarga del video en WhatsApp Web puede haber cambiado)."
+            + (f" Detalle: {detail}" if detail else "")
         )
     import base64
     b64_data = result.stdout.strip().strip('"')
@@ -866,9 +934,13 @@ def _download_last_image(session: str, dest_path: Path) -> None:
         encoding="utf-8", errors="replace",
     )
     if result.returncode != 0 or not result.stdout.strip() or result.stdout.strip() == "null":
+        detail = result.stderr.strip()
+        logger.warning("_download_last_image: eval fallo (rc=%s) stderr=%s", result.returncode, detail)
+        _save_failure_diagnostics(session, "image_download")
         raise PipelineError(
             f"No pude descargar la imagen para {dest_path.name} "
             "(el mecanismo de descarga de imagenes en WhatsApp Web puede haber cambiado)."
+            + (f" Detalle: {detail}" if detail else "")
         )
     import base64
     b64_data = result.stdout.strip().strip('"')
@@ -876,19 +948,24 @@ def _download_last_image(session: str, dest_path: Path) -> None:
 
 
 def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, is_first: bool,
-                                 generate_video: bool = True) -> None:
+                                 generate_video: bool = True) -> Path:
     """Genera+anima UNA imagen en el chat de Meta IA ya abierto y descarga el
     clip resultante en scene_path. Cuerpo por-item de _generate_clips_whatsapp,
     reusado tambien por _generate_clips_mixed."""
     if is_first:
         _confirm("Voy a mandar el primer prompt de imagen. Confirmas?", unattended)
 
-    content_refused = False
+    next_action = "initial"
     for attempt in range(1, IMAGE_RETRY_ATTEMPTS + 1):
         img_baseline = _count_media_nodes(WHATSAPP_SESSION, IMAGE_MARKER)
-        if attempt == 1:
+        if next_action == "initial":
             _send_chat_message(WHATSAPP_SESSION, f"Imagen {item['index']}: {item['prompt']}")
-        elif content_refused:
+        elif next_action == "accept":
+            # Meta AI ofrecio una version alternativa mas segura y pregunto
+            # si la genera -- aceptarla es mas simple y confiable que
+            # hacerle adivinar al pipeline una reformulacion propia.
+            _send_chat_message(WHATSAPP_SESSION, "Sí")
+        elif next_action == "soften":
             # Meta AI rechazo el encuadre/contenido (no perdio el hilo) --
             # reenviar el mismo prompt tal cual casi siempre vuelve a
             # fallar; se pide una version mas segura en su lugar.
@@ -898,7 +975,7 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
                 "sin detalles graficos de heridas, sufrimiento o daño visible "
                 f"(mantene el mismo sujeto y contexto): {item['prompt']}",
             )
-        else:
+        else:  # "fresh"
             # Meta AI perdio el hilo de edicion (no pudo "retomar" la
             # imagen anterior) -- reenviar pidiendo generarla de cero en
             # vez de editar, para no depender de un archivo base perdido.
@@ -909,8 +986,20 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
         try:
             _wait_for_new_media(WHATSAPP_SESSION, IMAGE_MARKER, img_baseline, IMAGE_TIMEOUT_SECONDS)
             break
+        except MetaAIAlternativeOffered:
+            # Primera vez: aceptar. Si ya habiamos aceptado una vez y Meta
+            # volvio a ofrecer/rechazar, no insistir con "Si" de nuevo --
+            # caer al reintento existente (prompt suavizado).
+            next_action = "soften" if next_action == "accept" else "accept"
+            if attempt == IMAGE_RETRY_ATTEMPTS:
+                raise PipelineError(
+                    f"Meta AI no pudo generar la Imagen {item['index']} tras {IMAGE_RETRY_ATTEMPTS} intentos."
+                )
         except MetaAIFailure as e:
-            content_refused = any(m in str(e).lower() for m in IMAGE_CONTENT_REFUSAL_MARKERS)
+            lowered = str(e).lower()
+            next_action = "soften" if (
+                IMAGE_REFUSAL_RE.search(lowered) or any(m in lowered for m in IMAGE_CONTENT_REFUSAL_MARKERS)
+            ) else "fresh"
             if attempt == IMAGE_RETRY_ATTEMPTS:
                 raise PipelineError(
                     f"Meta AI no pudo generar la Imagen {item['index']} tras {IMAGE_RETRY_ATTEMPTS} intentos."
@@ -918,16 +1007,42 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
 
     if not generate_video:
         _download_last_image(WHATSAPP_SESSION, scene_path)
-        return
+        return scene_path
+
+    # Respaldo: la imagen ya esta generada, se baja YA como scene_XXX.jpg. Si la
+    # animacion falla despues (timeout o descarga del blob), el video del lote
+    # sale igual con la imagen (el render la anima con Ken Burns) en vez de
+    # morir entero -- resume_index/build_props ya aceptan .jpg mezclado con .mp4.
+    fallback_path = scene_path.with_suffix(".jpg")
+    try:
+        _download_last_image(WHATSAPP_SESSION, fallback_path)
+    except PipelineError as e:
+        logger.warning("clip %s: sin imagen de respaldo (%s)", scene_path.name, e)
+        fallback_path = None
 
     if is_first:
         _confirm("Imagen generada. Mando 'animar'?", unattended)
 
-    clip_baseline = _count_media_nodes(WHATSAPP_SESSION, VIDEO_MARKER)
-    _send_chat_message(WHATSAPP_SESSION, f"anima la imagen {item['index']}")
-    _wait_for_new_media(WHATSAPP_SESSION, VIDEO_MARKER, clip_baseline, CLIP_TIMEOUT_SECONDS)
+    try:
+        clip_baseline = _count_media_nodes(WHATSAPP_SESSION, VIDEO_MARKER)
+        _send_chat_message(WHATSAPP_SESSION, f"anima la imagen {item['index']}")
+        _wait_for_new_media(WHATSAPP_SESSION, VIDEO_MARKER, clip_baseline, CLIP_TIMEOUT_SECONDS)
+        _download_last_video(WHATSAPP_SESSION, scene_path)
+    except PipelineError as e:
+        msg = str(e)
+        # Daemon colgado / sesion muerta: no es un fallo de la animacion, dejar
+        # que el reintento por etapa la resetee en vez de seguir a ciegas.
+        if fallback_path is None or "10060" in msg or "no respondio a tiempo" in msg:
+            raise
+        logger.warning(
+            "clip %s: animacion fallo, se usa la imagen estatica: %s", scene_path.name, msg
+        )
+        scene_path.unlink(missing_ok=True)
+        return fallback_path
 
-    _download_last_video(WHATSAPP_SESSION, scene_path)
+    if fallback_path is not None:
+        fallback_path.unlink(missing_ok=True)
+    return scene_path
 
 
 def _generate_clips_whatsapp(story: dict, download_dir: Path, unattended: bool, start_index: int,
@@ -943,10 +1058,10 @@ def _generate_clips_whatsapp(story: dict, download_dir: Path, unattended: bool, 
         scene_path = download_dir / f"scene_{i:03d}.{ext}"
         report(f"[{i + 1}/{len(story['prompts'])}] Imagen {item['index']}: {item['frase'][:60]}...")
 
-        _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(i == start_index),
-                                     generate_video=generate_video)
-        generated.append(str(scene_path))
-        report(f"  -> guardado en {scene_path}")
+        saved_path = _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(i == start_index),
+                                                  generate_video=generate_video)
+        generated.append(str(saved_path))
+        report(f"  -> guardado en {saved_path}")
 
     return generated
 
@@ -1132,6 +1247,24 @@ def generate_qwen_image(
     return str(dest_path)
 
 
+def generate_qwen_image_in_session(
+    session: str, prompt: str, dest_path: Path, image_ratio: str = None
+) -> str:
+    """Genera una imagen en la sesion YA ABIERTA de Qwen (mismo chat en curso,
+    p.ej. el de un Project que recien devolvio un IMAGE_PROMPT) -- variante de
+    generate_qwen_image que no abre sesion nueva ni asume QWEN_SESSION, para
+    no perder el contexto del chat/Project actual."""
+    with _get_session_lock(session):
+        baseline_srcs = _get_qwen_image_srcs(session)
+        _select_qwen_image_mode(session)
+        if image_ratio:
+            _select_qwen_image_ratio(session, image_ratio)
+        _send_chat_message(session, prompt, textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
+        image_url = _wait_for_qwen_image(session, baseline_srcs, QWEN_IMAGE_TIMEOUT_SECONDS)
+    _download_url(image_url, dest_path)
+    return str(dest_path)
+
+
 _QWEN_MODE_CHIP_NAMES = ("Create Image", "Create Video", "Web search", "Deep Research", "Web Dev", "Slides")
 
 
@@ -1174,7 +1307,24 @@ def _get_last_ai_text_reply(session: str, skip_text: "str | None" = None) -> "st
     A veces Qwen ofrece elegir entre dos respuestas ("Which response do you
     prefer? Select one to continue.") en vez de contestar directo -- ahi se
     elige siempre la primera (clickear su "I prefer this response") para
-    colapsarlo a una respuesta normal y seguir con el mismo caso de abajo."""
+    colapsarlo a una respuesta normal y seguir con el mismo caso de abajo.
+
+    `skip_text` (el mensaje que mandamos nosotros) NO se puede anclar buscando
+    su texto completo como un nodo `StaticText "..."`: confirmado en vivo que
+    (a) el snapshot escapa los saltos de linea embebidos como el string
+    literal `\n` (dos caracteres, backslash+n), no como newline real, asi que
+    comparar contra el texto original (con newlines reales) nunca matchea; y
+    (b) el mensaje del usuario se renderiza como UN solo nodo combinado con
+    todo el texto adentro, pero la UI de Qwen despues lo colapsa a mostrar
+    solo su primera linea (se confirmo que se queda asi incluso ya con la
+    respuesta completa) -- exigir que el anchor sea un nodo entero (con
+    comillas de cierre justo despues) tampoco funciona en ninguno de los dos
+    estados. Por eso se ancla con la PRIMERA linea no vacia de skip_text como
+    substring suelto (sin exigir limite de nodo): matchea tanto si el mensaje
+    quedo colapsado a esa sola linea como si todavia esta completo en un nodo
+    combinado (en ese caso el regex de abajo simplemente no vuelve a matchear
+    el resto del propio texto del usuario, porque no arranca con el prefijo
+    literal `StaticText "`, y sigue de largo hasta el proximo nodo real)."""
     snap = _run_agent_browser(["snapshot"], session)
 
     if "Which response do you prefer" in snap:
@@ -1186,7 +1336,10 @@ def _get_last_ai_text_reply(session: str, skip_text: "str | None" = None) -> "st
         snap = _run_agent_browser(["snapshot"], session)
 
     if skip_text:
-        anchor = f'StaticText "{skip_text}"'
+        first_line = next(
+            (line for line in skip_text.strip().splitlines() if line.strip()), skip_text.strip()
+        )
+        anchor = first_line.replace("\\", "\\\\").replace('"', '\\"')
         idx = snap.rfind(anchor)
         if idx == -1:
             return None
@@ -1232,6 +1385,7 @@ def _wait_for_qwen_text_reply(
         if time.time() - last_report > 30:
             print("  ...esperando respuesta de texto de Qwen (sigo vivo, aun no aparece)")
             last_report = time.time()
+    _save_failure_diagnostics(session, "qwen_text_timeout")
     raise PipelineError("Timeout esperando la respuesta de texto de Qwen.")
 
 
@@ -1397,13 +1551,13 @@ def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, sta
         generated_local = []
         for n, (i, item) in enumerate(items):
             scene_path = download_dir / f"scene_{i:03d}.{ext}"
-            if scene_path.exists():
+            if scene_path.exists() or scene_path.with_suffix(".jpg").exists():
                 continue  # ya generado por una corrida anterior (reintento parcial)
             report_safe(f"[whatsapp] [{i + 1}/{len(story['prompts'])}] Imagen {item['index']}: {item['frase'][:60]}...")
-            _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(n == 0),
-                                        generate_video=generate_video)
-            generated_local.append(str(scene_path))
-            report_safe(f"  [whatsapp] -> guardado en {scene_path}")
+            saved_path = _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(n == 0),
+                                                     generate_video=generate_video)
+            generated_local.append(str(saved_path))
+            report_safe(f"  [whatsapp] -> guardado en {saved_path}")
         return generated_local
 
     def worker_qwen(items: list) -> list:

@@ -13,12 +13,16 @@ dentro de cada funcion que las usa.
 
 import json
 import logging
+import msvcrt
+import re
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from PIL import Image
 
 import auto_pipeline
 import video_maker
@@ -30,7 +34,21 @@ import job_store
 import seo_optimizer
 from tts_engine import text_to_speech_long, DEFAULT_VOICE, BEDTIME_PRESET
 
+# logging.getLogger(__name__) ("batch_pipeline") no tenia ningun handler propio
+# ni de un ancestro configurado (el logger "pipeline" de auto_pipeline.py es un
+# hermano, no un padre -- los nombres no anidan solo por compartir tema). Sin
+# handler, warning()/exception() caian al lastResort de stdlib (stderr, se
+# pierde si nadie mira la consola de app.py) -- por eso los reintentos y
+# errores reales de _run_stage_with_retry nunca aparecian en logs/pipeline.log
+# aunque estuvieran pasando, dando la falsa impresion de un pipeline colgado.
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    _LOG_DIR = Path(__file__).parent / "logs"
+    _LOG_DIR.mkdir(exist_ok=True)
+    _handler = logging.FileHandler(_LOG_DIR / "pipeline.log", encoding="utf-8")
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 JOB_STORE_NAME = "batch_projects"
 TICK_SECONDS = 60
@@ -54,9 +72,50 @@ BROWSER_STAGE_RETRY_ATTEMPTS = 3
 LOCAL_STAGE_RETRY_ATTEMPTS = 2
 STAGE_RETRY_BACKOFF_SECONDS = 3
 
+# Reintentos automaticos de generacion/publicacion a nivel de video del lote
+# (distinto de BROWSER_STAGE_RETRY_ATTEMPTS/LOCAL_STAGE_RETRY_ATTEMPTS, que son
+# reintentos dentro de una misma corrida de _generate_batch_video). Este limite
+# cubre corridas completas: cuantas veces un video puede volver solo a
+# pending/ready antes de quedar en error/publish_error terminal.
+MAX_AUTO_RETRIES = 3
+
 _TRANSIENT_ERROR_MARKERS = (
     "10060", "10061", "no respondio a tiempo", "timeout esperando",
+    "no pude descargar el clip", "no pude descargar la imagen",
 )
+
+# Auto-sanado de videos que agotaron MAX_AUTO_RETRIES y quedaron en "error":
+# las caidas de Qwen/WhatsApp duran horas (17/9: ~3h de timeouts) y las 3
+# corridas se gastan en minutos, asi que sin esto el video queda muerto hasta
+# que alguien aprieta "reintentar". Cada ciclo espera el doble del anterior
+# (30min, 1h, 2h, 4h) para no martillar un servicio caido.
+HEAL_COOLDOWN_SECONDS = 1800
+MAX_HEAL_CYCLES = 4
+# Ademas de los transitorios: fallos de proveedor que un nuevo guion/prompt
+# suele resolver. NO incluye "no encontre el proyecto" (nombre mal puesto:
+# reintentar no lo arregla) ni errores de parseo.
+_HEALABLE_EXTRA_MARKERS = (
+    "meta ai no pudo generar", "algunas sesiones de qwen",
+    "no encontre el boton 'meta ai'", "no encontre (habilitado)",
+)
+
+
+def _is_healable_error(message: "str | None") -> bool:
+    msg = (message or "").lower()
+    return any(m in msg for m in _TRANSIENT_ERROR_MARKERS + _HEALABLE_EXTRA_MARKERS)
+
+
+def _reset_session(session: str) -> None:
+    """hard_reset_browser_session + log del resultado (antes se descartaba, y
+    nunca se sabia si la sesion quedo sin login tras el reset)."""
+    result = auto_pipeline.hard_reset_browser_session(session)
+    status = result.get("status", {})
+    log = logger.info if result.get("ok") and status.get("state") == "ok" else logger.warning
+    log(
+        "batch: reset de sesion %s -> estado=%s (%s) daemon_matado=%s chromes_huerfanos=%s",
+        session, status.get("state"), status.get("message"),
+        result.get("hard_killed"), result.get("orphans_killed"),
+    )
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -89,7 +148,7 @@ def _run_stage_with_retry(fn, *, attempts: int, on_retry=None, stage_label: str)
             if on_retry:
                 on_retry(attempt)
             time.sleep(STAGE_RETRY_BACKOFF_SECONDS)
-    raise type(last_exc)(f"tras {attempts} intento(s): {last_exc}") from last_exc
+    raise type(last_exc)(f"tras {attempt} intento(s): {last_exc}") from last_exc
 
 _lock = threading.Lock()  # protege el read-modify-write de batch_projects.json
 # Serializa las publicaciones reales (upload + gap-check + registro) de todo
@@ -166,12 +225,18 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int]) -> lis
 
 def create_project(name: str, qwen_project: str, total_videos: int, per_day: int,
                     networks: dict, video_settings: dict,
-                    trigger_message: str = "dame una historia") -> dict:
+                    trigger_message: str = "dame una historia",
+                    content_type: str = "video") -> dict:
     """networks = {"youtube": bool, "facebook": {"page_id": str} | None,
     "instagram": {"page_id": str} | None}. trigger_message es el mensaje que
     se manda al Project de Qwen para pedir la historia -- distintos Projects
     pueden esperar frases distintas segun como este configurado su system
-    prompt."""
+    prompt.
+
+    content_type: "video" (default, el pipeline completo guion+clips+audio+
+    render) o "gaming_image" (un solo post de imagen 1:1 + caption, ver
+    _generate_batch_image_post/_publish_batch_image_post) -- nunca YouTube
+    para este ultimo, sin importar lo que venga en `networks`."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     best_hour = _best_hour_for_networks(networks)
@@ -180,12 +245,13 @@ def create_project(name: str, qwen_project: str, total_videos: int, per_day: int
     project = {
         "id": uuid.uuid4().hex[:10],
         "name": name,
+        "type": content_type,
         "qwen_project": qwen_project,
         "trigger_message": trigger_message,
         "total_videos": total_videos,
         "per_day": per_day,
         "networks": networks,
-        "video_settings": video_settings,
+        "video_settings": video_settings or {},
         "status": "running",
         "created_at": datetime.now().isoformat(),
         "videos": [
@@ -198,6 +264,9 @@ def create_project(name: str, qwen_project: str, total_videos: int, per_day: int
                 "published_at": {},
                 "error": None,
                 "stage": None,
+                "gen_attempts": 0,
+                "publish_attempts": 0,
+                "last_publish_auth_error": False,
             }
             for i in range(total_videos)
         ],
@@ -268,6 +337,32 @@ def retry_video(project_id: str, index: int) -> bool:
         video["status"] = "pending"
         video["error"] = None
         video["stage"] = None
+        video["gen_attempts"] = 0
+        video["heal_cycles"] = 0
+        _save(projects)
+    return True
+
+
+def retry_publish_video(project_id: str, index: int) -> bool:
+    """Reintenta solo la publicacion de un video que ya se genero (video_path
+    intacto) pero fallo publicando en alguna red: lo vuelve a "ready" sin
+    tocar published_at, asi el proximo intento (_publish_batch_video) salta
+    las redes que ya tuvieron exito y reintenta solo las que fallaron. NO usa
+    "pending"/retry_video porque eso dispararia una regeneracion completa
+    desde cero (nuevo guion, nuevas imagenes) para un video que solo fallo al
+    subirse, no al crearse."""
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return False
+        video = next((v for v in project["videos"] if v["index"] == index), None)
+        if not video or video["status"] != "publish_error":
+            return False
+        video["status"] = "ready"
+        video["error"] = None
+        video["publish_attempts"] = 0
+        video["last_publish_auth_error"] = False
         _save(projects)
     return True
 
@@ -304,6 +399,63 @@ def _claim_for_publish(project_id: str, index: int) -> bool:
         return True
 
 
+def _record_generation_failure(project_id: str, index: int, exc: Exception) -> None:
+    """Fallo de una corrida completa de generacion: vuelve a "pending" hasta
+    agotar MAX_AUTO_RETRIES; agotado, queda en "error" con `error_at` para que
+    _requeue_healable_errors lo levante despues del cooldown."""
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        v["gen_attempts"] = v.get("gen_attempts", 0) + 1
+        v["error"] = str(exc)
+        if v["gen_attempts"] < MAX_AUTO_RETRIES:
+            v["status"] = "pending"
+        else:
+            v["status"] = "error"
+            v["error_at"] = datetime.now().isoformat()
+        v["stage"] = None
+        _save(projects)
+
+
+def _requeue_healable_errors() -> None:
+    """Vuelve a "pending" los videos en "error" cuyo fallo pinta de caida
+    externa transitoria (ver _is_healable_error), respetando un cooldown
+    exponencial y MAX_HEAL_CYCLES. Un video sin `error_at` (quedo en error
+    antes de existir este mecanismo) es elegible de inmediato."""
+    now = datetime.now()
+    with _lock:
+        projects = _load()
+        changed = False
+        for project in projects.values():
+            if project.get("status") != "running":
+                continue
+            for v in project.get("videos", []):
+                if v["status"] != "error" or not _is_healable_error(v.get("error")):
+                    continue
+                cycles = v.get("heal_cycles", 0)
+                if cycles >= MAX_HEAL_CYCLES:
+                    continue
+                error_at = v.get("error_at")
+                if error_at:
+                    try:
+                        wait = timedelta(seconds=HEAL_COOLDOWN_SECONDS * 2 ** cycles)
+                        if now - datetime.fromisoformat(error_at) < wait:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                v["status"] = "pending"
+                v["gen_attempts"] = 0
+                v["heal_cycles"] = cycles + 1
+                v["stage"] = None
+                changed = True
+                logger.info(
+                    "batch %s item %d: auto-reintento %d/%d tras error: %s",
+                    project["id"], v["index"], cycles + 1, MAX_HEAL_CYCLES, (v.get("error") or "")[:120],
+                )
+        if changed:
+            _save(projects)
+
+
 def _generate_batch_video(project_id: str, index: int) -> None:
     import app
 
@@ -314,6 +466,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             return
         project["videos"][index]["status"] = "generating"
         project["videos"][index]["stage"] = "guion"
+        project["videos"][index]["error"] = None
         _save(projects)
 
     vs = project["video_settings"]
@@ -329,9 +482,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 trigger_message=trigger_message,
             ),
             attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-            on_retry=lambda attempt: auto_pipeline.hard_reset_browser_session(
-                auto_pipeline.QWEN_BATCH_SESSION
-            ),
+            on_retry=lambda attempt: _reset_session(auto_pipeline.QWEN_BATCH_SESSION),
             stage_label="guion",
         )
         script_text = auto_pipeline.extract_script(story_text)
@@ -356,7 +507,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             _do_generate_clips,
             attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
             on_retry=(
-                (lambda attempt: auto_pipeline.hard_reset_browser_session(images_session))
+                (lambda attempt: _reset_session(images_session))
                 if images_session else None
             ),
             stage_label="imagenes",
@@ -414,12 +565,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
 
     except Exception as e:
         logger.exception("batch %s video %d: fallo la generacion", project_id, index)
-        with _lock:
-            projects = _load()
-            v = projects[project_id]["videos"][index]
-            v["status"] = "error"
-            v["error"] = str(e)
-            _save(projects)
+        _record_generation_failure(project_id, index, e)
         return
 
     with _lock:
@@ -434,6 +580,101 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         v["story_id"] = story_id
         v["video_path"] = str(video_path)
         v["script_text"] = script_text
+        v["gen_attempts"] = 0
+        v["heal_cycles"] = 0
+        _save(projects)
+
+
+GAMING_IMAGE_RATIO = "1:1"
+
+
+def _generate_batch_image_post(project_id: str, index: int) -> None:
+    import app
+
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return
+        project["videos"][index]["status"] = "generating"
+        project["videos"][index]["stage"] = "idea"
+        project["videos"][index]["error"] = None
+        _save(projects)
+
+    story_id = f"batch_img_{project_id}_{index:03d}"
+    trigger_message = project.get("trigger_message", "dame el próximo post gaming") + _gaming_history_block()
+
+    try:
+        reply = _run_stage_with_retry(
+            lambda: auto_pipeline.generate_story_from_qwen_project(
+                project["qwen_project"],
+                trigger_message=trigger_message,
+            ),
+            attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+            on_retry=lambda attempt: _reset_session(auto_pipeline.QWEN_BATCH_SESSION),
+            stage_label="idea",
+        )
+        post = _parse_gaming_post(reply)
+
+        _set_stage(project_id, index, "imagen")
+        dest_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / "cover.jpg"
+        image_provider = project.get("video_settings", {}).get("image_provider", "qwen")
+
+        def _do_generate_image():
+            with app._clipgen_lock:
+                if image_provider == "whatsapp":
+                    story = {"prompts": [{
+                        "index": 0,
+                        "prompt": post["image_prompt"],
+                        "frase": post.get("hook") or post["image_prompt"],
+                    }]}
+                    generated = auto_pipeline.generate_clips(
+                        story, dest_dir, unattended=True, start_index=0,
+                        provider="whatsapp", generate_video=False,
+                    )
+                    Path(generated[0]).replace(dest_path)
+                else:
+                    auto_pipeline.generate_qwen_image_in_session(
+                        auto_pipeline.QWEN_BATCH_SESSION,
+                        post["image_prompt"],
+                        dest_path,
+                        image_ratio=GAMING_IMAGE_RATIO,
+                    )
+
+        _run_stage_with_retry(
+            _do_generate_image,
+            attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+            on_retry=lambda attempt: _reset_session(
+                auto_pipeline.WHATSAPP_SESSION if image_provider == "whatsapp" else auto_pipeline.QWEN_BATCH_SESSION
+            ),
+            stage_label="imagen",
+        )
+        _normalize_cover_image(dest_path)
+    except Exception as e:
+        logger.exception("batch %s post %d: fallo la generacion", project_id, index)
+        _record_generation_failure(project_id, index, e)
+        return
+
+    _append_gaming_history({
+        "project_id": project_id,
+        "index": index,
+        "hook": post["hook"],
+        "idea": post["idea"],
+        "created_at": datetime.now().isoformat(),
+    })
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        v["status"] = "ready"
+        v["stage"] = None
+        v["story_id"] = story_id
+        v["video_path"] = str(dest_path)
+        v["idea"] = post["idea"]
+        v["caption"] = post["caption"]
+        v["gen_attempts"] = 0
+        v["heal_cycles"] = 0
         _save(projects)
 
 
@@ -459,6 +700,90 @@ _NETWORK_PUBLISHED_PATH_ATTR = {
 }
 
 
+_GAMING_POST_RE = re.compile(
+    r"IDEA:\s*(.+?)\s*HOOK:\s*(.+?)\s*IMAGE_PROMPT:\s*(.+?)\s*CAPTION:\s*(.+)",
+    re.DOTALL,
+)
+
+
+def _parse_gaming_post(text: str) -> dict:
+    """Parsea la respuesta del Project de Qwen dedicado a posts gaming
+    (formato IDEA/HOOK/IMAGE_PROMPT/CAPTION, ver plan). Saca los `**` antes
+    de parsear -- Qwen suele resaltar los labels en negrita, igual que
+    auto_pipeline._parse_story con el guion."""
+    cleaned = text.replace("**", "")
+    m = _GAMING_POST_RE.search(cleaned)
+    if not m:
+        raise auto_pipeline.PipelineError(
+            "La respuesta de Qwen no vino en el formato esperado "
+            "(IDEA/HOOK/IMAGE_PROMPT/CAPTION)."
+        )
+    idea, hook, image_prompt, caption = (g.strip() for g in m.groups())
+    return {"idea": idea, "hook": hook, "image_prompt": image_prompt, "caption": caption}
+
+
+GAMING_HISTORY_STORE_NAME = "gaming_post_history"
+GAMING_HISTORY_LIMIT = 15  # entradas que se listan en el prompt
+GAMING_HISTORY_MAX = 60  # entradas guardadas antes de podar
+
+
+def _load_gaming_history() -> list:
+    return job_store.load(GAMING_HISTORY_STORE_NAME).get("entries", [])
+
+
+def _append_gaming_history(entry: dict) -> None:
+    with _lock:
+        store = job_store.load(GAMING_HISTORY_STORE_NAME)
+        entries = store.get("entries", [])
+        entries.append(entry)
+        store["entries"] = entries[-GAMING_HISTORY_MAX:]
+        job_store.save(GAMING_HISTORY_STORE_NAME, store)
+
+
+def _gaming_history_block(limit: int = GAMING_HISTORY_LIMIT) -> str:
+    entries = _load_gaming_history()[-limit:]
+    if not entries:
+        return ""
+    lines = "\n".join(f"- {e['hook']}" for e in entries)
+    return (
+        "\n\nNo repitas ninguna de estas ideas/hooks/conceptos visuales ya "
+        f"usados en posts anteriores:\n{lines}"
+    )
+
+
+def _normalize_cover_image(path: Path) -> None:
+    """Red de seguridad independiente de lo que _select_qwen_image_ratio
+    ("1:1") realmente haya producido en vivo: recorta al centro a cuadrado
+    real y re-guarda como JPEG."""
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        w, h = img.size
+        if w != h:
+            side = min(w, h)
+            left = (w - side) // 2
+            top = (h - side) // 2
+            img = img.crop((left, top, left + side, top + side))
+        img.save(path, "JPEG", quality=90)
+
+
+def get_public_base_url() -> Optional[str]:
+    return job_store.load("batch_settings").get("public_base_url") or None
+
+
+def set_public_base_url(url: str) -> None:
+    with _lock:
+        settings = job_store.load("batch_settings")
+        settings["public_base_url"] = (url or "").strip().rstrip("/")
+        job_store.save("batch_settings", settings)
+
+
+def _public_image_url(project_id: str, index: int) -> Optional[str]:
+    base = get_public_base_url()
+    if not base:
+        return None
+    return f"{base}/api/batch/cover/{project_id}/{index}"
+
+
 def _build_publish_content(script_text: str, fallback_title: str) -> dict:
     """Genera titulo/descripcion/tags igual que el flujo manual (mismas
     funciones que usan /api/seo/suggest y /api/seo/suggest-social) para que
@@ -480,51 +805,37 @@ def _build_publish_content(script_text: str, fallback_title: str) -> dict:
     }
 
 
-def _publish_batch_video(project_id: str, index: int) -> None:
-    import app
-
+def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
+    """Nucleo compartido de publicacion (gap-check + registro + resolucion de
+    estado final), agnostico de que red hace que -- reusado por
+    _publish_batch_video (video, hasta 3 redes) y _publish_batch_image_post
+    (imagen, solo Facebook/Instagram). `publishers` mapea network -> callable
+    (video, page_id) -> result dict {"ok": bool, "error": str, ...}."""
     projects = _load()
     project = projects.get(project_id)
     if not project:
         return
     video = project["videos"][index]
     networks = project["networks"]
-    video_path = video["video_path"]
-    content = _build_publish_content(video.get("script_text", ""), project["name"])
-    title = content["title"]
+    import app
 
     rescheduled = False
-    for network, path_attr in _NETWORK_PUBLISHED_PATH_ATTR.items():
+    error_parts = []
+    any_auth_error = False
+    for network, publish_fn in publishers.items():
         cfg = networks.get(network)
         if not cfg or video["published_at"].get(network):
             continue
-        published_path = getattr(app, path_attr)
+        published_path = getattr(app, _NETWORK_PUBLISHED_PATH_ATTR[network])
         page_id = cfg.get("page_id") if isinstance(cfg, dict) else None
         with _publish_lock:
             if not _gap_ok(published_path):
                 rescheduled = True
                 continue
             try:
-                if network == "youtube":
-                    result = youtube_publisher.publish_video(
-                        video_path, title, content["yt_description"], "unlisted", content["yt_tags"], True
-                    )
-                    if result.get("ok"):
-                        app._record_published_video(result["video_id"], title, Path(video_path).name)
-                elif network == "facebook":
-                    result = facebook_publisher.publish_video(
-                        video_path, title, content["social_description"], page_id=page_id
-                    )
-                    if result.get("ok"):
-                        app._record_published_facebook(result["video_id"], title, Path(video_path).name, page_id)
-                else:
-                    result = instagram_publisher.publish_video(
-                        video_path, title, content["social_description"], page_id=page_id
-                    )
-                    if result.get("ok"):
-                        app._record_published_instagram(result["media_id"], title, Path(video_path).name, page_id)
+                result = publish_fn(video, page_id)
             except Exception as e:
-                logger.exception("batch %s video %d: fallo publicando en %s", project_id, index, network)
+                logger.exception("batch %s item %d: fallo publicando en %s", project_id, index, network)
                 result = {"ok": False, "error": str(e)}
 
             with _lock:
@@ -533,15 +844,36 @@ def _publish_batch_video(project_id: str, index: int) -> None:
                 if result.get("ok"):
                     v["published_at"][network] = datetime.now().isoformat()
                 else:
-                    v["error"] = f"{network}: {result.get('error')}"
+                    error_parts.append(f"{network}: {result.get('error')}")
+                    v["error"] = "; ".join(error_parts)
+                    if result.get("auth_error"):
+                        any_auth_error = True
                 _save(projects)
 
     with _lock:
         projects = _load()
         v = projects[project_id]["videos"][index]
-        active_networks = [n for n in _NETWORK_PUBLISHED_PATH_ATTR if networks.get(n)]
+        active_networks = [n for n in publishers if networks.get(n)]
         if active_networks and all(v["published_at"].get(n) for n in active_networks):
             v["status"] = "published"
+            v["error"] = None
+            v["publish_attempts"] = 0
+            v["last_publish_auth_error"] = False
+        elif error_parts and any_auth_error:
+            # Token vencido/cuenta baneada: reintentar no arregla nada, va
+            # directo a terminal sin gastar el presupuesto de auto-retry.
+            v["status"] = "publish_error"
+            v["last_publish_auth_error"] = True
+        elif error_parts:
+            # Fallo real (no solo espera de espaciado): auto-reintenta hasta
+            # MAX_AUTO_RETRIES volviendo a "ready" (el proximo tick reintenta
+            # solo las redes que fallaron); agotado el limite, queda visible
+            # con boton de reintentar (ver retry_publish_video).
+            v["publish_attempts"] = v.get("publish_attempts", 0) + 1
+            if v["publish_attempts"] < MAX_AUTO_RETRIES:
+                v["status"] = "ready"
+            else:
+                v["status"] = "publish_error"
         else:
             v["status"] = "ready"
             if rescheduled:
@@ -549,7 +881,82 @@ def _publish_batch_video(project_id: str, index: int) -> None:
         _save(projects)
 
 
+def _publish_batch_video(project_id: str, index: int) -> None:
+    import app
+
+    project = get_project(project_id)
+    video = project["videos"][index]
+    content = _build_publish_content(video.get("script_text", ""), project["name"])
+    title = content["title"]
+
+    def _yt(v, page_id):
+        result = youtube_publisher.publish_video(
+            v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True
+        )
+        if result.get("ok"):
+            app._record_published_video(result["video_id"], title, Path(v["video_path"]).name)
+        return result
+
+    def _fb(v, page_id):
+        result = facebook_publisher.publish_video(
+            v["video_path"], title, content["social_description"], page_id=page_id
+        )
+        if result.get("ok"):
+            app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
+        return result
+
+    def _ig(v, page_id):
+        result = instagram_publisher.publish_video(
+            v["video_path"], title, content["social_description"], page_id=page_id
+        )
+        if result.get("ok"):
+            app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
+        return result
+
+    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig})
+
+
+def _publish_batch_image_post(project_id: str, index: int) -> None:
+    import app
+
+    project = get_project(project_id)
+    video = project["videos"][index]
+    caption = video.get("caption", "")
+
+    def _fb(v, page_id):
+        result = facebook_publisher.publish_photo(v["video_path"], caption, page_id=page_id)
+        if result.get("ok"):
+            app._record_published_facebook(result["post_id"], project["name"], Path(v["video_path"]).name, page_id)
+        return result
+
+    def _ig(v, page_id):
+        url = _public_image_url(project_id, index)
+        if not url:
+            return {"ok": False, "error": "Falta configurar la URL pública del Cloudflare Tunnel (pestaña Ajustes)."}
+        result = instagram_publisher.publish_photo(url, caption, page_id=page_id)
+        if result.get("ok"):
+            app._record_published_instagram(result["media_id"], project["name"], Path(v["video_path"]).name, page_id)
+        return result
+
+    _publish_networks(project_id, index, {"facebook": _fb, "instagram": _ig})  # nunca youtube
+
+
+def _generate_batch_item(project_id: str, index: int, content_type: str) -> None:
+    if content_type == "gaming_image":
+        _generate_batch_image_post(project_id, index)
+    else:
+        _generate_batch_video(project_id, index)
+
+
+def _publish_batch_item(project_id: str, index: int, content_type: str) -> None:
+    if content_type == "gaming_image":
+        _publish_batch_image_post(project_id, index)
+    else:
+        _publish_batch_video(project_id, index)
+
+
 def _batch_scheduler_tick() -> None:
+    _requeue_healable_errors()
     projects = _load()
     running = sorted(
         (p for p in projects.values() if p.get("status") == "running"),
@@ -567,7 +974,9 @@ def _batch_scheduler_tick() -> None:
             next_pending = next((v for v in project["videos"] if v["status"] == "pending"), None)
             if next_pending is not None:
                 threading.Thread(
-                    target=_generate_batch_video, args=(project["id"], next_pending["index"]), daemon=True
+                    target=_generate_batch_item,
+                    args=(project["id"], next_pending["index"], project.get("type", "video")),
+                    daemon=True,
                 ).start()
                 break
 
@@ -583,7 +992,11 @@ def _batch_scheduler_tick() -> None:
             except (TypeError, ValueError):
                 scheduled = now
             if scheduled <= now and _claim_for_publish(project_id, v["index"]):
-                threading.Thread(target=_publish_batch_video, args=(project_id, v["index"]), daemon=True).start()
+                threading.Thread(
+                    target=_publish_batch_item,
+                    args=(project_id, v["index"], project.get("type", "video")),
+                    daemon=True,
+                ).start()
 
         if videos and all(v["status"] == "published" for v in videos):
             with _lock:
@@ -632,12 +1045,65 @@ def _recover_stuck_videos() -> None:
             _save(projects)
 
 
+_SCHEDULER_LOCK_PATH = Path("output/job_state/.scheduler.lock")
+_scheduler_lock_file = None  # referencia global: mantener el handle abierto sostiene el lock
+
+
+def _acquire_scheduler_lock() -> bool:
+    """Lock exclusivo de SO (no de threading.Lock, que solo protege dentro de
+    un mismo proceso) para que nunca haya 2 procesos con scheduler propio
+    escribiendo batch_projects.json a la vez -- eso rompe MAX_AUTO_RETRIES
+    (cada proceso lee/incrementa/escribe el contador sin ver al otro) y hace
+    que 2 llamadas a Qwen compartiendo la misma sesion de browser se pisen.
+    El SO libera el lock solo, sin codigo de cleanup, cuando el proceso muere
+    (crash, kill, cierre normal) -- asi un reinicio despues de matar el
+    proceso viejo a la fuerza recupera el lock automaticamente.
+
+    Reintenta hasta 30s antes de rendirse: en un reinicio manual (cerrar la
+    terminal vieja y lanzar una nueva) se vio en la practica que el proceso
+    viejo puede seguir vivo varios segundos de mas mientras termina de
+    cerrarse (la terminal/IDE tarda en matarlo del todo) -- 5s de margen no
+    alcanzo y el proceso nuevo se quedaba sin scheduler para siempre (hasta
+    el proximo reinicio) aunque el viejo terminara muriendo un instante
+    despues. 30s es un costo de arranque unico y aceptable; si pasado ese
+    margen el lock sigue tomado, recien ahi es un segundo proceso de verdad
+    corriendo en paralelo."""
+    global _scheduler_lock_file
+    _SCHEDULER_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    attempts = 60
+    for attempt in range(attempts):
+        f = open(_SCHEDULER_LOCK_PATH, "a+")
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            f.close()
+            if attempt < attempts - 1:
+                time.sleep(0.5)
+                continue
+            return False
+        _scheduler_lock_file = f
+        return True
+    return False
+
+
 def start_scheduler() -> None:
     """Arranca el loop del scheduler en un hilo daemon unico (llamar una sola
     vez al iniciar app.py). Relee batch_projects.json en cada vuelta: un
     reinicio del server simplemente retoma desde el ultimo estado guardado,
     salvo los videos que hayan quedado "generating" de la corrida anterior
-    (ver _recover_stuck_videos)."""
+    (ver _recover_stuck_videos).
+
+    Si otro proceso ya tiene el lock de scheduler tomado (ver
+    _acquire_scheduler_lock), este proceso NO arranca un segundo loop -- el
+    dashboard web sigue funcionando igual, solo que sin scheduler propio."""
+    if not _acquire_scheduler_lock():
+        logger.error(
+            "batch scheduler: ya hay otro proceso corriendo el scheduler de "
+            "lotes (lock tomado) -- este proceso NO va a arrancar un segundo "
+            "loop ni va a tocar batch_projects.json."
+        )
+        return
+
     _recover_stuck_videos()
 
     def loop():

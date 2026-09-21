@@ -21,6 +21,7 @@ import meta_auth
 GRAPH_API_VERSION = "v19.0"
 # Facebook usa un host aparte para subir video (no el graph.facebook.com normal).
 VIDEO_UPLOAD_URL = f"https://graph-video.facebook.com/{GRAPH_API_VERSION}/{{page_id}}/videos"
+PHOTO_UPLOAD_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{{page_id}}/photos"
 
 MIN_SCHEDULE_SECONDS = 10 * 60  # Facebook exige al menos 10 minutos en el futuro
 MAX_SCHEDULE_SECONDS = 75 * 24 * 60 * 60  # y como máximo 75 días
@@ -312,3 +313,60 @@ def publish_video(
         "video_id": video_id,
         "scheduled_time": scheduled_time.isoformat() if scheduled_time else None,
     }
+
+
+def publish_photo(
+    image_path: str,
+    caption: str,
+    page_id: Optional[str] = None,
+    scheduled_time: Optional[float] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """
+    Sube una imagen a la Página indicada -- POST directo con multipart
+    "source" (a diferencia del video no hace falta el protocolo reanudable,
+    una imagen entera en un solo request no choca con el límite que sí
+    afecta a los videos). Reusa meta_auth/_parse_response/_resolve_schedule
+    tal cual publish_video.
+
+    Returns:
+        {"ok": True, "post_id": str} si se publicó, o
+        {"ok": False, "error": str} si algo falló.
+    """
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return err
+
+    path = Path(image_path)
+    if not path.exists():
+        return {"ok": False, "error": f"No se encontró la imagen: {image_path}"}
+
+    token_check = meta_auth.validate(page_id)
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
+
+    scheduled_time, effective_ts = _resolve_schedule(scheduled_time)
+    data = {"access_token": access_token, "caption": caption}
+    if scheduled_time is not None:
+        data["published"] = "false"
+        data["scheduled_publish_time"] = str(int(scheduled_time.timestamp()))
+
+    notify = on_status or (lambda msg: None)
+    notify("Subiendo imagen a Facebook...")
+    try:
+        with open(path, "rb") as f:
+            response = _post_with_retry(
+                PHOTO_UPLOAD_URL.format(page_id=page_id),
+                data=data,
+                files={"source": f},
+                timeout=120,
+            )
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"No se pudo publicar la imagen en Facebook: {e}"}
+
+    payload, err = _parse_response(response)
+    if err:
+        return err
+
+    _save_next_slot(effective_ts + POST_SPACING_SECONDS)
+    return {"ok": True, "post_id": payload.get("post_id") or payload.get("id")}
