@@ -108,6 +108,7 @@ _HEALABLE_EXTRA_MARKERS = (
 # hook en pantalla, horario 20:00 sin lunes y anti-fatiga. Se guarda en
 # video_settings["copy_profile"] para no afectar a los demas proyectos.
 RESCUE_PROFILE = "rescate_animal"
+RESCUE_QWEN_PROJECT = "HISTORIAS"  # el perfil se activa solo en este proyecto (con YouTube)
 RESCUE_HISTORY_LIMIT = 8
 RESCUE_AI_LABEL = "Historia recreada con IA"
 _HOOK_TEXT_LINE = re.compile(r"^[ \t]*HOOK_TEXT:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
@@ -294,11 +295,24 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     return schedule
 
 
-def create_project(name: str, qwen_project: str, total_videos: int, per_day: int,
+def _next_project_name(projects: dict, qwen_project: str) -> str:
+    """Nombre automatico incremental: "<proyecto> <n>", con n = lotes que ya
+    hay de ese mismo Project de Qwen + 1 (ej. "historias 2")."""
+    same = sum(1 for p in projects.values() if p.get("qwen_project") == qwen_project)
+    return f"{qwen_project.lower()} {same + 1}"
+
+
+def create_project(qwen_project: str, total_videos: int, per_day: int,
                     networks: dict, video_settings: dict,
                     trigger_message: str = "dame una historia",
                     content_type: str = "video") -> dict:
-    """networks = {"youtube": bool, "facebook": {"page_id": str} | None,
+    """qwen_project es el nombre de la pagina elegida (igual al del Project de
+    Qwen); el nombre del lote se genera solo (_next_project_name).
+
+    El perfil rescate animal (Manual v3.2) se activa solo: proyecto
+    RESCUE_QWEN_PROJECT + YouTube entre las redes.
+
+    networks = {"youtube": bool, "facebook": {"page_id": str} | None,
     "instagram": {"page_id": str} | None}. trigger_message es el mensaje que
     se manda al Project de Qwen para pedir la historia -- distintos Projects
     pueden esperar frases distintas segun como este configurado su system
@@ -311,19 +325,26 @@ def create_project(name: str, qwen_project: str, total_videos: int, per_day: int
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     best_hour = _best_hour_for_networks(networks)
-    rescue = (video_settings or {}).get("copy_profile") == RESCUE_PROFILE
+    video_settings = dict(video_settings or {})
+    rescue = (
+        content_type == "video"
+        and qwen_project.strip().upper() == RESCUE_QWEN_PROJECT
+        and bool(networks.get("youtube"))
+    )
+    if rescue:
+        video_settings["copy_profile"] = RESCUE_PROFILE
     schedule = _compute_schedule(total_videos, per_day, best_hour, rescue=rescue)
 
     project = {
         "id": uuid.uuid4().hex[:10],
-        "name": name,
+        "name": "",  # se completa bajo el lock, con el conteo real de lotes
         "type": content_type,
         "qwen_project": qwen_project,
         "trigger_message": trigger_message,
         "total_videos": total_videos,
         "per_day": per_day,
         "networks": networks,
-        "video_settings": video_settings or {},
+        "video_settings": video_settings,
         "status": "running",
         "created_at": datetime.now().isoformat(),
         "videos": [
@@ -345,6 +366,7 @@ def create_project(name: str, qwen_project: str, total_videos: int, per_day: int
     }
     with _lock:
         projects = _load()
+        project["name"] = _next_project_name(projects, qwen_project)
         projects[project["id"]] = project
         _save(projects)
     return project

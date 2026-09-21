@@ -884,11 +884,6 @@ HTML = r"""<!DOCTYPE html>
       </p>
 
       <div class="field-label-row">
-        <label for="lote-nombre">Nombre del proyecto</label>
-      </div>
-      <input type="text" id="lote-nombre" placeholder="Ej: Historias de animales - tanda 1">
-
-      <div class="field-label-row" style="margin-top:14px">
         <label for="lote-type">Tipo de publicación</label>
       </div>
       <select id="lote-type">
@@ -905,11 +900,6 @@ HTML = r"""<!DOCTYPE html>
           <option value="whatsapp">WhatsApp / Meta IA</option>
         </select>
       </div>
-
-      <div class="field-label-row" style="margin-top:14px">
-        <label for="lote-qwen-project">Proyecto de Qwen (nombre exacto en el sidebar de Projects)</label>
-      </div>
-      <input type="text" id="lote-qwen-project" placeholder="Ej: HISTORIAS DE ANIMALES EMOCIONALES">
 
       <div class="field-label-row" style="margin-top:14px">
         <label for="lote-trigger-message">Mensaje inicial a Qwen (lo que espera ese Project para responder con el formato)</label>
@@ -939,8 +929,8 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
-      <div id="lote-page-wrap" style="display:none;margin-top:10px">
-        <label for="lote-page">Página de Facebook/Instagram</label>
+      <div id="lote-page-wrap" style="margin-top:10px">
+        <label for="lote-page">Página (su nombre es también el del Project de Qwen)</label>
         <select id="lote-page"></select>
       </div>
 
@@ -997,10 +987,6 @@ HTML = r"""<!DOCTYPE html>
           <option value="600" class="duration-long-option">10 minutos</option>
         </select>
 
-        <label class="checkbox-row" for="lote-rescue-profile">
-          <input type="checkbox" id="lote-rescue-profile">
-          Perfil rescate animal (filtro de seguridad, copy por red, rótulo de IA, 20:00 sin lunes)
-        </label>
         <label class="checkbox-row" for="lote-subtitles-enabled">
           <input type="checkbox" id="lote-subtitles-enabled" checked>
           Incluir subtítulos
@@ -1879,7 +1865,6 @@ async function loadLotePages() {
     const pages = (data.ok && data.pages) || [];
     const sel = $("lote-page");
     sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
-    $("lote-page-wrap").style.display = pages.length > 1 ? "" : "none";
   } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
 }
 
@@ -2066,8 +2051,6 @@ async function loteProjectAction(projectId, action) {
   loadLoteProjects();
 }
 
-$("lote-fb").addEventListener("change", () => { $("lote-page-wrap").style.display = ($("lote-fb").checked || $("lote-ig").checked) ? "" : "none"; });
-$("lote-ig").addEventListener("change", () => { $("lote-page-wrap").style.display = ($("lote-fb").checked || $("lote-ig").checked) ? "" : "none"; });
 $("lote-refresh-btn").addEventListener("click", loadLoteProjects);
 
 function updateDurationOptions(orientationId, durationId) {
@@ -2101,10 +2084,10 @@ updateLoteTypeVisibility();
 $("lote-create-btn").addEventListener("click", async () => {
   const btn = $("lote-create-btn");
   const statusEl = $("lote-create-status");
-  const name = $("lote-nombre").value.trim();
-  const qwenProject = $("lote-qwen-project").value.trim();
-  if (!name || !qwenProject) {
-    statusEl.innerHTML = `<div class="analytics-empty">Completá el nombre del proyecto y el proyecto de Qwen.</div>`;
+  const pageSel = $("lote-page");
+  const qwenProject = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
+  if (!qwenProject) {
+    statusEl.innerHTML = `<div class="analytics-empty">No hay páginas configuradas: el nombre de la página define el proyecto de Qwen.</div>`;
     return;
   }
   const contentType = $("lote-type").value;
@@ -2119,7 +2102,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     return;
   }
   const payload = {
-    name, qwen_project: qwenProject, type: contentType,
+    qwen_project: qwenProject, type: contentType,
     trigger_message: $("lote-trigger-message").value.trim()
       || (isGaming ? "dame el próximo post gaming" : "dame una historia"),
     total_videos: parseInt($("lote-total").value, 10) || 1,
@@ -2134,7 +2117,6 @@ $("lote-create-btn").addEventListener("click", async () => {
       subtitles_enabled: $("lote-subtitles-enabled").checked,
       animate_images: $("lote-animate-images").checked,
       generate_video_clips: $("lote-generate-video-clips").checked,
-      copy_profile: $("lote-rescue-profile").checked ? "rescate_animal" : null,
     },
   };
   btn.disabled = true;
@@ -2148,9 +2130,7 @@ $("lote-create-btn").addEventListener("click", async () => {
       statusEl.innerHTML = `<div class="analytics-empty">❌ ${_escapeHtml(data.error || "No se pudo crear el proyecto.")}</div>`;
       return;
     }
-    statusEl.innerHTML = `<div class="analytics-empty">✅ Proyecto "${_escapeHtml(name)}" creado.</div>`;
-    $("lote-nombre").value = "";
-    $("lote-qwen-project").value = "";
+    statusEl.innerHTML = `<div class="analytics-empty">✅ Proyecto "${_escapeHtml(data.project.name)}" creado.</div>`;
     $("lote-trigger-message").value = "";
     loadLoteProjects();
   } catch (e) {
@@ -4593,10 +4573,9 @@ def api_instagram_best_time():
 @app.route("/api/batch/create", methods=["POST"])
 def api_batch_create():
     data = request.get_json(force=True) or {}
-    name = (data.get("name") or "").strip()
     qwen_project = (data.get("qwen_project") or "").strip()
-    if not name or not qwen_project:
-        return jsonify({"ok": False, "error": "Falta el nombre del proyecto o el proyecto de Qwen."})
+    if not qwen_project:
+        return jsonify({"ok": False, "error": "Falta la página (su nombre es el del proyecto de Qwen)."})
     content_type = (data.get("type") or "video").strip()
     default_trigger = "dame el próximo post gaming" if content_type == "gaming_image" else "dame una historia"
     networks = data.get("networks") or {}
@@ -4604,7 +4583,6 @@ def api_batch_create():
         networks = {k: v for k, v in networks.items() if k != "youtube"}
     try:
         project = batch_pipeline.create_project(
-            name=name,
             qwen_project=qwen_project,
             total_videos=data.get("total_videos", 1),
             per_day=data.get("per_day", 1),
