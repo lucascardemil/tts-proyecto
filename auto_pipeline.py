@@ -567,6 +567,12 @@ def load_story_from_text(text: str, story_id: str) -> dict:
     return _parse_story(text, story_id=story_id)
 
 
+_TRAILING_SECTION_RE = re.compile(
+    r"\n[ \t]*#{0,3}[ \t]*(?:CAPTION|PERFORMANCE GOAL|SERIE POTENCIAL)\b",
+    re.IGNORECASE,
+)
+
+
 def _parse_story(text: str, story_id: str = None) -> dict:
     """Extrae guion y prompts de imagen del texto de la historia.
 
@@ -606,6 +612,9 @@ def _parse_story(text: str, story_id: str = None) -> dict:
         re.DOTALL | re.MULTILINE,
     ):
         idx, frase, prompt = match.groups()
+        # El ultimo bloque absorbe todo lo que Qwen agregue despues (caption,
+        # performance goal, serie potencial de los manuales v2): no es prompt.
+        prompt = _TRAILING_SECTION_RE.split(prompt)[0]
         prompts.append({
             "index": int(idx),
             "frase": frase.strip(),

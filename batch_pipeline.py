@@ -94,13 +94,14 @@ HEAL_COOLDOWN_SECONDS = 1800
 MAX_HEAL_CYCLES = 4
 # Ademas de los transitorios: fallos de proveedor que un nuevo guion/prompt
 # suele resolver. NO incluye "no encontre el proyecto" (nombre mal puesto:
-# reintentar no lo arregla) ni errores de parseo.
+# reintentar no lo arregla) ni errores de parseo, salvo respuestas sin prompts.
 _HEALABLE_EXTRA_MARKERS = (
     "meta ai no pudo generar", "algunas sesiones de qwen",
     "no encontre el boton 'meta ai'", "no encontre (habilitado)",
     "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
     "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
     "is covered by",  # overlay de carga (splash) tapando el clic en Qwen/WhatsApp: pasa solo
+    "no se encontraron prompts de imagen",  # Qwen a veces responde solo el guion: otra respuesta suele traerlos
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -823,6 +824,11 @@ _GAMING_POST_RE = re.compile(
 )
 
 
+_GAMING_TRAILING_RE = re.compile(
+    r"\n[ \t]*#{0,3}[ \t]*(?:PERFORMANCE GOAL|SERIE POTENT?IAL)\b", re.IGNORECASE
+)
+
+
 def _parse_gaming_post(text: str) -> dict:
     """Parsea la respuesta del Project de Qwen dedicado a posts gaming
     (formato IDEA/HOOK/IMAGE_PROMPT/CAPTION, ver plan). Saca los `**` antes
@@ -836,6 +842,9 @@ def _parse_gaming_post(text: str) -> dict:
             "(IDEA/HOOK/IMAGE_PROMPT/CAPTION)."
         )
     idea, hook, image_prompt, caption = (g.strip() for g in m.groups())
+    # El manual v2 pide PERFORMANCE GOAL y SERIE POTENTIAL tras el caption:
+    # son notas internas, no van al post.
+    caption = _GAMING_TRAILING_RE.split(caption)[0].strip()
     return {"idea": idea, "hook": hook, "image_prompt": image_prompt, "caption": caption}
 
 

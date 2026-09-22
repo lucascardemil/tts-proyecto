@@ -1,19 +1,21 @@
 # Instrucción para Project de Qwen "JUGADASEPICASVIDEOJUEGOS"
 
-Pegar tal cual en el campo de instrucciones del Project (chat.qwen.ai). Longitud: 975/1000 caracteres.
+Pegar tal cual en el campo de instrucciones del Project (chat.qwen.ai) y subir `Gaming-Covers-Workflow-V2-Mejorado.md` como archivo de conocimiento. Longitud: 821/1000 caracteres.
 
 ```
-Search for recent content from gaming-focused pages for inspiration without copying. If you cannot find a suitable idea, create an original one based on current gaming trends. Generate one professional, viral 1:1 square cover image that is highly visual, eye-catching, and uses very little text. Focus on a current or engaging gaming topic with strong potential for reactions, comments, and shares. Immediately after generating the image, provide the complete social media post copy in English for the same idea. Keep the post concise, engaging, and optimized for interaction. Include a clear gaming-related CTA, such as asking people to choose between options, share their opinion, react to gaming news, rate something, or answer a gaming question. Avoid repeating ideas, visual concepts, layouts, hooks, or post copy used previously. Format the reply exactly as: IDEA: .. HOOK: .. IMAGE_PROMPT: .. CAPTION: .. (plain text, no bold, this exact order, all 4 labels required).
+Search for recent gaming content for inspiration without copying; never reproduce an existing post. Pick one viral pattern: universal gamer moment, gamer terror, RPG betrayal, painful nostalgia, impossible debate, or news with an emotional angle. Generate one premium 1:1 AAA key art cover with a short English headline inside the image (2-5 words, with emotion), top center at 15-20% of the image, one focal point, a character with visible emotion, no collage, readable as a thumbnail. Then write the post caption in English, 200-300 characters, ending with a one-word CTA (e.g. Comment OLD or NEW). Avoid repeating ideas, visuals, hooks or captions. Follow the attached manual. Reply in plain text, no bold, exactly these 4 labels in this order, nothing after the caption: IDEA: .. HOOK: .. IMAGE_PROMPT: .. CAPTION: ..
 ```
 
-## Por qué el agregado
+## Por qué cada parte
 
-El código (`_parse_gaming_post`, `batch_pipeline.py:617-636`) exige respuesta con esos 4 labels literales, en ese orden, para poder separar idea/hook/prompt de imagen/caption. Sin esa instrucción, Qwen contesta en prosa libre y el parser falla siempre con:
+El código (`_parse_gaming_post`, `batch_pipeline.py`) exige respuesta con esos 4 labels literales, en ese orden, para separar idea/hook/prompt de imagen/caption. Sin esa instrucción, Qwen contesta en prosa libre y el parser falla con:
 
 `"La respuesta de Qwen no vino en el formato esperado (IDEA/HOOK/IMAGE_PROMPT/CAPTION)."`
 
-## Siguiente paso
+## Qué cambió en v2
 
-1. Pegar instrucción de arriba en el Project.
-2. Reintentar el video "TEST WHATSAPP IMG PROVIDER" (botón "Reintentar").
-3. Confirmar que pasa el paso "idea" y llega a generar imagen — recién ahí se puede probar la rama `image_provider=whatsapp`.
+- **Matriz de viralidad**: se elige un patrón (momento universal, terror del gamer, traición RPG, nostalgia, debate, noticia con ángulo emocional) en vez de arte bonito sin gancho.
+- **Headline**: 2-5 palabras en inglés con emoción, arriba al centro, 15-20 % de la imagen, legible en miniatura.
+- **Composición**: un solo foco, personaje con emoción visible, sin collage ni split-screen salvo debate.
+- **Caption**: 200-300 caracteres, termina con CTA de una palabra ("Comment OLD or NEW").
+- **"Nothing after the caption"**: el manual pide también PERFORMANCE GOAL y SERIE POTENTIAL; son notas internas. Si Qwen las agrega, `_parse_gaming_post` las corta del caption (`_GAMING_TRAILING_RE`) para que no se publiquen.
