@@ -586,7 +586,29 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         hook_text = ""
         if rescue:
             hook_text, story_text = _split_hook_text(story_text)
+        story = auto_pipeline.load_story_from_text(story_text, story_id)
+        visual_style = vs.get("visual_style")
+        if visual_style and visual_style != "realista":
+            for p in story["prompts"]:
+                p["prompt"] = auto_pipeline.apply_visual_style(p["prompt"], visual_style)
         script_text = auto_pipeline.extract_script(story_text)
+        if not script_text.strip():
+            # Algunos Projects de Qwen (ej. Macrame Creativo) no mandan un
+            # bloque "Guion" separado antes de "Imagen 1" -- la respuesta
+            # arranca directo en el primer bloque de imagen. extract_script
+            # devuelve "" en ese caso (nada que cortar antes de "Imagen 1")
+            # y el TTS fallaba con "Error al generar el audio" aunque la
+            # narracion completa SI estaba, repartida en el "Frase del
+            # guion" de cada bloque. Reconstruye el guion concatenando esas
+            # frases en orden -- es exactamente el texto que ya se muestra
+            # superpuesto en cada escena, asi que sigue narrando lo mismo.
+            script_text = " ".join(
+                p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])
+            )
+            logger.info(
+                "batch: guion vacio via extract_script, reconstruido desde %d frases de imagen (%d chars)",
+                len(story["prompts"]), len(script_text),
+            )
         script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:
             forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
@@ -595,7 +617,6 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                     "Guion rechazado por el filtro de seguridad de contenido "
                     f"(vocabulario de daño explicito o de shock): {', '.join(forbidden)}"
                 )
-        story = auto_pipeline.load_story_from_text(story_text, story_id)
         clips_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
         # Historia nueva: los clips de un intento anterior (reinicio de app.py,
         # video vuelto a "pending") son de OTRA historia. resume_index solo

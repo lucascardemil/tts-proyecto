@@ -113,6 +113,31 @@ def _soften_prompt(prompt: str) -> str:
     if softened != prompt:
         logger.info("prompt suavizado (vocabulario grafico removido): %.80s...", softened)
     return softened
+
+
+_PHOTOREALISTIC_RE = re.compile(r"\bphotorealistic\b", re.IGNORECASE)
+VISUAL_STYLE_PROMPTS = {
+    "pixar3d": (
+        "cinematic Pixar-style 3D animation, dramatic and emotionally mature tone, "
+        "realistic proportions and lighting, not cute, not whimsical, not childish"
+    ),
+}
+
+
+def apply_visual_style(prompt: str, style: str) -> str:
+    """Reemplaza el estilo visual del prompt de imagen (por defecto
+    "photorealistic", fijo en la instruccion del Project de Qwen) por el
+    estilo elegido en el lote. Si el prompt no trae la palabra "photorealistic"
+    (Qwen cambia la redaccion), antepone el estilo igual, para no depender
+    del texto exacto que devuelva Qwen."""
+    style_text = VISUAL_STYLE_PROMPTS.get(style)
+    if not style_text:
+        return prompt
+    if _PHOTOREALISTIC_RE.search(prompt):
+        return _PHOTOREALISTIC_RE.sub(style_text, prompt)
+    return f"{style_text}, {prompt}"
+
+
 WHATSAPP_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -598,10 +623,18 @@ def _parse_story(text: str, story_id: str = None) -> dict:
     # antes de parsear, ya que nunca es contenido real del guion/prompt.
     text = text.replace("**", "")
 
-    HEADING = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*(\d+)[ \t]*$"
-    HEADING_NOCAP = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*\d+[ \t]*$"
+    # El numero de imagen puede venir solo al final de su linea ("Imagen 5\n")
+    # o, cuando Qwen comprime el bloque en una sola linea con "/" como
+    # separador ("Imagen 5 / Frase del guion: ... / Prompt: ..."), seguido
+    # de espacios y una "/". Antes solo se aceptaba fin de linea (\Z/$) y
+    # ese segundo formato (confirmado en vivo, alterna con el primero para
+    # el mismo Project de Qwen) hacia fallar el regex entero -> "No se
+    # encontraron prompts de imagen" aunque la respuesta viniera completa.
+    _HEADING_END = r"(?=[ \t]*(?:$|/))"
+    HEADING = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*(\d+)" + _HEADING_END
+    HEADING_NOCAP = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*\d+" + _HEADING_END
 
-    starts = [m.start() for m in re.finditer(r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*1[ \t]*$", text, re.MULTILINE)]
+    starts = [m.start() for m in re.finditer(r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*1" + _HEADING_END, text, re.MULTILINE)]
     if starts:
         text = text[starts[-1]:]
 

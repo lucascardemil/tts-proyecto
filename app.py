@@ -552,10 +552,6 @@ HTML = r"""<!DOCTYPE html>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 8l5-3v14l-5-3"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
     Video
   </a>
-  <a class="nav-item" id="nav-analytics" data-tab="analytics">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20V10M12 20V4M20 20v-7"/></svg>
-    Analítica
-  </a>
   <a class="nav-item" id="nav-historial" data-tab="historial">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
     Historial
@@ -587,24 +583,35 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3l14 9-14 9V3z"/></svg> Generar video (automático)</h2>
       <p class="card-desc">
-        Pegá el guion y los prompts de imagen que te da ChatGPT, cada uno en su
-        campo. El servidor narra el guion, genera los clips en WhatsApp/Meta IA
-        con los prompts y arma el video final con Remotion, todo en un solo paso.
+        Elegí la página (su Project de Qwen le pide la historia solo). El
+        servidor narra el guion, genera los clips en WhatsApp/Meta IA con los
+        prompts y arma el video final con Remotion, todo en un solo paso.
       </p>
 
       <div class="field-label-row">
-        <label for="pipeline-script">Guion (narración)</label>
+        <label for="pipeline-page">Página (su nombre es también el del Project de Qwen)</label>
       </div>
-      <div class="textarea-wrap">
-        <textarea id="pipeline-script" rows="6" placeholder="Pegá acá el guion para narrar..."></textarea>
-        <div class="char-count" id="pipeline-script-char-count">0 / 5000</div>
+      <select id="pipeline-page"></select>
+
+      <div id="pipeline-style-wrap" style="display:none; margin-top:10px">
+        <label for="pipeline-visual-style">Estilo visual de las imágenes</label>
+        <select id="pipeline-visual-style">
+          <option value="realista">Realista (fotorrealista)</option>
+          <option value="pixar3d">Animación 3D</option>
+        </select>
       </div>
 
       <div class="field-label-row" style="margin-top:14px">
-        <label for="pipeline-prompts">Prompts de imagen (Imagen 1, Imagen 2, ...)</label>
+        <label for="pipeline-trigger-message">Mensaje inicial a Qwen (lo que espera ese Project para responder con el formato)</label>
       </div>
-      <div class="textarea-wrap">
-        <textarea id="pipeline-prompts" rows="8" placeholder="Pegá acá el bloque de prompts de ChatGPT (Imagen 1, Frase del guion, Prompt, Imagen 2, ...)..."></textarea>
+      <input type="text" id="pipeline-trigger-message" placeholder="dame una historia" value="dame una historia">
+
+      <div class="textarea-wrap" style="display:none">
+        <textarea id="pipeline-script" rows="6"></textarea>
+        <div class="char-count" id="pipeline-script-char-count">0 / 5000</div>
+      </div>
+      <div class="textarea-wrap" style="display:none">
+        <textarea id="pipeline-prompts" rows="8"></textarea>
         <div class="char-count" id="pipeline-prompts-char-count">0 / 5000</div>
       </div>
 
@@ -688,6 +695,13 @@ HTML = r"""<!DOCTYPE html>
 
       <div id="pipeline-panels" style="display:none">
         <div class="status-rows">
+          <div class="status-row" id="pipeline-row-qwen">
+            <div class="status-row-text">
+              <strong>Historia (Qwen)</strong>
+              <span id="pipeline-panel-qwen">—</span>
+            </div>
+            <div class="ring pending" id="pipeline-ring-qwen"></div>
+          </div>
           <div class="status-row" id="pipeline-row-tts">
             <div class="status-row-text">
               <strong>Guion / TTS</strong>
@@ -844,33 +858,6 @@ HTML = r"""<!DOCTYPE html>
 
   </div> <!-- /tab-historial -->
 
-  <div id="tab-analytics" style="display:none">
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20V10M12 20V4M20 20v-7"/></svg> Analítica de Facebook</h2>
-      <button class="btn-sm" id="fb-analytics-refresh-btn">⟳ Actualizar</button>
-      <div id="fb-analytics-table" style="margin-top:14px"></div>
-    </div>
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20V10M12 20V4M20 20v-7"/></svg> Analítica de YouTube</h2>
-      <button class="btn-sm" id="yt-analytics-refresh-btn">⟳ Actualizar</button>
-      <div id="yt-analytics-table" style="margin-top:14px"></div>
-    </div>
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20V10M12 20V4M20 20v-7"/></svg> Analítica de Instagram</h2>
-      <button class="btn-sm" id="ig-analytics-refresh-btn">⟳ Actualizar</button>
-      <div id="ig-analytics-table" style="margin-top:14px"></div>
-    </div>
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.6.5 1 1.3 1 2.5h6c0-1.2.4-2 1-2.5A6 6 0 0 0 12 3z"/></svg> Qué funcionó mejor</h2>
-      <button class="btn-sm" id="feedback-analytics-refresh-btn">⟳ Actualizar</button>
-      <div id="feedback-analytics-result" style="margin-top:14px"></div>
-    </div>
-
-  </div> <!-- /tab-analytics -->
 
   <div id="tab-lote" style="display:none">
 
@@ -932,6 +919,13 @@ HTML = r"""<!DOCTYPE html>
       <div id="lote-page-wrap" style="margin-top:10px">
         <label for="lote-page">Página (su nombre es también el del Project de Qwen)</label>
         <select id="lote-page"></select>
+      </div>
+      <div id="lote-style-wrap" style="display:none; margin-top:10px">
+        <label for="lote-visual-style">Estilo visual de las imágenes</label>
+        <select id="lote-visual-style">
+          <option value="realista">Realista (fotorrealista)</option>
+          <option value="pixar3d">Animación 3D</option>
+        </select>
       </div>
 
       <div id="lote-video-only-fields">
@@ -1207,12 +1201,12 @@ function activateTab(tab) {
   document.querySelectorAll(".nav-item[data-tab]").forEach(a => a.classList.toggle("active", a.dataset.tab === tab));
   $("tab-video").style.display = tab === "video" ? "" : "none";
   $("tab-historial").style.display = tab === "historial" ? "" : "none";
-  $("tab-analytics").style.display = tab === "analytics" ? "" : "none";
   $("tab-ajustes").style.display = tab === "ajustes" ? "" : "none";
   $("tab-lote").style.display = tab === "lote" ? "" : "none";
   if (tab === "video") {
     checkYoutubeConnection();
     loadMetaPages().then(checkMetaToken);
+    loadPipelinePages();
   }
   if (tab === "historial") {
     loadMetaPages().then(checkMetaToken);
@@ -1223,12 +1217,6 @@ function activateTab(tab) {
     checkSessionStatus("qwen");
     checkYoutubeSettings();
     loadPublicUrl();
-  }
-  if (tab === "analytics") {
-    loadFacebookAnalytics();
-    loadYoutubeAnalytics();
-    loadInstagramAnalytics();
-    loadAnalyticsFeedback();
   }
   if (tab === "lote") {
     loadLotePages();
@@ -1391,6 +1379,26 @@ async function loadPipelineVoices() {
   }
 }
 loadPipelineVoices();
+
+function updatePipelineStyleVisibility() {
+  const pageSel = $("pipeline-page");
+  const page = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
+  $("pipeline-style-wrap").style.display = page === "Historias" ? "" : "none";
+}
+
+async function loadPipelinePages() {
+  try {
+    const res = await fetch("/api/meta/pages");
+    const data = await res.json();
+    const pages = (data.ok && data.pages) || [];
+    const sel = $("pipeline-page");
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${qwenProjectForPage(p.name)}</option>`).join("");
+    updatePipelineStyleVisibility();
+  } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
+}
+loadPipelinePages();
+$("pipeline-page").addEventListener("change", updatePipelineStyleVisibility);
+
 
 const FONT_CSS_MAP = {
   cinzel: "'Cinzel', serif",
@@ -1580,6 +1588,7 @@ async function pollPipelineStatus(jobId) {
       return;
     }
 
+    renderPipelinePanel(data.story.qwen, "pipeline-panel-qwen", "pipeline-ring-qwen", "pipeline-row-qwen");
     renderPipelinePanel(data.story.tts, "pipeline-panel-tts", "pipeline-ring-tts", "pipeline-row-tts");
     renderPipelinePanel(data.story.clipgen, "pipeline-panel-clipgen", "pipeline-ring-clipgen", "pipeline-row-clipgen");
     renderPipelinePanel(data.story.video, "pipeline-panel-video", "pipeline-ring-video", "pipeline-row-video");
@@ -1682,27 +1691,14 @@ $("pipeline-retry-btn").addEventListener("click", async () => {
 });
 
 $("pipeline-start-btn").addEventListener("click", async () => {
-  const scriptText = $("pipeline-script").value.trim();
-  const promptsText = $("pipeline-prompts").value.trim();
-  if (!scriptText || !promptsText) { alert("Pegá el guion y los prompts de imagen antes de generar."); return; }
-  const storyText = `${scriptText}\n\n${promptsText}`;
+  const pageSel = $("pipeline-page");
+  if (!pageSel.selectedOptions.length) { alert("Elegí una página antes de generar."); return; }
+  const qwenProject = pageSel.selectedOptions[0].textContent.trim();
+  const triggerMessage = $("pipeline-trigger-message").value.trim();
 
-  const previewRes = await fetch("/api/pipeline/preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ story_text: storyText }),
-  });
-  const preview = await previewRes.json();
-  if (!preview.ok) {
-    await appAlert(preview.error || "No se pudo interpretar el guion.", "Revisá el formato");
-    return;
-  }
-  const resumen = preview.script_preview.length > 300
-    ? preview.script_preview.slice(0, 300) + "…"
-    : preview.script_preview;
   const confirmado = await appConfirm(
-    `Guion (${preview.script_len} caracteres):\n\n${resumen}\n\n${preview.prompt_count} imágenes detectadas.`,
-    { title: "Revisá antes de generar", confirmLabel: "Generar video", cancelLabel: "Volver a editar" }
+    `Se le va a pedir una historia nueva al Project de Qwen "${qwenProject}" y se genera el video con esa historia.`,
+    { title: "Revisá antes de generar", confirmLabel: "Generar video", cancelLabel: "Cancelar" }
   );
   if (!confirmado) return;
 
@@ -1711,6 +1707,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
   $("pipeline-cancel-btn").style.display = "none";
   $("pipeline-panels").style.display = "";
   $("pipeline-result").classList.remove("visible");
+  renderPipelinePanel(null, "pipeline-panel-qwen", "pipeline-ring-qwen", "pipeline-row-qwen");
   renderPipelinePanel(null, "pipeline-panel-tts", "pipeline-ring-tts", "pipeline-row-tts");
   renderPipelinePanel(null, "pipeline-panel-clipgen", "pipeline-ring-clipgen", "pipeline-row-clipgen");
   renderPipelinePanel(null, "pipeline-panel-video", "pipeline-ring-video", "pipeline-row-video");
@@ -1720,8 +1717,9 @@ $("pipeline-start-btn").addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        story_text: storyText,
-        script_text: scriptText,
+        qwen_project: qwenProject,
+        trigger_message: triggerMessage,
+        visual_style: $("pipeline-visual-style").value,
         voice: pipelineVoice,
         provider: $("pipeline-provider").value,
         orientation: $("pipeline-orientation").value,
@@ -1757,105 +1755,6 @@ function _fmtNum(n) {
   return typeof n === "number" ? n.toLocaleString("es") : "-";
 }
 
-async function _loadAnalytics(tableId, url, emptyMsg) {
-  const wrap = $(tableId);
-  wrap.textContent = "Cargando...";
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!data.ok || !data.videos.length) {
-      wrap.innerHTML = `<div class="analytics-empty">${_escapeHtml(emptyMsg)}</div>`;
-      return;
-    }
-    const videos = [...data.videos].sort((a, b) => (b.views ?? -1) - (a.views ?? -1));
-    const viewsList = videos.map(v => v.views).filter(v => typeof v === "number");
-    const avgViews = viewsList.length ? Math.round(viewsList.reduce((a, b) => a + b, 0) / viewsList.length) : null;
-    const bestId = viewsList.length ? videos[0] : null;
-
-    const summary = `
-      <div class="tag-row">
-        <span class="tag"><strong>${videos.length}</strong> publicados</span>
-        ${avgViews !== null ? `<span class="tag">👁️ promedio <strong>${_fmtNum(avgViews)}</strong> vistas</span>` : ""}
-      </div>`;
-
-    const rows = videos.map(v => `
-      <tr class="${v === bestId ? "table-best-row" : ""}">
-        <td>${v === bestId ? "🏆 " : ""}${_escapeHtml(v.title || v.video_id || v.media_id)}</td>
-        <td>${_fmtNum(v.views)}</td>
-        <td>${_fmtNum(v.likes)}</td>
-        <td>${_fmtNum(v.comments)}</td>
-      </tr>`).join("");
-    wrap.innerHTML = `
-      ${summary}
-      <div style="overflow-x:auto">
-      <table>
-        <thead><tr>
-          <th>Título</th><th>Vistas</th><th>Likes</th><th>Comentarios</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      </div>`;
-  } catch (e) {
-    wrap.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
-  }
-}
-function loadYoutubeAnalytics() {
-  return _loadAnalytics("yt-analytics-table", "/api/youtube/analytics", "Todavía no hay videos publicados en YouTube.");
-}
-function loadFacebookAnalytics() {
-  return _loadAnalytics("fb-analytics-table", "/api/facebook/analytics", "Todavía no hay videos publicados en Facebook.");
-}
-function loadInstagramAnalytics() {
-  return _loadAnalytics("ig-analytics-table", "/api/instagram/analytics", "Todavía no hay videos publicados en Instagram.");
-}
-$("yt-analytics-refresh-btn").addEventListener("click", loadYoutubeAnalytics);
-$("fb-analytics-refresh-btn").addEventListener("click", loadFacebookAnalytics);
-$("ig-analytics-refresh-btn").addEventListener("click", loadInstagramAnalytics);
-
-async function loadAnalyticsFeedback() {
-  const el = $("feedback-analytics-result");
-  el.textContent = "Cargando...";
-  try {
-    const res = await fetch("/api/analytics/feedback");
-    const data = await res.json();
-    if (!data.ok) {
-      el.innerHTML = `<div class="analytics-empty">❌ ${_escapeHtml(data.error || "No se pudo cargar.")}</div>`;
-      return;
-    }
-    if (data.insufficient_data) {
-      const pct = Math.min(100, Math.round((data.sample_size / 3) * 100));
-      el.innerHTML = `
-        <div class="analytics-empty">
-          Todavía no hay suficientes videos publicados con estadísticas
-          (${data.sample_size}/3 mínimo).
-          <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-        </div>`;
-      return;
-    }
-    const keywordTags = data.top_keywords.length
-      ? data.top_keywords.map(k => `<span class="tag">${_escapeHtml(k)}</span>`).join("")
-      : `<span class="tag">—</span>`;
-    el.innerHTML = `
-      <div class="stat-grid">
-        <div class="stat-card">
-          <div class="stat-value">${_fmtNum(data.avg_views)}</div>
-          <div class="stat-label">👁️ Promedio de vistas (${data.sample_size} videos)</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${_escapeHtml(data.best_title_length)}</div>
-          <div class="stat-label">📏 Mejor largo de título</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">🔑 Palabras clave con más vistas</div>
-          <div class="stat-keywords">${keywordTags}</div>
-        </div>
-      </div>
-    `;
-  } catch (e) {
-    el.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
-  }
-}
-$("feedback-analytics-refresh-btn").addEventListener("click", loadAnalyticsFeedback);
 
 // ── Generación en lote ──
 async function loadLotePages() {
@@ -1864,7 +1763,8 @@ async function loadLotePages() {
     const data = await res.json();
     const pages = (data.ok && data.pages) || [];
     const sel = $("lote-page");
-    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${qwenProjectForPage(p.name)}</option>`).join("");
+    updateLoteStyleVisibility();
   } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
 }
 
@@ -2081,6 +1981,31 @@ function updateLoteTypeVisibility() {
 $("lote-type").addEventListener("change", updateLoteTypeVisibility);
 updateLoteTypeVisibility();
 
+// Nombres reales de los Projects en chat.qwen.ai, que no siempre coinciden
+// con el nombre de la pagina de Facebook/Instagram (p.ej. la pagina se
+// renombro a "HISTORIAS QUE VER" pero el Project de Qwen sigue "Historias").
+// Sin este mapeo _open_qwen_project no encuentra el proyecto en el sidebar
+// de Qwen y el lote falla al pedir la historia.
+const QWEN_PROJECT_NAMES = {
+  "HISTORIAS QUE VER": "Historias",
+  "HISTORIAS": "Historias",
+  "JUGADASEPICASVIDEOJUEGOS": "Jugadasepicasvideojuegos",
+  "MACRAME CREATIVO": "Macramé Creativo",
+  "NINO SELECTIVO, FAMILIA EN PAZ": "Niño Selectivo, Familia en Paz",
+};
+function qwenProjectForPage(pageText) {
+  const key = pageText.trim().toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return QWEN_PROJECT_NAMES[key] || pageText;
+}
+
+function updateLoteStyleVisibility() {
+  const pageSel = $("lote-page");
+  const page = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
+  $("lote-style-wrap").style.display = page === "Historias" ? "" : "none";
+}
+$("lote-page").addEventListener("change", updateLoteStyleVisibility);
+
 $("lote-create-btn").addEventListener("click", async () => {
   const btn = $("lote-create-btn");
   const statusEl = $("lote-create-status");
@@ -2117,6 +2042,7 @@ $("lote-create-btn").addEventListener("click", async () => {
       subtitles_enabled: $("lote-subtitles-enabled").checked,
       animate_images: $("lote-animate-images").checked,
       generate_video_clips: $("lote-generate-video-clips").checked,
+      visual_style: $("lote-visual-style").value,
     },
   };
   btn.disabled = true;
@@ -2468,7 +2394,6 @@ async function pollYoutubeJob(jobId) {
         showYtStatus("success", `✅ Publicado en YouTube (id: ${data.video_id})`);
       }
       generatedThumbnail = null;
-      loadYoutubeAnalytics();
       return;
     }
     if (data.status === "error") {
@@ -3270,12 +3195,51 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                        subtitle_style: Optional[dict], title: str, provider: str = "whatsapp",
                        skip_tts: bool = False, script_text: Optional[str] = None,
                        wait_tts_from: Optional[str] = None, animate_images: bool = True,
-                       generate_video_clips: bool = True):
+                       generate_video_clips: bool = True, qwen_project: Optional[str] = None,
+                       trigger_message: Optional[str] = None, visual_style: Optional[str] = None,
+                       duration_seconds: Optional[int] = None):
+    if qwen_project and not story_text:
+        _pipeline_sub_update(job_id, "qwen", status="running",
+                              message=f"Pidiendo historia al proyecto de Qwen '{qwen_project}'...")
+        try:
+            story_text = auto_pipeline.generate_story_from_qwen_project(
+                qwen_project, unattended=True, trigger_message=trigger_message or "dame una historia",
+            )
+        except Exception as e:
+            logger.exception("pipeline job %s: fallo al pedir historia a Qwen", job_id)
+            _pipeline_sub_update(job_id, "qwen", status="error", error=str(e))
+            with _pipeline_jobs_lock:
+                _pipeline_jobs[job_id].update(status="error", error=str(e))
+                job_store.save("pipeline", _pipeline_jobs)
+            return
+        _pipeline_sub_update(job_id, "qwen", status="done", message="Listo")
+        with _pipeline_jobs_lock:
+            job = _pipeline_jobs.get(job_id)
+            if job is not None:
+                job["inputs"]["story_text"] = story_text
+                job_store.save("pipeline", _pipeline_jobs)
+
     # Si el guion vino ya separado desde la UI (campo propio), se usa tal cual --
     # extract_script() adivina por heading/posición y puede confundirse si el
     # bloque de prompts menciona la palabra "guion" (p.ej. "Frase del guion:").
     if not script_text:
         script_text = auto_pipeline.extract_script(story_text)
+        if not script_text.strip():
+            # Algunos Projects de Qwen (ej. Macrame Creativo) no mandan un bloque
+            # "Guion" separado antes de "Imagen 1" -- se reconstruye concatenando
+            # las frases de cada escena (mismo fallback que batch_pipeline.py).
+            story_for_script = auto_pipeline.load_story_from_text(story_text, story_id)
+            script_text = " ".join(
+                p["frase"] for p in sorted(story_for_script["prompts"], key=lambda p: p["index"])
+            )
+        if duration_seconds:
+            script_text = auto_pipeline.cap_script_to_duration(script_text, duration_seconds)
+        if qwen_project:
+            with _pipeline_jobs_lock:
+                job = _pipeline_jobs.get(job_id)
+                if job is not None:
+                    job["inputs"]["script_text"] = script_text
+                    job_store.save("pipeline", _pipeline_jobs)
     logger.info("pipeline job %s: guion extraido (%d chars) story_id=%s", job_id, len(script_text), story_id)
 
     def run_tts():
@@ -3339,6 +3303,9 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
         try:
             with _clipgen_lock:
                 story = auto_pipeline.load_story_from_text(story_text, story_id)
+                if visual_style and visual_style != "realista":
+                    for p in story["prompts"]:
+                        p["prompt"] = auto_pipeline.apply_visual_style(p["prompt"], visual_style)
                 start_index = auto_pipeline.resume_index(clips_dir)
                 clips = auto_pipeline.generate_clips(
                     story, clips_dir, unattended=True, start_index=start_index, on_progress=on_progress,
@@ -3472,12 +3439,16 @@ def api_pipeline_preview():
 def api_pipeline_start():
     data = request.get_json(force=True)
     story_text = data.get("story_text", "").strip()
-    if not story_text:
-        return jsonify({"ok": False, "error": "Pega el texto completo de la historia."}), 400
+    qwen_project = (data.get("qwen_project") or "").strip() or None
+    trigger_message = (data.get("trigger_message") or "").strip() or None
+    visual_style = (data.get("visual_style") or "").strip() or None
+    if not story_text and not qwen_project:
+        return jsonify({"ok": False, "error": "Pega el texto completo de la historia o elegí una página de Qwen."}), 400
     script_text = data.get("script_text", "").strip() or None
     duration_seconds = data.get("duration_seconds") or None
+    duration_seconds = int(duration_seconds) if duration_seconds else None
     if script_text and duration_seconds:
-        script_text = auto_pipeline.cap_script_to_duration(script_text, int(duration_seconds))
+        script_text = auto_pipeline.cap_script_to_duration(script_text, duration_seconds)
 
     story_id = uuid.uuid4().hex[:8]
     clips_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
@@ -3511,6 +3482,10 @@ def api_pipeline_start():
         "provider": provider,
         "animate_images": animate_images,
         "generate_video_clips": generate_video_clips,
+        "qwen_project": qwen_project,
+        "trigger_message": trigger_message,
+        "visual_style": visual_style,
+        "duration_seconds": duration_seconds,
     }
     with _pipeline_jobs_lock:
         _pipeline_jobs[job_id] = {
@@ -3520,6 +3495,7 @@ def api_pipeline_start():
             "started_at": time.time(),
             "inputs": inputs,
             "story": {
+                "qwen": {"status": "pending", "message": "", "error": None},
                 "tts": {"status": "pending", "percent": 0, "message": "", "error": None},
                 "clipgen": {"status": "pending", "message": "", "error": None},
                 "video": {"status": "pending", "message": "", "error": None},
@@ -3532,7 +3508,9 @@ def api_pipeline_start():
         args=(job_id, story_text, story_id, clips_dir, tts_kwargs, orientation,
               subtitles_enabled, subtitle_style, title, provider),
         kwargs={"script_text": script_text, "animate_images": animate_images,
-                "generate_video_clips": generate_video_clips},
+                "generate_video_clips": generate_video_clips, "qwen_project": qwen_project,
+                "trigger_message": trigger_message, "visual_style": visual_style,
+                "duration_seconds": duration_seconds},
         daemon=True,
     )
     thread.start()
@@ -3588,6 +3566,7 @@ def api_pipeline_retry(job_id):
                      "message": "Esperando el audio del intento anterior..." if wait_tts_from else "",
                      "error": None}
                 ),
+                "qwen": {"status": "done" if inputs.get("story_text") else "pending", "message": "", "error": None},
                 "clipgen": {"status": "pending", "message": "", "error": None},
                 "video": {"status": "pending", "message": "", "error": None},
             },
@@ -3602,7 +3581,11 @@ def api_pipeline_retry(job_id):
         kwargs={"skip_tts": skip_tts, "script_text": inputs.get("script_text"),
                 "wait_tts_from": wait_tts_from,
                 "animate_images": inputs.get("animate_images", True),
-                "generate_video_clips": inputs.get("generate_video_clips", True)},
+                "generate_video_clips": inputs.get("generate_video_clips", True),
+                "qwen_project": inputs.get("qwen_project"),
+                "trigger_message": inputs.get("trigger_message"),
+                "visual_style": inputs.get("visual_style"),
+                "duration_seconds": inputs.get("duration_seconds")},
         daemon=True,
     )
     thread.start()
@@ -4481,12 +4464,6 @@ def _analytics_rows(path: Path, id_field: str, stats_fn, multi_page: bool = Fals
     return [{**i, **stats_by_id.get(i[id_field], {})} for i in items]
 
 
-@app.route("/api/youtube/analytics")
-def api_youtube_analytics():
-    rows = _analytics_rows(_PUBLISHED_VIDEOS_PATH, "video_id", youtube_publisher.get_video_stats)
-    return jsonify({"ok": True, "videos": rows})
-
-
 # ─────────────────────────────────────────────
 # ANALÍTICA DE FACEBOOK E INSTAGRAM
 # ─────────────────────────────────────────────
@@ -4527,29 +4504,6 @@ def _record_published_instagram(media_id, title: str, filename: str = "", page_i
     if not media_id:
         return
     _record_published_item(_PUBLISHED_IG_PATH, "media_id", media_id, title, filename, page_id)
-
-
-@app.route("/api/facebook/analytics")
-def api_facebook_analytics():
-    rows = _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats, multi_page=True)
-    return jsonify({"ok": True, "videos": rows})
-
-
-@app.route("/api/instagram/analytics")
-def api_instagram_analytics():
-    rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
-    return jsonify({"ok": True, "videos": rows})
-
-
-@app.route("/api/analytics/feedback")
-def api_analytics_feedback():
-    all_rows = (
-        _analytics_rows(_PUBLISHED_VIDEOS_PATH, "video_id", youtube_publisher.get_video_stats)
-        + _analytics_rows(_PUBLISHED_FB_PATH, "video_id", facebook_publisher.get_video_stats, multi_page=True)
-        + _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
-    )
-    result = feedback_analyzer.analyze_from_rows(all_rows)
-    return jsonify({"ok": True, **result})
 
 
 @app.route("/api/facebook/best-time")
