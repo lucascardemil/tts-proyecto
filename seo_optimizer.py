@@ -85,7 +85,11 @@ def _build_title(script_text: str, keywords: list, power_word: bool = True) -> s
 
     title = hook or (" ".join(w.capitalize() for w in keywords[:4]) if keywords else "Video")
     if len(title) > 90:
-        title = title[:87].rsplit(" ", 1)[0] + "..."
+        # Conservar el "?"/"!" de cierre del gancho: cortarlo junto con el resto del
+        # texto rompe cualquier clasificación de hook que dependa de ver la pregunta
+        # (p.ej. hooks.json "La Pregunta").
+        closing = title.rstrip()[-1] if title.rstrip()[-1:] in ("?", "!") else ""
+        title = title[:87].rsplit(" ", 1)[0] + "..." + closing
 
     if power_word and len(title) <= 75:
         power = next((p for p in POWER_WORDS if p.lower() not in title.lower()), None)
