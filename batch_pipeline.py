@@ -19,7 +19,7 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -817,6 +817,41 @@ _NETWORK_PUBLISHED_PATH_ATTR = {
     "instagram": "_PUBLISHED_IG_PATH",
 }
 
+# Redes que soportan scheduling nativo del lado de la plataforma (Facebook:
+# scheduled_publish_time: YouTube: publishAt). Para estas, _publish_networks
+# no espera a que llegue scheduled_at ni chequea _gap_ok -- la llamada se
+# hace apenas el video esta "ready" y es la plataforma la que sostiene el
+# horario real y el espaciado. Instagram no tiene scheduling nativo: sigue
+# esperando el horario real y respetando _gap_ok, igual que siempre.
+_NATIVE_SCHEDULE_NETWORKS = {"facebook", "youtube"}
+
+
+def _scheduled_epoch(video: dict) -> Optional[float]:
+    """scheduled_at (ISO local) como timestamp epoch, para pasarle a
+    facebook_publisher (scheduled_time). None si falta o esta corrupto."""
+    try:
+        return datetime.fromisoformat(video["scheduled_at"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _rfc3339_utc(iso_str: Optional[str], min_lead_seconds: int = 600) -> Optional[str]:
+    """Convierte scheduled_at (ISO local) a RFC3339 UTC para YouTube
+    publishAt. None si falta la fecha, esta corrupta, o entra dentro del
+    margen minimo (min_lead_seconds) -- en ese caso se publica ya en vez de
+    programar, mismo criterio que facebook_publisher.MIN_SCHEDULE_SECONDS."""
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.astimezone()  # naive = hora local del sistema, igual que el resto del modulo
+    if (dt - datetime.now(dt.tzinfo)).total_seconds() < min_lead_seconds:
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 _GAMING_POST_RE = re.compile(
     r"IDEA:\s*(.+?)\s*HOOK:\s*(.+?)\s*IMAGE_PROMPT:\s*(.+?)\s*CAPTION:\s*(.+)",
@@ -955,17 +990,27 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
     networks = project["networks"]
     import app
 
-    rescheduled = False
+    rescheduled = False  # gap real de espaciado -> empuja scheduled_at
+    waiting = False  # instagram todavia no llego a su horario real -> NO tocar scheduled_at
     error_parts = []
     any_auth_error = False
     for network, publish_fn in publishers.items():
         cfg = networks.get(network)
         if not cfg or video["published_at"].get(network):
             continue
+        native = network in _NATIVE_SCHEDULE_NETWORKS
+        if not native:
+            try:
+                scheduled_dt = datetime.fromisoformat(video["scheduled_at"])
+            except (KeyError, TypeError, ValueError):
+                scheduled_dt = datetime.now()
+            if scheduled_dt > datetime.now():
+                waiting = True
+                continue
         published_path = getattr(app, _NETWORK_PUBLISHED_PATH_ATTR[network])
         page_id = cfg.get("page_id") if isinstance(cfg, dict) else None
         with _publish_lock:
-            if not _gap_ok(published_path):
+            if not native and not _gap_ok(published_path):
                 rescheduled = True
                 continue
             try:
@@ -1029,7 +1074,8 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     def _yt(v, page_id):
         result = youtube_publisher.publish_video(
-            v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True
+            v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True,
+            publish_at=_rfc3339_utc(v.get("scheduled_at")),
         )
         if result.get("ok"):
             app._record_published_video(result["video_id"], title, Path(v["video_path"]).name)
@@ -1037,7 +1083,8 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     def _fb(v, page_id):
         result = facebook_publisher.publish_video(
-            v["video_path"], title, content["facebook_description"], page_id=page_id
+            v["video_path"], title, content["facebook_description"], page_id=page_id,
+            scheduled_time=_scheduled_epoch(v),
         )
         if result.get("ok"):
             app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
@@ -1062,7 +1109,9 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
     caption = video.get("caption", "")
 
     def _fb(v, page_id):
-        result = facebook_publisher.publish_photo(v["video_path"], caption, page_id=page_id)
+        result = facebook_publisher.publish_photo(
+            v["video_path"], caption, page_id=page_id, scheduled_time=_scheduled_epoch(v),
+        )
         if result.get("ok"):
             app._record_published_facebook(result["post_id"], project["name"], Path(v["video_path"]).name, page_id)
         return result
@@ -1141,26 +1190,50 @@ def _batch_scheduler_tick() -> None:
                 ).start()
                 break
 
+    run_publish_tick(running)
+
+
+def run_publish_tick(running: Optional[list] = None) -> list:
+    """Mitad de "publicacion" de _batch_scheduler_tick, separada para poder
+    correrla sola (sin la mitad de generacion, que depende del browser
+    automation de Qwen) -- la reusa tanto el loop de 60s de start_scheduler
+    como publish_worker.py, el script liviano por Task Scheduler que no
+    necesita a app.py corriendo. `running` se puede pasar ya cargado (evita
+    un _load() de mas si el caller ya lo tiene); si no, lo carga solo.
+
+    Devuelve los threads de publicacion que arranco. El loop de app.py los
+    ignora (el proceso sigue vivo igual y los threads daemon terminan solos),
+    pero publish_worker.py SI necesita joinearlos: al ser un script de un
+    solo paso, si terminara sin esperar, los threads daemon mueren a mitad
+    de subida junto con el proceso."""
+    if running is None:
+        running = sorted(
+            (p for p in _load().values() if p.get("status") == "running"),
+            key=lambda p: p.get("created_at", ""),
+        )
+
+    started = []
     now = datetime.now()
     in_window = BATCH_HOUR_START <= now.hour <= BATCH_HOUR_END
     for project in running:
         project_id = project["id"]
         videos = project["videos"]
         for v in videos:
-            # Fuera de 9-20 no se publica nada, ni siquiera lo vencido (caida
-            # larga, espera de espaciado): sale a la primera hora habil.
+            # Fuera de 9-20 no se intenta nada: sale a la primera hora habil.
+            # Ya no se espera a que llegue scheduled_at para las redes con
+            # scheduling nativo (Facebook/YouTube) -- eso lo decide
+            # _publish_networks por red; Instagram (sin scheduling nativo)
+            # sigue esperando ahi su horario real.
             if v["status"] != "ready" or not in_window:
                 continue
-            try:
-                scheduled = datetime.fromisoformat(v["scheduled_at"])
-            except (TypeError, ValueError):
-                scheduled = now
-            if scheduled <= now and _claim_for_publish(project_id, v["index"]):
-                threading.Thread(
+            if _claim_for_publish(project_id, v["index"]):
+                t = threading.Thread(
                     target=_publish_batch_item,
                     args=(project_id, v["index"], project.get("type", "video")),
                     daemon=True,
-                ).start()
+                )
+                t.start()
+                started.append(t)
 
         if videos and all(v["status"] == "published" for v in videos):
             with _lock:
@@ -1168,6 +1241,8 @@ def _batch_scheduler_tick() -> None:
                 if project_id in fresh:
                     fresh[project_id]["status"] = "done"
                     _save(fresh)
+
+    return started
 
 
 def _recover_stuck_videos() -> None:
@@ -1248,6 +1323,38 @@ def _acquire_scheduler_lock() -> bool:
         _scheduler_lock_file = f
         return True
     return False
+
+
+def _try_acquire_scheduler_lock_once():
+    """Intento unico (sin el retry de 30s) del mismo lock exclusivo de
+    _acquire_scheduler_lock, para un proceso de un solo paso (publish_worker.py,
+    corrido cada N minutos por Task Scheduler): si app.py ya tiene el lock
+    tomado -- su propio scheduler esta vivo y ya se encarga de publicar --
+    el worker no debe esperar, sale al toque. A diferencia de
+    _acquire_scheduler_lock, este NO guarda el handle en un global: el
+    llamador es dueno del handle devuelto y tiene que soltarlo el mismo con
+    _release_scheduler_lock_handle al terminar, porque este proceso no lo
+    sostiene para siempre.
+
+    Returns:
+        el file handle si consiguio el lock, o None si ya estaba tomado.
+    """
+    _SCHEDULER_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    f = open(_SCHEDULER_LOCK_PATH, "a+")
+    try:
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def _release_scheduler_lock_handle(f) -> None:
+    try:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    finally:
+        f.close()
 
 
 def start_scheduler() -> None:

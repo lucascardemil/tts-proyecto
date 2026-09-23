@@ -83,6 +83,7 @@ def publish_video(
     tags: Optional[list] = None,
     is_ai_generated: bool = False,
     on_status: Optional[Callable[[str], None]] = None,
+    publish_at: Optional[str] = None,
 ) -> dict:
     """
     Sube un video al canal de YouTube conectado.
@@ -91,9 +92,14 @@ def publish_video(
         video_path: ruta local al archivo .mp4 a publicar.
         title: título del video.
         description: descripción del video.
-        privacy_status: "public", "unlisted" o "private".
+        privacy_status: "public", "unlisted" o "private". Ignorado si se
+            pasa publish_at (YouTube exige "private" para programar).
         tags: lista de etiquetas del video.
         is_ai_generated: marca el video como contenido sintético/generado con IA.
+        publish_at: fecha/hora RFC3339 en UTC (ej. "2026-09-24T15:00:00Z") en
+            la que YouTube debe publicar el video automáticamente. Si se
+            pasa, el video sube como "private" y YouTube lo hace público solo
+            en ese momento -- no hace falta que este proceso siga vivo.
 
     Returns:
         {"ok": True, "video_id": str} si se subió correctamente, o
@@ -110,9 +116,13 @@ def publish_video(
     notify = on_status or (lambda msg: None)
     try:
         youtube = build("youtube", "v3", credentials=creds)
+        status = {"privacyStatus": privacy_status, "containsSyntheticMedia": is_ai_generated}
+        if publish_at:
+            status["privacyStatus"] = "private"
+            status["publishAt"] = publish_at
         body = {
             "snippet": {"title": title or path.stem, "description": description, "tags": tags or []},
-            "status": {"privacyStatus": privacy_status, "containsSyntheticMedia": is_ai_generated},
+            "status": status,
         }
         # Subida resumable en fragmentos (chunksize=-1 = un solo fragmento por
         # llamada a next_chunk, pero reintentable si se corta la conexión) —

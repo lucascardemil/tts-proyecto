@@ -4667,9 +4667,15 @@ def api_batch_retry_publish(project_id, index):
 # MAIN
 # ─────────────────────────────────────────────
 
-batch_pipeline.start_scheduler()
-
 if __name__ == "__main__":
+    # Ojo: start_scheduler() tiene que vivir aca adentro, no a nivel de
+    # modulo -- batch_pipeline._publish_networks hace "import app" para
+    # _record_published_*, y eso incluye a publish_worker.py (script liviano
+    # de publicacion sin server). Si esta linea estuviera a nivel de modulo,
+    # ese import arrancaria un segundo scheduler de 60s (con generacion de
+    # video incluida) sin que nadie lo pida.
+    batch_pipeline.start_scheduler()
+
     print("\n" + "=" * 55)
     print("   🎙️  SERVIDOR TTS INICIADO")
     print("=" * 55)
