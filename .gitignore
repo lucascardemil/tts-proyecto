@@ -16,3 +16,13 @@ logs/
 scratch/
 .claude/
 video/public/
+
+# Temporales y utilidades locales
+.freebuff/
+batch_list.json
+batch_list_tmp.json
+payload_tmp.json
+scratch_script_0.js
+check_batches.py
+fetch_batch.py
+video/props_render.json
