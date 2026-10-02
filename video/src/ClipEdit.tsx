@@ -12,6 +12,8 @@ import {
 } from "remotion";
 import { loadFont as loadAnton } from "@remotion/google-fonts/Anton";
 import { Vignette } from "./Vignette";
+import { Subtitles } from "./Subtitles";
+import type { SubtitleStyle, SubtitleWord } from "./schema";
 
 const { fontFamily: antonFontFamily } = loadAnton("normal", { weights: ["400"], subsets: ["latin"] });
 
@@ -38,6 +40,9 @@ export type ClipEditProps = {
   // (50 = centro; más alto = corre el encuadre hacia la derecha, donde está
   // el arma en CS2).
   focusX: number;
+  // Lo que se oye hablar en el clip (segundos del clip original): subtítulos
+  // abajo solo mientras alguien habla. Sin palabras = sin subtítulos.
+  subtitles?: SubtitleWord[];
 };
 
 export const clipEditDefaultProps: ClipEditProps = {
@@ -83,6 +88,7 @@ type Timeline = {
   segments: Segment[];
   totalFrames: number;
   killFrames: number[]; // frame de salida de cada kill
+  toOut: (t: number) => number; // segundo del clip original → frame de salida
   windows: { start: number; exit: number; end: number }[]; // frames de salida del slow-mo: entra / empieza a salir / termina
 };
 
@@ -90,9 +96,17 @@ type Timeline = {
 // audio y la duración de la composición (calculateMetadata en Root.tsx).
 export const buildTimeline = (props: Pick<ClipEditProps, "kills" | "clipSeconds">, fps: number): Timeline => {
   const last = props.kills.length - 1;
-  const pieces = props.kills.flatMap((t, i) =>
-    (i === last ? SLOW_ACE : SLOW_KILL).map((p) => ({ from: t + p.from, to: t + p.to, rate: p.rate }))
-  );
+  // Una kill pegada al inicio o al final del clip dejaría la rampa fuera de [0, clipSeconds]
+  // (trimBefore negativo: Remotion aborta el render); se recorta y se descartan los tramos vacíos.
+  const pieces = props.kills
+    .flatMap((t, i) =>
+      (i === last ? SLOW_ACE : SLOW_KILL).map((p) => ({
+        from: Math.max(0, t + p.from),
+        to: Math.min(props.clipSeconds, t + p.to),
+        rate: p.rate,
+      }))
+    )
+    .filter((p) => p.to > p.from);
   const raw: Piece[] = [];
   let cursor = 0;
   for (const p of pieces) {
@@ -116,7 +130,7 @@ export const buildTimeline = (props: Pick<ClipEditProps, "kills" | "clipSeconds"
     const w = i === last ? SLOW_ACE : SLOW_KILL;
     return { start: toOut(t + w[0].from), exit: toOut(t + w[2].from), end: toOut(t + w[2].to) };
   });
-  return { segments, totalFrames: Math.round(out), killFrames: props.kills.map(toOut), windows };
+  return { segments, totalFrames: Math.round(out), killFrames: props.kills.map(toOut), toOut, windows };
 };
 
 // El clip como secuencia de tramos con su velocidad; en cámara lenta baja el
@@ -155,11 +169,39 @@ const Sfx: React.FC<{ file: string; at: number; volume: number }> = ({ file, at,
 
 const KILL_LABELS = ["KILL", "DOUBLE", "TRIPLE", "QUAD", "ACE"];
 
+// Subtítulos sobre la parte baja del clip (el recuadro llega hasta y=1330): quedan por
+// encima del contador/CTA y de la franja que tapa la UI de TikTok/Reels.
+const SUBTITLE_STYLE: SubtitleStyle = {
+  fontFamily: "anton",
+  fontSize: 64,
+  position: "bottom",
+  positionX: 50,
+  positionY: ((BOX_TOP + BOX_H - 150) / H) * 100,
+  textColor: "#ffffff",
+  highlightColor: "#ffd400",
+  background: false,
+  strokeColor: "#000000",
+  strokeWidth: 5,
+  uppercase: true,
+  italic: false,
+  letterSpacing: 1,
+  animationType: "highlight",
+};
+
 export const ClipEdit: React.FC<ClipEditProps> = (props) => {
   const { src, hook, hookHighlight, tag, credit, cta, kills, focusX, labels = KILL_LABELS, counter = true } = props;
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
-  const { segments, killFrames, windows } = React.useMemo(() => buildTimeline(props, fps), [props, fps]);
+  const { segments, killFrames, windows, toOut } = React.useMemo(() => buildTimeline(props, fps), [props, fps]);
+  // Las palabras vienen en tiempo del clip original; el slow-mo estira/acorta el tiempo de salida.
+  const subtitleWords = React.useMemo(
+    () =>
+      (props.subtitles ?? []).map((w) => {
+        const start = toOut(w.start) / fps;
+        return { word: w.word, start, end: Math.max(toOut(w.end) / fps, start + 0.05) };
+      }),
+    [props.subtitles, toOut, fps]
+  );
 
   // ── Zoom-punch + shake: cada kill empuja la escena y se asienta con rebote.
   let punch = 0;
@@ -380,6 +422,9 @@ export const ClipEdit: React.FC<ClipEditProps> = (props) => {
           </div>
         );
       })}
+
+      {/* Subtítulos de lo que se habla en el clip (solo mientras se habla) */}
+      <Subtitles words={subtitleWords} style={SUBTITLE_STYLE} />
 
       {/* CTA (ocupa el lugar del contador) + crédito bajo la etiqueta */}
       <div

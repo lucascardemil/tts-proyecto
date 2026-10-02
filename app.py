@@ -1056,7 +1056,10 @@ HTML = r"""<!DOCTYPE html>
             <div class="field-label-row">
               <label for="lote-voice">Voz</label>
             </div>
-            <select id="lote-voice"><option>Cargando...</option></select>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="lote-voice" style="flex:1;min-width:0"><option>Cargando...</option></select>
+              <button type="button" class="btn-sm" id="lote-voice-preview-btn" style="display:none" title="Escuchar una previa de la voz">▶ Escuchar</button>
+            </div>
           </div>
           <div>
             <div class="field-label-row">
@@ -1144,20 +1147,11 @@ HTML = r"""<!DOCTYPE html>
 
     <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de YouTube</h2>
-      <p class="card-desc">Necesaria para publicar en YouTube. Si aparece "Necesita reconectar" (el token venció o fue revocado), tocá el botón: se abre el navegador de esta PC para aprobar el acceso con tu cuenta de Google. Después reintentá las publicaciones con error.
-        Si el token vence cada ~7 días, la app OAuth está en modo "Testing" en Google Cloud Console: pasala a "En producción" para que no vuelva a pasar.</p>
-      <div class="status-rows">
-        <div class="status-row" id="ajustes-row-youtube">
-          <div class="status-row-text">
-            <strong>YouTube</strong>
-            <span id="ajustes-msg-youtube">Sin comprobar todavía.</span>
-          </div>
-          <div class="ring pending" id="ajustes-ring-youtube"></div>
-        </div>
-      </div>
+      <p class="card-desc">Necesaria para publicar en YouTube. Cada canal se conecta por separado: con su botón se abre el navegador de esta PC y tienes que elegir la cuenta de Google DE ESE canal (no la de otro). Si dice "Necesita reconectar" (el token venció o fue revocado), vuelve a conectarlo y reintenta las publicaciones con error.
+        Los canales se definen en el archivo .env (YT_CHANNEL_1_NAME, YT_CHANNEL_2_NAME, YT_CHANNEL_3_NAME…). Si el token vence cada ~7 días, la app OAuth está en modo "Testing" en Google Cloud Console: pásala a "En producción" para que no vuelva a pasar.</p>
+      <div class="status-rows" id="ajustes-youtube-channels"><div class="card-desc">Cargando canales…</div></div>
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn-sm" id="ajustes-check-youtube-btn">Comprobar conexión</button>
-        <button class="btn-sm" id="ajustes-reconnect-youtube-btn" style="display:none">Reconectar</button>
       </div>
     </div>
 
@@ -1474,6 +1468,25 @@ async function loadPipelineVoices() {
 }
 loadPipelineVoices();
 
+// Juegos de los clips: los más populares de Medal (se actualizan con cada pedido de clip).
+async function loadGamingGames() {
+  try {
+    const res = await fetch("/api/gaming/games");
+    const data = await res.json();
+    if (!data.ok || !data.games.length) return;
+    const options = data.games.map((g) => `<option value="${g.key}">${_escapeHtml(g.label)}${g.trending ? " 🔥" : ""}</option>`).join("");
+    const fill = (id, extra) => {
+      const sel = $(id);
+      const current = sel.value;
+      sel.innerHTML = extra + options;
+      if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+    };
+    fill("pipeline-game", "");
+    fill("lote-game", '<option value="mix">Mixto (rota entre los más populares)</option>');
+  } catch (e) { /* se quedan las opciones fijas */ }
+}
+loadGamingGames();
+
 $("custom-voice-add-btn").addEventListener("click", async () => {
   const btn = $("custom-voice-add-btn");
   const status = $("custom-voice-status");
@@ -1523,7 +1536,6 @@ function updatePipelineTypeVisibility() {
   $("pipeline-video-only-fields").style.display = isGaming ? "none" : "";
   $("pipeline-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
   $("pipeline-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
-  $("pipeline-trigger-wrap").style.display = type === "gaming_clip" ? "none" : "";
   $("pipeline-start-label").textContent = type === "gaming_clip" ? "Generar clip" : isGaming ? "Generar post" : "Generar video";
   $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
   if (isGaming && gamingJobId) pollGamingJob();
@@ -1843,6 +1855,7 @@ $("pipeline-retry-btn").addEventListener("click", async () => {
 const GAMING_STAGE_LABELS = {
   idea: "Pidiendo la idea a la IA…", imagen: "Generando la imagen…",
   clip: "Buscando el clip más viral en Medal…", descarga: "Descargando el clip…",
+  subtitulos: "Detectando voz para los subtítulos…",
   render: "Editando el clip con Remotion (tarda unos 5 minutos)…",
 };
 const GAMING_NETWORKS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube" };
@@ -1897,6 +1910,7 @@ function renderGamingJob(job) {
     // YouTube solo para clips (Short); por defecto marcado.
     $("gaming-youtube").checked = isClip;
     checkGamingYoutube(isClip);
+    if (isClip) loadGamingGames();  // la generación del clip actualizó la lista de juegos
   }
   $("gaming-youtube-wrap").style.display = isClip ? "" : "none";
   for (const key of Object.keys(GAMING_NETWORKS)) {
@@ -2104,9 +2118,33 @@ async function loadLoteVoices() {
     const res = await fetch("/api/voices");
     const data = await res.json();
     const sel = $("lote-voice");
-    sel.innerHTML = Object.entries(data).map(([key, info]) => `<option value="${key}">${info.custom ? "🎙️ " : ""}${_escapeHtml(info.label)}</option>`).join("");
+    sel.innerHTML = Object.entries(data).map(([key, info]) => `<option value="${key}" data-custom="${info.custom ? 1 : 0}">${info.custom ? "🎙️ " : ""}${_escapeHtml(info.label)}</option>`).join("");
+    updateLoteVoicePreview();
   } catch (e) { console.error("No se pudieron cargar las voces", e); }
 }
+
+// Previa de la voz elegida en el lote: reproduce la muestra de la voz clonada (▶ / ■).
+let loteVoiceAudio = null;
+function stopLoteVoicePreview() {
+  if (loteVoiceAudio) { loteVoiceAudio.pause(); loteVoiceAudio = null; }
+  $("lote-voice-preview-btn").textContent = "▶ Escuchar";
+}
+function updateLoteVoicePreview() {
+  stopLoteVoicePreview();
+  const opt = $("lote-voice").selectedOptions[0];
+  $("lote-voice-preview-btn").style.display = opt && opt.dataset.custom === "1" ? "" : "none";
+}
+$("lote-voice").addEventListener("change", updateLoteVoicePreview);
+$("lote-voice-preview-btn").addEventListener("click", () => {
+  if (loteVoiceAudio) { stopLoteVoicePreview(); return; }
+  const key = $("lote-voice").value;
+  if (!key.startsWith("custom:")) return;
+  const audio = new Audio(`/api/voices/custom/${key.slice("custom:".length)}/sample`);
+  loteVoiceAudio = audio;
+  $("lote-voice-preview-btn").textContent = "■ Detener";
+  audio.addEventListener("ended", () => { if (loteVoiceAudio === audio) stopLoteVoicePreview(); });
+  audio.play().catch(() => { if (loteVoiceAudio === audio) stopLoteVoicePreview(); });
+});
 
 async function loadLoteSubtitlePresets() {
   try {
@@ -2327,7 +2365,6 @@ function updateLoteTypeVisibility() {
   $("lote-video-only-fields").style.display = isGaming ? "none" : "";
   $("lote-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
   $("lote-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
-  $("lote-trigger-wrap").style.display = type === "gaming_clip" ? "none" : "";
   // YouTube: videos normales y clips gaming (canal de gaming); no imagen.
   const noYoutube = isImagePostType(type);
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
@@ -2698,7 +2735,7 @@ async function runYoutubeConnect(btn, setStatus, channel) {
     const data = await res.json();
     if (data.ok) {
       setStatus("");
-      if (channel === "gaming") { $("gaming-yt-connect-wrap").style.display = "none"; return; }
+      if (channel === "gaming") { $("gaming-yt-connect-wrap").style.display = "none"; checkYoutubeSettings(); return; }
       checkYoutubeConnection();
       checkYoutubeSettings();
     } else {
@@ -3041,27 +3078,34 @@ $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSes
 
 
 // ── Ajustes: conexión de YouTube (OAuth) ──
+// Una fila por canal de .env (YT_CHANNEL_<N>_NAME): estado + botón Conectar/Reconectar propio.
 async function checkYoutubeSettings() {
-  const ring = $("ajustes-ring-youtube");
-  const msg = $("ajustes-msg-youtube");
-  const reconnectBtn = $("ajustes-reconnect-youtube-btn");
-  ring.className = "ring indeterminate";
+  const box = $("ajustes-youtube-channels");
   try {
-    const res = await fetch("/api/youtube/connected");
+    const res = await fetch("/api/youtube/channels");
     const data = await res.json();
-    const connected = !!data.connected;
-    ring.className = connected ? "ring done" : "ring error";
-    msg.textContent = connected ? "Conectado." : "Necesita reconectar (sin token válido o sin permiso para leer el canal).";
-    reconnectBtn.style.display = connected ? "none" : "";
+    box.innerHTML = "";
+    for (const ch of data.channels) {
+      const row = document.createElement("div");
+      row.className = "status-row";
+      row.innerHTML = `
+        <div class="status-row-text">
+          <strong>${_escapeHtml(ch.name)}${ch.gaming ? " 🎮" : ""}</strong>
+          <span class="yt-ch-msg">${ch.connected ? "Conectado." : "Necesita conectarse (sin token válido o sin permiso para leer el canal)."}${ch.gaming ? " · canal de los clips gaming" : ""}</span>
+        </div>
+        <button type="button" class="btn-sm yt-ch-btn">${ch.connected ? "Reconectar" : "Conectar"}</button>
+        <div class="ring ${ch.connected ? "done" : "error"}"></div>`;
+      const btn = row.querySelector(".yt-ch-btn");
+      const msg = row.querySelector(".yt-ch-msg");
+      btn.addEventListener("click", () => runYoutubeConnect(btn, (t) => { msg.textContent = t; }, ch.key));
+      box.appendChild(row);
+    }
+    if (!data.channels.length) box.innerHTML = '<div class="card-desc">No hay canales configurados en .env.</div>';
   } catch (e) {
-    ring.className = "ring error";
-    msg.textContent = "Error de conexión con el servidor.";
-    reconnectBtn.style.display = "";
+    box.innerHTML = '<div class="card-desc">❌ Error de conexión con el servidor.</div>';
   }
 }
 $("ajustes-check-youtube-btn").addEventListener("click", checkYoutubeSettings);
-$("ajustes-reconnect-youtube-btn").addEventListener("click", () =>
-  runYoutubeConnect($("ajustes-reconnect-youtube-btn"), (t) => { $("ajustes-msg-youtube").textContent = t; }));
 
 // ── Ajustes: URL pública del Cloudflare Tunnel (posts de imagen gaming) ──
 async function loadPublicUrl() {
@@ -4582,7 +4626,14 @@ def _run_gaming_clip_generate(job_id: str, game_key: str, medal_url: Optional[st
     _gaming_update(
         job_id, status="ready", stage=None, error=None, hook=clip["hook"], title=clip["title"],
         caption=clip["caption"], video_path=clip["video_path"], source_clip=clip["clip"]["page_url"],
+        yt_seo=clip["youtube"],
     )
+
+
+@app.route("/api/gaming/games")
+def api_gaming_games():
+    """Juegos para los selectores de clips (los mas populares de Medal primero)."""
+    return jsonify({"ok": True, "games": gaming_clip.list_games()})
 
 
 @app.route("/api/gaming/start", methods=["POST"])
@@ -4733,10 +4784,10 @@ def _run_gaming_clip_publish(job_id: str, job: dict, network: str, page_id: str,
     title = job.get("title") or "Clip gaming"
     on_status = lambda st: _gaming_net_update(job_id, network, stage=st)
     if network == "youtube":
-        yt_title, yt_description = batch_pipeline.shorts_text(title, caption)
+        yt_title, yt_description, yt_tags = batch_pipeline.gaming_youtube_fields(job.get("yt_seo"), title, caption)
         publish_at = batch_pipeline._rfc3339_utc(datetime.fromtimestamp(target_ts).isoformat()) if target_ts else None
         result = youtube_publisher.publish_video(
-            job["video_path"], yt_title, yt_description, "public", [], False,
+            job["video_path"], yt_title, yt_description, "public", yt_tags, False,
             on_status=on_status, publish_at=publish_at, channel_key=batch_pipeline.GAMING_YT_CHANNEL,
         )
         if result.get("ok"):
@@ -4974,8 +5025,19 @@ _yt_jobs_lock = threading.Lock()
 
 
 def _yt_channel_arg(channel: Optional[str]) -> Optional[str]:
-    """"gaming" -> clave del canal de videojuegos; vacio -> canal por defecto (historias)."""
-    return batch_pipeline.GAMING_YT_CHANNEL if channel == "gaming" else None
+    """"gaming" -> clave del canal de videojuegos; una clave de YT_CHANNEL_<N> existente -> esa;
+    vacio o desconocida -> canal por defecto (historias)."""
+    if channel == "gaming":
+        return batch_pipeline.GAMING_YT_CHANNEL
+    known = {ch["key"] for ch in youtube_publisher.list_channels()}
+    return str(channel) if channel and str(channel) in known else None
+
+
+@app.route("/api/youtube/channels")
+def api_youtube_channels():
+    """Canales de YouTube configurados (YT_CHANNEL_<N>_NAME en .env) y si estan conectados."""
+    gaming = batch_pipeline.GAMING_YT_CHANNEL
+    return jsonify({"ok": True, "channels": [{**ch, "gaming": ch["key"] == gaming} for ch in youtube_publisher.list_channels()]})
 
 
 @app.route("/api/youtube/connected")

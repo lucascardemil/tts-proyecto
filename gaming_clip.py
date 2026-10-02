@@ -89,6 +89,104 @@ GAMES = {
 # rendimiento en Medal primero.
 GAME_ROTATION = ["cs2", "minecraft", "valorant", "roblox", "fortnite", "marvel-rivals", "peak"]
 
+# ── Juegos en tendencia ────────────────────────────────────────────────────
+# Cada vez que se pide un clip (game_for_index) y al abrir los selectores se refresca la lista
+# con "Lo mas popular en Medal" (medal.tv/es/games, ya ordenada por popularidad): los juegos de
+# arriba se suman a GAMES y encabezan la rotacion "mix". Los fijos de arriba (static) nunca se
+# quitan. Se cachea en disco TRENDING_TTL_SECONDS para no leer Medal en cada clip de un lote.
+TRENDING_STORE = "gaming_trending_games"
+TRENDING_TTL_SECONDS = 3600
+TRENDING_LIMIT = 15
+_STATIC_GAMES = dict(GAMES)
+_STATIC_ROTATION = list(GAME_ROTATION)
+_games_lock = threading.Lock()
+# Sin kill-feed que verificar fuera de estos: el resto se trata como juego sin kills ("¡BRUTAL!").
+_KILL_GAME_HINTS = (
+    "counter-strike", "valorant", "fortnite", "apex", "call-of-duty", "overwatch", "r6-siege", "deadlock",
+    "marvel-rivals", "helldivers", "war-thunder", "wardogs", "rust", "pubg", "battlefield", "warzone",
+    "halo", "destiny",
+)
+
+
+def _game_from_trending(entry: dict) -> dict:
+    slug, name = entry["slug"], entry["name"]
+    compact = re.sub(r"[^a-z0-9]", "", name.lower()) or re.sub(r"[^a-z0-9]", "", slug)
+    return {
+        "label": name, "slug": slug, "short": name.upper()[:18],
+        "kills": any(h in slug for h in _KILL_GAME_HINTS),
+        "tags": [f"#{compact}", f"#{compact}clips", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp", "#clips"],
+    }
+
+
+def _fetch_trending() -> list:
+    """[{slug, name}] de la seccion "Lo mas popular en Medal", en orden de popularidad."""
+    import html as _html
+    page = _get(f"{MEDAL_BASE}/es/games").text
+    head = re.search(r"<h2[^>]*>\s*Lo m[aá]s popular en Medal\s*</h2>", page)
+    if not head:
+        raise ClipError("Medal cambió su página de juegos: no encuentro 'Lo más popular'.")
+    section = page[head.end():]
+    nxt = re.search(r"<h2", section)
+    section = section[:nxt.start()] if nxt else section
+    entries = []
+    for slug, inner in re.findall(r'<a href="/es/games/([a-z0-9\-]+)"[^>]*>(.*?)</a>', section, re.S):
+        alt = re.search(r'alt="([^"]*?)(?: game clips)?"', inner)
+        name = _html.unescape(alt.group(1)).strip() if alt else ""
+        if name and "studio" not in slug:  # FL Studio / Roblox Studio no son juegos
+            entries.append({"slug": slug, "name": name})
+    if len(entries) < 3:
+        raise ClipError("Medal no devolvió juegos en tendencia.")
+    return entries
+
+
+def _apply_trending(entries: list) -> None:
+    """Reemplaza los juegos dinamicos de GAMES y reordena GAME_ROTATION (en el lugar:
+    otros modulos importan estos objetos)."""
+    with _games_lock:
+        for key in [k for k in GAMES if k not in _STATIC_GAMES]:
+            del GAMES[key]
+        by_slug = {g["slug"]: k for k, g in GAMES.items()}
+        order = []
+        for e in entries[:TRENDING_LIMIT]:
+            key = by_slug.get(e["slug"])
+            if key is None:
+                key = e["slug"]
+                GAMES[key] = _game_from_trending(e)
+                by_slug[e["slug"]] = key
+            if key not in order:
+                order.append(key)
+        GAME_ROTATION[:] = order + [k for k in _STATIC_ROTATION if k not in order]
+
+
+def refresh_games(force: bool = False) -> bool:
+    """Actualiza la lista de juegos con los mas populares de Medal. True si leyo Medal.
+    Nunca falla: sin red se queda con la ultima lista guardada (o la fija)."""
+    store = job_store.load(TRENDING_STORE)
+    if not force and time.time() - store.get("updated", 0) < TRENDING_TTL_SECONDS:
+        return False
+    try:
+        entries = _fetch_trending()
+    except Exception as e:
+        logger.warning("gaming_clip: no se pudo actualizar la lista de juegos (%s); se usa la ultima guardada", e)
+        return False
+    job_store.save(TRENDING_STORE, {"updated": time.time(), "entries": entries})
+    _apply_trending(entries)
+    logger.info("gaming_clip: juegos en tendencia actualizados: %s", ", ".join(e["slug"] for e in entries[:TRENDING_LIMIT]))
+    return True
+
+
+def list_games() -> list:
+    """Juegos para los selectores, en orden de rotacion: [{key, label, trending}]."""
+    refresh_games()
+    trending = {e["slug"] for e in job_store.load(TRENDING_STORE).get("entries", [])}
+    with _games_lock:
+        return [{"key": k, "label": GAMES[k]["label"], "trending": GAMES[k]["slug"] in trending} for k in GAME_ROTATION if k in GAMES]
+
+
+_cached = job_store.load(TRENDING_STORE).get("entries")
+if _cached:
+    _apply_trending(_cached)
+
 HOOKS = [
     "JUGADA DE LOCOS", "NO PUEDE SER REAL", "MIRÁ HASTA EL FINAL", "ESTO ES ILEGAL",
     "NADIE LO VIO VENIR", "¿CÓMO LO HIZO?", "ESTO NO ES NORMAL", "ÉPICO O SUERTE?",
@@ -104,7 +202,9 @@ class ClipError(RuntimeError):
 
 
 def game_for_index(game_key: str, index: int) -> dict:
-    """Juego de un lote: el fijo, o rota por indice si es "mix"."""
+    """Juego de un lote: el fijo, o rota por indice si es "mix". Cada pedido de clip
+    refresca antes la lista con los juegos en tendencia (ver refresh_games)."""
+    refresh_games()
     key = GAME_ROTATION[index % len(GAME_ROTATION)] if game_key == "mix" else game_key
     if key not in GAMES:
         raise ClipError(f"Juego desconocido: {game_key}")
@@ -291,7 +391,120 @@ def build_texts(clip: dict, game: dict) -> dict:
     }
 
 
+# ── YouTube: SEO agresivo ──────────────────────────────────────────────────
+# Facebook/Instagram llevan un caption corto, de gancho y con pocos hashtags; YouTube es un
+# buscador, asi que su titulo, descripcion y tags son otros, cargados de palabras clave (juego
+# + "mejores jugadas / best moments / clips epicos / highlights" en español e ingles + año).
+# Limites de YouTube: titulo 100 caracteres, descripcion 5000, tags 500 en total, y mas de 15
+# hashtags en la descripcion hace que YouTube los ignore todos.
+YT_TITLE_MAX = 100
+YT_DESCRIPTION_MAX = 4800
+YT_TAGS_MAX_CHARS = 450
+YT_MAX_HASHTAGS = 15
+_YT_TITLE_TEMPLATES = (
+    "{hook} 😱 {game} | Mejores Jugadas y Clips Épicos {year} #Shorts",
+    "{game} Clip INCREÍBLE 🔥 {hook} | Best Moments {year} #Shorts",
+    "¿Suerte o Skill? {game} 🎮 {hook} | Jugadas Épicas {year} #Shorts",
+    "{game}: {hook} 🤯 Best Plays & Epic Clips {year} #Shorts",
+)
+
+
+def _yt_hashtag(text: str) -> str:
+    return "#" + re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def build_youtube_seo(clip: dict, game: dict, hook: str) -> dict:
+    """Titulo, descripcion y tags de YouTube para el clip: distintos de Facebook/Instagram y
+    pensados para posicionar. Deterministas por clip (misma variante de titulo si se reintenta)."""
+    rng = random.Random(clip["id"])
+    year = datetime.now().year
+    name = game["label"]
+    tag = _yt_hashtag(name)
+    hook_text = hook.replace("MIRÁ", "MIRA").strip(" ?!¿¡").upper()
+
+    template = rng.choice(_YT_TITLE_TEMPLATES)
+    title = template.format(hook=hook_text, game=name, year=year)
+    if len(title) > YT_TITLE_MAX:  # nombres de juego largos: se saca el gancho antes que el juego o #Shorts
+        title = template.replace("{hook} ", "").replace(" {hook}", "").replace("{hook}", "").format(game=name, year=year)
+    title = title[:YT_TITLE_MAX].rstrip()
+
+    hashtags = list(dict.fromkeys([
+        "#Shorts", tag, f"{tag}clips", f"{tag}highlights", "#mejoresjugadas", "#jugadasepicas", "#gaming",
+        "#videojuegos", "#gamer", "#gameplay", "#clipsepicos", "#bestmoments", "#viral", "#epicmoments", "#fyp",
+    ]))[:YT_MAX_HASHTAGS]
+
+    keywords = [
+        f"{name} clips", f"{name} best moments", f"{name} highlights", f"mejores jugadas de {name}",
+        f"jugadas épicas {name}", f"{name} gameplay en español", f"{name} {year}", f"{name} momentos épicos",
+    ]
+    author = clip.get("author") or ""
+    credit = "📹 Clip original en Medal" + (f": @{author}" if author else "") + (f" — {clip['page_url']}" if clip.get("page_url") else "")
+    description = (
+        f"{hook_text} 🔥 Mira esta jugada épica de {name}: uno de los mejores clips y momentos de {name} {year}. "
+        f"¿Suerte o skill? ¡Déjame tu opinión en los comentarios! 👇\n\n"
+        f"🎮 Juego: {name}\n{credit}\n"
+        f"🔔 Suscríbete a JugadasEpicasVideojuegos para ver las mejores jugadas, clips virales y momentos épicos "
+        f"de videojuegos todos los días.\n\n"
+        f"🔎 En este canal encuentras:\n"
+        f"• Mejores jugadas de {name} {year}\n"
+        f"• Clips épicos y momentos virales de {name}\n"
+        f"• Highlights, jugadas increíbles y clutch de videojuegos\n"
+        f"• Best gaming moments, epic plays and viral gaming clips\n\n"
+        f"🔑 Palabras clave: {', '.join(keywords)}, jugadas épicas, clips de videojuegos, gaming shorts, best gaming moments.\n\n"
+        + " ".join(hashtags)
+    )[:YT_DESCRIPTION_MAX]
+
+    tags, total = [], 0
+    for t in dict.fromkeys(keywords + [
+        name, "jugadas épicas", "clips épicos", "videojuegos", "gaming", "gamer", "shorts", "gaming shorts",
+        "clips virales", "best gaming moments", "epic gaming moments", "gameplay en español",
+        "jugadas increíbles", "mejores jugadas de videojuegos", "highlights gaming", "clutch", "momentos épicos",
+    ]):
+        cost = len(t) + 1 + (2 if " " in t else 0)  # YouTube cuenta entre comillas los tags con espacios
+        if total + cost > YT_TAGS_MAX_CHARS:
+            break
+        tags.append(t)
+        total += cost
+    return {"title": title, "description": description, "tags": tags}
+
+
 # ── Render ─────────────────────────────────────────────────────────────────
+
+# Voz del clip -> subtitulos. El audio de un clip de juego trae disparos, musica y ruido: Whisper
+# alucina texto sobre eso, asi que solo se conserva lo que el VAD marca como voz y supera
+# umbrales de confianza; con muy pocas palabras se asume que no habla nadie.
+SPEECH_MIN_WORD_PROB = 0.45
+SPEECH_MAX_NO_SPEECH_PROB = 0.6
+SPEECH_MIN_AVG_LOGPROB = -1.0
+SPEECH_MAX_COMPRESSION = 2.4
+SPEECH_MIN_LANGUAGE_PROB = 0.5
+SPEECH_MIN_WORDS = 3
+_WHISPER_BOILERPLATE = ("amara.org", "subtítulos", "subtitulos", "subtitles by", "thanks for watching")
+
+
+def transcribe_speech(path: Path) -> list:
+    """Palabras que se OYEN hablar en el clip: [{word, start, end}] en segundos del clip.
+    Lista vacia si no habla nadie (o si lo detectado parece ruido)."""
+    model = video_maker._get_whisper_model()
+    segments, info = model.transcribe(
+        str(path), word_timestamps=True, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 400, "speech_pad_ms": 150},
+        condition_on_previous_text=False,
+    )
+    words = []
+    for seg in segments:
+        text = (seg.text or "").lower()
+        if (seg.no_speech_prob > SPEECH_MAX_NO_SPEECH_PROB or seg.avg_logprob < SPEECH_MIN_AVG_LOGPROB
+                or seg.compression_ratio > SPEECH_MAX_COMPRESSION or any(b in text for b in _WHISPER_BOILERPLATE)):
+            continue
+        for w in seg.words or []:
+            token = w.word.strip()
+            if token and w.probability >= SPEECH_MIN_WORD_PROB:
+                words.append({"word": token, "start": round(w.start, 3), "end": round(w.end, 3)})
+    if len(words) < SPEECH_MIN_WORDS or info.language_probability < SPEECH_MIN_LANGUAGE_PROB:
+        return []
+    return words
+
 
 def ensure_sfx() -> None:
     sfx_dir = video_maker.VIDEO_PUBLIC_DIR / "sfx"
@@ -409,6 +622,14 @@ def _generate_gaming_clip(
 
     texts = build_texts(clip, game)
 
+    stage("subtitulos")
+    try:
+        subtitles = transcribe_speech(src_path)
+    except Exception:  # los subtitulos son un extra: si Whisper falla el clip sale igual, sin ellos
+        logger.exception("gaming_clip %s: no se pudo transcribir el clip, se edita sin subtitulos", job_key)
+        subtitles = []
+    logger.info("gaming_clip %s: %d palabras de voz detectadas", job_key, len(subtitles))
+
     stage("render")
     ensure_sfx()
     kills = [e.time for e in events]
@@ -425,6 +646,7 @@ def _generate_gaming_clip(
         "focusX": 50,
         "labels": labels,
         "counter": False,
+        "subtitles": subtitles,
     }
     output_path = video_maker.VIDEO_OUT_DIR / f"gclip_{job_key}.mp4"
     render_clip(props, src_dir / "props.json", output_path)
@@ -433,6 +655,7 @@ def _generate_gaming_clip(
     return {
         "video_path": str(output_path), "title": texts["title"], "caption": texts["caption"],
         "hook": texts["hook"], "clip": clip,
+        "youtube": build_youtube_seo(clip, game, texts["hook"]),
         "verified_events": [
             {"time": e.time, "kind": e.kind, "confidence": e.confidence, "label": e.label, "source": e.source}
             for e in events

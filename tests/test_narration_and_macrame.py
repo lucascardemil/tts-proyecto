@@ -156,3 +156,24 @@ def test_prompts_without_aspect_ratio_get_vertical_prefix():
     story = auto_pipeline._parse_story(
         "Guion\nImagen 1\nFrase del guion: «Hola mundo.»\nPrompt: Close-up of a boy pushing a plate", story_id="t916")
     assert story["prompts"][0]["prompt"].startswith("Vertical 9:16")
+
+
+def test_first_scene_starts_at_zero_even_if_narration_starts_late():
+    # Con 2.5 s de silencio inicial, el corte 0 no debe correrse: si no, las escenas suman
+    # menos que el audio y el video queda en negro al final.
+    import video_maker
+    def w(t, s): return {"word": t, "start": s, "end": s + 0.3}
+    words = [w("uno", 2.5), w("dos", 3.0), w("tres", 3.5), w("cuatro", 8.0), w("cinco", 8.5), w("seis", 9.0)]
+    cuts = video_maker._align_boundaries_to_script(["uno dos tres", "cuatro cinco seis"], words, 12.0)
+    assert cuts[0] == 0.0 and cuts[-1] == 12.0 and cuts[1] == 8.0
+
+
+def test_timeline_visible_content_covers_whole_audio():
+    import video_maker
+    def w(t, s): return {"word": t, "start": s, "end": s + 0.3}
+    words = [w("uno", 2.5), w("dos", 3.0), w("tres", 3.5), w("cuatro", 8.0), w("cinco", 8.5), w("seis", 9.0)]
+    scenes = [{"name": f"scene_{i:03d}.jpg", "type": "image", "native_duration": None} for i in range(2)]
+    tl = video_maker._build_timeline(scenes, "a.wav", 12.0, words, "", frases=["uno dos tres", "cuatro cinco seis"])
+    # Remotion pone las escenas una tras otra (duracion = end - start) menos el solape de transicion
+    visible = sum(sc["endFrame"] - sc["startFrame"] for sc in tl["scenes"]) - (len(tl["scenes"]) - 1) * video_maker.TRANSITION_FRAMES
+    assert abs(visible - round(12.0 * video_maker.FPS)) <= 1

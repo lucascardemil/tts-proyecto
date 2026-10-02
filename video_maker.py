@@ -486,7 +486,11 @@ def _align_boundaries_to_script(frases: list, words: list, duration: float) -> O
 
     # ancla obligatoria en 0 y al final (duración del audio); el resto se
     # interpola proporcional a longitud de frase entre los puntos SÍ resueltos
-    anchors = [(0, 0.0)] + [(i, t) for i, t in enumerate(starts) if t is not None] + [(len(frases), duration)]
+    # La primera escena SIEMPRE arranca en 0: si la narracion empieza tarde (silencio
+    # inicial del TTS), su ancla no puede pisar el 0, o toda la linea de tiempo se
+    # corre y sobran segundos en negro al final (las duraciones de escena suman menos
+    # que el audio, y el subtitulo sigue).
+    anchors = [(0, 0.0)] + [(i, t) for i, t in enumerate(starts) if t is not None and i > 0] + [(len(frases), duration)]
     filled = [None] * (len(frases) + 1)
     for i, t in anchors:
         filled[i] = t

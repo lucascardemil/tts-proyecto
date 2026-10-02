@@ -4,7 +4,7 @@ __pycache__/
 .env
 youtube_client_secret.json
 youtube_token.json
-youtube_token_2.json
+youtube_token_*.json
 facebook_publish_state.json
 models/
 voices/

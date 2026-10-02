@@ -251,6 +251,8 @@ _HEALABLE_EXTRA_MARKERS = (
     "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
     "is covered by",  # overlay de carga (splash) tapando el clic en WhatsApp: pasa solo
     "no se encontraron prompts de imagen",  # el modelo a veces responde solo el guion: otra respuesta suele traerlos
+    "no se pudo leer medal", "nameresolutionerror", "max retries exceeded",  # sin internet/DNS al buscar el clip
+    "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -1324,6 +1326,7 @@ def _generate_batch_clip(project_id: str, index: int) -> None:
         v["video_path"] = clip["video_path"]
         v["title"] = clip["title"]
         v["caption"] = clip["caption"]
+        v["yt_seo"] = clip["youtube"]  # titulo/descripcion/tags propios de YouTube (SEO)
         v["game"] = game["key"]
         v["source_clip"] = clip["clip"]["page_url"]
         v["gen_attempts"] = 0
@@ -1839,9 +1842,9 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
     def _yt(v, page_id):
         # Facebook y YouTube programan nativo: _publish_networks ya movio
         # scheduled_at a un horario futuro valido. El canal es el de gaming, no el de historias.
-        yt_title, yt_description = shorts_text(title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["youtube"]))
+        yt_title, yt_description, yt_tags = gaming_youtube_fields(v.get("yt_seo"), title, caption)
         result = youtube_publisher.publish_video(
-            v["video_path"], yt_title, yt_description, "public", [], False,
+            v["video_path"], yt_title, yt_description, "public", yt_tags, False,
             publish_at=_rfc3339_utc(v.get("scheduled_at")), channel_key=GAMING_YT_CHANNEL,
         )
         if result.get("ok"):
@@ -1853,6 +1856,16 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
         return result
 
     _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig})
+
+
+def gaming_youtube_fields(seo: Optional[dict], title: str, caption: str) -> tuple:
+    """(titulo, descripcion, tags) de YouTube para un clip gaming. Usa el SEO propio del clip
+    (gaming_clip.build_youtube_seo); un clip generado antes de existir eso cae al caption de
+    Facebook/Instagram con #Shorts."""
+    if seo:
+        return seo["title"], seo["description"], list(seo.get("tags") or [])
+    yt_title, yt_description = shorts_text(title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["youtube"]))
+    return yt_title, yt_description, []
 
 
 def shorts_text(title: str, description: str) -> tuple:
