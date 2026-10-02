@@ -3,6 +3,7 @@ import {
   AbsoluteFill,
   Img,
   interpolate,
+  Easing,
   staticFile,
   useCurrentFrame,
   useVideoConfig,
@@ -22,6 +23,11 @@ export const KenBurnsImage: React.FC<{
   const progress = interpolate(frame, [0, Math.max(durationInFrames - 1, 1)], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
+    // ease-in-out en vez de lineal: el zoom/paneo arranca y termina más
+    // lento, acelera en el medio — se siente intencional en vez de
+    // mecánico. Aplicado acá (una sola vez, al progreso 0→1) en vez de en
+    // cada interpolate() de abajo para no duplicar el easing.
+    easing: Easing.inOut(Easing.quad),
   });
 
   let scale = 1;

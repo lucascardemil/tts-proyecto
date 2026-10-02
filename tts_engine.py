@@ -157,6 +157,11 @@ DEFAULT_VOICE = "es_es_mujer"
 # cfg_weight en el default = sigue de cerca la voz de referencia.
 BEDTIME_PRESET = {"exaggeration": 0.3, "cfg_weight": 0.8}
 
+# Motores: las voces de la biblioteca (VOICE_LIBRARY) usan Chatterbox; las voces
+# clonadas por el usuario (voices/custom/, clave "custom:<slug>") usan OmniVoice
+# (~8x más rápido en RTX 3050, pero pico de 8.4 GB de VRAM) con respaldo a
+# Chatterbox si falla. Ver _text_to_speech_with_fallback().
+
 
 # ─────────────────────────────────────────────
 # BIBLIOTECA DE VOCES (bootstrap con Edge TTS, una sola vez)
@@ -226,6 +231,170 @@ def ensure_all_voices(show_progress: bool = True) -> bool:
         if not bootstrap_voice(key, show_progress=show_progress):
             ok = False
     return ok
+
+
+# ─────────────────────────────────────────────
+# VOCES CLONADAS (muestras de personas, voices/custom/)
+# ─────────────────────────────────────────────
+# Cada voz es un WAV mono 24 kHz de 5-20 s en voices/custom/<slug>.wav, y su
+# metadato en voices/custom/index.json. Se identifican con la clave
+# "custom:<slug>", que viaja por el mismo parametro `voice` que las voces de la
+# biblioteca (jobs y lotes no cambian). Cualquier audio suelto que se copie a
+# la carpeta se importa (normalizado) la proxima vez que se liste.
+
+CUSTOM_VOICES_DIR = VOICES_DIR / "custom"
+CUSTOM_VOICE_PREFIX = "custom:"
+CUSTOM_VOICE_MIN_SECONDS = 4.0
+CUSTOM_VOICE_MAX_SECONDS = 20
+CUSTOM_VOICE_EXTENSIONS = (".wav", ".mp3", ".m4a", ".ogg", ".flac", ".aac", ".opus")
+_CUSTOM_SLUG_RE = re.compile(r"^[a-z0-9_]{1,60}$")
+
+
+def _custom_index_path() -> Path:
+    return CUSTOM_VOICES_DIR / "index.json"
+
+
+def _load_custom_index() -> dict:
+    import json
+    try:
+        data = json.loads(_custom_index_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_custom_index(index: dict) -> None:
+    import json
+    CUSTOM_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    _custom_index_path().write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _slugify(label: str) -> str:
+    text = unicodedata.normalize("NFKD", label or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:50] or "voz"
+
+
+def _wav_seconds(path: Path) -> float:
+    import wave
+    with wave.open(str(path), "rb") as w:
+        return w.getnframes() / float(w.getframerate())
+
+
+def _import_custom_sample(src: Path, dest: Path) -> None:
+    """Convierte `src` a WAV mono 24 kHz, sin silencio inicial, a volumen parejo y de
+    como mucho CUSTOM_VOICE_MAX_SECONDS. Rechaza una muestra util de < CUSTOM_VOICE_MIN_SECONDS."""
+    tmp = dest.with_name(f"_tmp_{dest.name}")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "24000",
+             "-af", "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.1,"
+                    "loudnorm=I=-20:TP=-2:LRA=11",
+             "-t", str(CUSTOM_VOICE_MAX_SECONDS), "-acodec", "pcm_s16le", str(tmp)],
+            check=True, capture_output=True,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError("Falta ffmpeg para procesar la muestra de voz.") from e
+    except subprocess.CalledProcessError as e:
+        tmp.unlink(missing_ok=True)
+        raise ValueError("No se pudo leer el audio: sube un archivo de audio valido (wav, mp3, m4a...).") from e
+    if _wav_seconds(tmp) < CUSTOM_VOICE_MIN_SECONDS:
+        tmp.unlink(missing_ok=True)
+        raise ValueError(
+            f"La muestra es muy corta: hacen falta al menos {CUSTOM_VOICE_MIN_SECONDS:.0f} segundos de voz clara."
+        )
+    tmp.replace(dest)
+
+
+def _unique_slug(label: str, taken: set) -> str:
+    base = _slugify(label)
+    slug, n = base, 2
+    while slug in taken:
+        slug, n = f"{base}_{n}", n + 1
+    return slug
+
+
+def list_custom_voices() -> dict:
+    """{slug: {label, lang, created_at}}. Importa los audios sueltos de voices/custom/
+    que aun no estan registrados (el original se mueve a voices/custom/_originals/)
+    y descarta del indice las voces cuyo WAV ya no existe."""
+    CUSTOM_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    index = _load_custom_index()
+    changed = False
+    for slug in [s for s in index if not (CUSTOM_VOICES_DIR / f"{s}.wav").exists()]:
+        del index[slug]
+        changed = True
+    registered = {f"{s}.wav" for s in index}
+    for f in sorted(CUSTOM_VOICES_DIR.iterdir()):
+        if (not f.is_file() or f.name in registered or f.name.startswith("_")
+                or f.suffix.lower() not in CUSTOM_VOICE_EXTENSIONS):
+            continue
+        slug = _unique_slug(f.stem, set(index))
+        try:
+            originals = CUSTOM_VOICES_DIR / "_originals"
+            originals.mkdir(exist_ok=True)
+            moved = originals / f.name
+            f.replace(moved)
+            _import_custom_sample(moved, CUSTOM_VOICES_DIR / f"{slug}.wav")
+        except (ValueError, RuntimeError, OSError) as e:
+            print(f"[AVISO] No se pudo importar la voz '{f.name}': {e}")
+            continue
+        index[slug] = {"label": f.stem, "lang": "es", "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        changed = True
+    if changed:
+        _save_custom_index(index)
+    return index
+
+
+def add_custom_voice(src_path: str, label: str, lang: str = "es") -> str:
+    """Guarda una voz clonada desde un archivo de audio. Devuelve su clave
+    ("custom:<slug>"). ValueError con mensaje legible si el audio no sirve."""
+    label = (label or "").strip()
+    if not label:
+        raise ValueError("Ponle un nombre a la voz.")
+    index = list_custom_voices()
+    slug = _unique_slug(label, set(index))
+    _import_custom_sample(Path(src_path), CUSTOM_VOICES_DIR / f"{slug}.wav")
+    index[slug] = {"label": label[:60], "lang": lang, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    _save_custom_index(index)
+    return CUSTOM_VOICE_PREFIX + slug
+
+
+def delete_custom_voice(slug: str) -> bool:
+    if not _CUSTOM_SLUG_RE.match(slug or ""):
+        return False
+    index = list_custom_voices()
+    if slug not in index:
+        return False
+    sample = CUSTOM_VOICES_DIR / f"{slug}.wav"
+    sample.unlink(missing_ok=True)
+    sample.with_name(sample.name + ".voiceprompt.pt").unlink(missing_ok=True)
+    del index[slug]
+    _save_custom_index(index)
+    return True
+
+
+def is_custom_voice(voice) -> bool:
+    return isinstance(voice, str) and voice.startswith(CUSTOM_VOICE_PREFIX)
+
+
+def get_default_voice() -> str:
+    """Voz por defecto: DEFAULT_CUSTOM_VOICE (env, clave "custom:<slug>") si existe; si no,
+    la primera voz clonada; si no hay ninguna, la voz de biblioteca DEFAULT_VOICE."""
+    wanted = os.environ.get("DEFAULT_CUSTOM_VOICE", "").strip()
+    if wanted and custom_voice_sample(wanted):
+        return wanted
+    voices = list_custom_voices()
+    return CUSTOM_VOICE_PREFIX + sorted(voices)[0] if voices else DEFAULT_VOICE
+
+
+def custom_voice_sample(voice_key: str) -> Optional[Path]:
+    """Ruta del WAV de una voz clonada ("custom:<slug>"), o None si no existe."""
+    if not is_custom_voice(voice_key):
+        return None
+    slug = voice_key[len(CUSTOM_VOICE_PREFIX):]
+    if not _CUSTOM_SLUG_RE.match(slug) or slug not in list_custom_voices():
+        return None
+    return CUSTOM_VOICES_DIR / f"{slug}.wav"
 
 
 # ─────────────────────────────────────────────
@@ -694,6 +863,56 @@ def _concat_wav(parts: list, output_path: str, pause_seconds: float = 0.35) -> N
 # FUNCIONES PRINCIPALES
 # ─────────────────────────────────────────────
 
+def _text_to_speech_with_fallback(
+    text: str,
+    output_path: Optional[str] = None,
+    **kwargs,
+) -> Optional[str]:
+    """Genera audio. Con una voz clonada (`voice="custom:<slug>"` o `audio_prompt_path`)
+    intenta OmniVoice primero y, si falla (import, VRAM, generación), cae a Chatterbox
+    con la MISMA muestra. Sin voz clonada usa Chatterbox con la voz de biblioteca.
+    OmniVoice ignora exaggeration/cfg_weight (son de Chatterbox).
+    """
+    audio_prompt_path = kwargs.pop("audio_prompt_path", None)
+    omnivoice_num_step = kwargs.pop("omnivoice_num_step", 16)
+    omnivoice_max_chars = kwargs.pop("omnivoice_max_chars", 280)
+    if not is_custom_voice(kwargs.get("voice")) and not audio_prompt_path and list_custom_voices():
+        # Con voces clonadas disponibles, las de biblioteca quedan en desuso: un lote o
+        # proyecto viejo que aun trae "es_es_mujer" narra con la voz clonada por defecto.
+        legacy = kwargs.get("voice")
+        kwargs["voice"] = get_default_voice()
+        print(f"[AVISO] La voz de biblioteca '{legacy}' esta en desuso; se usa {kwargs['voice']}.")
+    if is_custom_voice(kwargs.get("voice")):
+        sample = custom_voice_sample(kwargs.pop("voice"))
+        if sample is None:
+            raise ValueError("La voz clonada elegida ya no existe: elige otra voz o vuelve a subir la muestra.")
+        audio_prompt_path = str(sample)
+
+    if audio_prompt_path:
+        # Hay voz de referencia → intentar OmniVoice primero
+        print(f"\n🎙️  OmniVoice (default)")
+        print(f"📝 Texto: {text[:80]}{'...' if len(text) > 80 else ''}")
+        print("-" * 50)
+
+        result = tts_omnivoice(
+            text,
+            output_path=output_path,
+            voice_sample_path=audio_prompt_path,
+            num_step=omnivoice_num_step,
+            max_chars=omnivoice_max_chars,
+        )
+        if result:
+            return result
+
+        # Fallback a Chatterbox, clonando la misma muestra (no la voz de biblioteca)
+        print("\n⚠️  OmniVoice falló, probando Chatterbox como fallback...")
+        unload_omnivoice()  # libera VRAM antes de Chatterbox
+        kwargs["audio_prompt_path"] = audio_prompt_path
+
+    # Sin voz de referencia, o fallback desde OmniVoice → Chatterbox
+    return text_to_speech(text, output_path, **kwargs)
+
+
 def text_to_speech(text: str, output_path: Optional[str] = None, **kwargs) -> Optional[str]:
     """Genera audio con Chatterbox. Ver tts_chatterbox() para los argumentos disponibles."""
     print(f"\n🎙️  Chatterbox")
@@ -734,7 +953,7 @@ def text_to_speech_long(
 
     if len(chunks) == 1:
         progress(8, "Generando audio...")
-        result = text_to_speech(text, output_path=output_path, **kwargs)
+        result = _text_to_speech_with_fallback(text, output_path=output_path, **kwargs)
         progress(100, "Listo" if result else "Error al generar el audio.")
         return result
 
@@ -755,7 +974,7 @@ def text_to_speech_long(
             progress(pct, f"Generando fragmento {i} de {n}...")
 
             part_path = str(Path(tmp_dir) / f"part_{i:03d}.wav")
-            result = text_to_speech(chunk, output_path=part_path, **kwargs)
+            result = _text_to_speech_with_fallback(chunk, output_path=part_path, **kwargs)
             if not result:
                 print(f"[ERROR] Falló el fragmento {i}, se aborta la unión.")
                 progress(100, f"Error al generar el fragmento {i}.")
@@ -774,6 +993,321 @@ def text_to_speech_long(
     progress(100, "Listo")
     print(f"✓ Audio completo guardado en: {output_path}")
     return output_path
+
+
+# ─────────────────────────────────────────────
+# Validación del audio narrado contra el guion escrito
+# ─────────────────────────────────────────────
+
+class NarrationMismatchError(RuntimeError):
+    """El audio generado no coincide con el guion tras todos los intentos."""
+
+    def __init__(self, message: str, report: Optional[dict] = None):
+        super().__init__(message)
+        self.report = report or {}
+
+
+NARRATION_CHECK_SUFFIX = ".narration_check.json"
+NARRATION_MAX_ATTEMPTS = 3
+# Palabras omitidas/cambiadas toleradas (ruido de transcripción: "2" vs "dos",
+# "lejano" vs "leyano"). Las palabras AGREGADAS no se toleran: son la señal de
+# que el TTS inventó/repitió algo.
+NARRATION_NOISE_TOLERANCE = 0.03
+# Solo es "ruido" (tolerado) una sustitucion casi identica ("colgador"/"colgadora",
+# 0.94); "ansia" por "anciana" (0.83) es una palabra distinta y cuenta como cambio.
+_NOISE_CHAR_RATIO = 0.9
+
+
+def narration_diff(script: str, transcript: str) -> dict:
+    """Compara guion vs transcripción palabra por palabra (sin acentos ni
+    puntuación, alineación por secuencia: respeta el orden de las ideas).
+
+    Devuelve {ok, similarity, added, removed, changed, noise}:
+      added   -- palabras/frases que se oyen pero no están en el guion
+      removed -- fragmentos del guion que no se oyen
+      changed -- [(esperado, oído)] sustituciones reales
+      noise   -- sustituciones casi iguales (probable error de transcripción)
+    """
+    exp = _normalize_words(script)
+    got = _normalize_words(transcript)
+    matcher = difflib.SequenceMatcher(a=exp, b=got, autojunk=False)
+    added, removed, changed, noise = [], [], [], []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "insert":
+            added.append(" ".join(got[j1:j2]))
+        elif tag == "delete":
+            removed.append(" ".join(exp[i1:i2]))
+        elif tag == "replace":
+            a, b = " ".join(exp[i1:i2]), " ".join(got[j1:j2])
+            pair = (a, b)
+            if (i2 - i1 == j2 - j1 == 1
+                    and difflib.SequenceMatcher(a=a, b=b).ratio() >= _NOISE_CHAR_RATIO):
+                noise.append(pair)
+            else:
+                changed.append(pair)
+    removed_words = sum(len(r.split()) for r in removed)
+    changed_words = sum(len(c[0].split()) for c in changed)
+    allowed = max(1, round(NARRATION_NOISE_TOLERANCE * len(exp)))
+    ok = not added and (removed_words + changed_words) <= allowed
+    return {
+        "ok": ok,
+        "similarity": round(matcher.ratio(), 4),
+        "expected_words": len(exp),
+        "added": added, "removed": removed, "changed": changed, "noise": noise,
+    }
+
+
+def verify_narration(script: str, audio_path: str) -> dict:
+    """Transcribe el audio completo con Whisper y lo compara con el guion
+    (ver narration_diff). Si Whisper no está disponible devuelve
+    {"ok": True, "skipped": True} -- no se bloquea el audio por no poder
+    verificarlo (mismo criterio que _transcript_mismatch)."""
+    try:
+        whisper_model = _get_verify_whisper_model()
+        segments, _ = whisper_model.transcribe(
+            audio_path, language="es" if _looks_spanish(script) else None,
+        )
+        transcript = " ".join(seg.text for seg in segments)
+    except Exception as e:
+        print(f"  ⚠️  No se pudo verificar la narración ({e}), se entrega el audio igual.")
+        return {"ok": True, "skipped": True, "reason": str(e)}
+    report = narration_diff(script, transcript)
+    report["transcript"] = transcript.strip()
+    return report
+
+
+def describe_narration_diff(report: dict, limit: int = 6) -> str:
+    """Resumen legible de las diferencias (para logs y mensajes de error)."""
+    parts = []
+    if report.get("added"):
+        parts.append("agregado: " + "; ".join(f"«{a}»" for a in report["added"][:limit]))
+    if report.get("removed"):
+        parts.append("omitido: " + "; ".join(f"«{r}»" for r in report["removed"][:limit]))
+    if report.get("changed"):
+        parts.append("cambiado: " + "; ".join(f"«{a}»→«{b}»" for a, b in report["changed"][:limit]))
+    return " | ".join(parts) or "sin diferencias"
+
+
+def text_to_speech_verified(
+    text: str, max_attempts: int = NARRATION_MAX_ATTEMPTS, **kwargs,
+) -> tuple:
+    """text_to_speech_long + validación contra el guion. Si el audio no
+    coincide (palabras agregadas, frases omitidas o cambiadas) lo descarta y lo
+    regenera, hasta `max_attempts`. Devuelve (ruta_audio, informe) o
+    (None, None) si el TTS falló. Si ningún intento coincide lanza
+    NarrationMismatchError con el detalle de las diferencias.
+    El informe queda en <audio>.narration_check.json."""
+    try:
+        return _text_to_speech_verified(text, max_attempts, **kwargs)
+    finally:
+        unload_omnivoice()  # libera la GPU para Whisper/render tras la etapa de voz
+
+
+def _text_to_speech_verified(text: str, max_attempts: int, **kwargs) -> tuple:
+    import json
+
+    report: dict = {}
+    for attempt in range(1, max_attempts + 1):
+        path = text_to_speech_long(text, **kwargs)
+        if not path:
+            return None, None
+        report = verify_narration(text, path)
+        report["attempt"] = attempt
+        Path(path + NARRATION_CHECK_SUFFIX).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        if report["ok"]:
+            if not report.get("skipped"):
+                print(f"✓ Narración validada contra el guion (similitud {report['similarity']:.0%}).")
+            return path, report
+        print(f"⚠️  La narración no coincide con el guion (intento {attempt}/{max_attempts}): "
+              f"{describe_narration_diff(report)}")
+        if attempt < max_attempts:
+            Path(path).unlink(missing_ok=True)
+            Path(path + NARRATION_CHECK_SUFFIX).unlink(missing_ok=True)
+    raise NarrationMismatchError(
+        f"el audio no coincide con el guion tras {max_attempts} intentos: "
+        f"{describe_narration_diff(report)}",
+        report,
+    )
+
+
+# ─────────────────────────────────────────────
+# OmniVoice (k2-fsa) — motor TTS rápido (default en viral-clone-studio)
+# ─────────────────────────────────────────────
+# Clonado de voz SOTA en 600+ idiomas. En RTX 3050 6GB: RTF ~2.6x (num_step=16)
+# vs Chatterbox RTF ~17x — ~8x más rápido. Pico VRAM 8.4 GB (se derrama a
+# memoria compartida; funciona pero frena). Caché de prompt de voz en disco
+# (<muestra>.voiceprompt.pt) evita re-transcribir la referencia en reanudaciones.
+# El modelo se carga perezosamente y se libera con unload_omnivoice().
+
+_OMNIVOICE_MODEL = None          # instancia única por proceso (carga perezosa)
+_OMNIVOICE_PROMPTS: dict = {}    # ruta de referencia -> VoiceClonePrompt en memoria
+
+
+def _get_omnivoice_model():
+    """Carga perezosa del modelo en la GPU (fp16). ~2 GB de pesos; el pico de
+    generacion en la 3050 6GB (8.4 GB) se derrama a memoria compartida --
+    funciona, a RTF ~2.6x con num_step=16."""
+    global _OMNIVOICE_MODEL
+    if _OMNIVOICE_MODEL is None:
+        import torch
+        from omnivoice import OmniVoice
+        _OMNIVOICE_MODEL = OmniVoice.from_pretrained(
+            "k2-fsa/OmniVoice", device_map="cuda:0", dtype=torch.float16,
+        )
+    return _OMNIVOICE_MODEL
+
+
+def unload_omnivoice() -> None:
+    """Suelta el modelo y los prompts de voz, y vacía la caché de CUDA.
+    Se llama al terminar la etapa de voz para que la GPU quede libre
+    durante la generación de imágenes / el resto del sistema."""
+    global _OMNIVOICE_MODEL
+    if _OMNIVOICE_MODEL is None:
+        return
+    _OMNIVOICE_MODEL = None
+    _OMNIVOICE_PROMPTS.clear()
+    try:
+        import gc
+        gc.collect()
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _get_voice_prompt(model, voice_sample_path: Path):
+    """Prompt de voz clonada para la muestra dada, cacheado en memoria (por
+    proceso) y en disco (<muestra>.voiceprompt.pt) para no re-transcribir la
+    referencia con Whisper en cada reanudación del pipeline."""
+    from omnivoice import VoiceClonePrompt
+
+    key = str(voice_sample_path)
+    cached = _OMNIVOICE_PROMPTS.get(key)
+    if cached is not None:
+        return cached
+
+    pt_path = voice_sample_path.with_name(voice_sample_path.name + ".voiceprompt.pt")
+    if pt_path.exists():
+        prompt = VoiceClonePrompt.load(str(pt_path))
+    else:
+        prompt = model.create_voice_clone_prompt(
+            ref_audio=str(voice_sample_path), ref_text=None,  # Whisper auto-transcribe
+        )
+        try:
+            prompt.save(str(pt_path))
+        except Exception:
+            pass  # el cache en disco es una optimización, no un requisito
+    _OMNIVOICE_PROMPTS[key] = prompt
+    return prompt
+
+
+def _split_text_chunks_omnivoice(text: str, max_chars: int = 280) -> list:
+    """Trocea el guion por oraciones (el modelo genera incremental; chunks de
+    ~2-4 frases dan consistencia de tono sin desbordar la secuencia). Oraciones
+    más largas que max_chars se parten por comas, y como último recurso duro."""
+    import re
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s.strip()]
+    chunks: list = []
+    current = ""
+    for s in sentences:
+        while len(s) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            cut = s.rfind(",", 0, max_chars)
+            if cut < max_chars // 2:
+                cut = max_chars
+            chunks.append(s[:cut].strip())
+            s = s[cut:].lstrip(" ,;")
+        if not s:
+            continue
+        if current and len(current) + len(s) + 1 > max_chars:
+            chunks.append(current)
+            current = s
+        else:
+            current = f"{current} {s}".strip() if current else s
+    if current:
+        chunks.append(current)
+    return chunks or ([text.strip()] if text.strip() else [])
+
+
+def tts_omnivoice(
+    text: str,
+    output_path: Optional[str] = None,
+    voice_sample_path: Optional[str] = None,
+    num_step: int = 16,
+    max_chars: int = 280,
+) -> Optional[str]:
+    """Genera audio con OmniVoice (clonación de voz zero-shot, chunking por frases).
+
+    Args:
+        text: Texto a convertir.
+        output_path: Ruta de salida (.wav). Si es None, se genera automáticamente.
+        voice_sample_path: Ruta obligatoria a un WAV de referencia (5-20s) para clonar
+            la voz. Sin esto no hay voz de referencia.
+        num_step: Pasos de difusión (16=rápido RTF~2.6x, 32=mejor calidad RTF~8x).
+        max_chars: Máximo de caracteres por chunk (divide por oraciones).
+
+    Returns:
+        Ruta al archivo WAV generado, o None si hubo error.
+    """
+    try:
+        from omnivoice import OmniVoice  # noqa: F401
+    except ImportError:
+        print("[ERROR] OmniVoice no instalado. Ejecuta: pip install omnivoice")
+        return None
+
+    if not text.strip():
+        print("[ERROR] Texto vacío: no hay nada que narrar.")
+        return None
+
+    if not voice_sample_path:
+        print("[ERROR] OmniVoice requiere voice_sample_path (audio de referencia 5-20s).")
+        return None
+
+    if output_path is None:
+        import time
+        timestamp = int(time.time())
+        output_path = str(OUTPUT_DIR / f"audio_{timestamp}.wav")
+
+    try:
+        model = _get_omnivoice_model()
+        prompt = _get_voice_prompt(model, Path(voice_sample_path))
+        chunks = _split_text_chunks_omnivoice(text, max_chars=max_chars)
+
+        import numpy as np
+        import soundfile as sf
+
+        sr = 24000
+        silence = np.zeros(int(0.12 * sr), dtype=np.float32)
+        pieces: list = []
+        for chunk in chunks:
+            audio = model.generate(text=chunk, voice_clone_prompt=prompt, num_step=num_step)[0]
+            audio = np.asarray(audio, dtype=np.float32)
+            if audio.size:
+                pieces.append(audio)
+                pieces.append(silence)
+
+        if not pieces:
+            print("[ERROR] OmniVoice no devolvió audio para ningún chunk.")
+            return None
+
+        full = np.concatenate(pieces[:-1]) if len(pieces) > 1 else pieces[0]  # sin silencio final
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        sf.write(str(out), full, sr, subtype="PCM_16")
+        if not out.exists() or out.stat().st_size < 10_000:
+            print("[ERROR] OmniVoice generó un archivo vacío o demasiado corto.")
+            return None
+
+        print(f"✓ Audio guardado en: {output_path}")
+        return str(output_path)
+    except Exception as e:
+        print(f"[ERROR] OmniVoice falló: {e}")
+        return None
 
 
 # ─────────────────────────────────────────────

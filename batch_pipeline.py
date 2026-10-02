@@ -1,6 +1,6 @@
 """Orquestacion del modulo "Generacion en lote": crea proyectos que generan y
 publican N videos completos, espaciados en varios dias, sacando guion+prompts
-de un Project de Qwen. Independiente de _run_pipeline_job (app.py) -- solo
+del generador de texto (cadena de LLMs). Independiente de _run_pipeline_job (app.py) -- solo
 comparte los locks globales de render/clipgen (un solo render/generacion a la
 vez en todo el proceso) y las funciones de publicacion ya existentes, que se
 reusan tal cual, nunca se reescriben.
@@ -14,6 +14,8 @@ dentro de cada funcion que las usa.
 import json
 import logging
 import msvcrt
+import os
+import random
 import re
 import shutil
 import threading
@@ -21,9 +23,106 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
-from PIL import Image
+import text_provider
+
+SCRIPT_DIR = Path(__file__).parent
+_PROMPTS_DIR = SCRIPT_DIR / "prompts"
+
+# Proveedor de texto del lote: FreeLLM endpoint local (text_provider)
+TEXT_PROVIDER_CHOICES = ("auto",)
+
+def _text_system_prompt(kind: str) -> str:
+    """System prompt autocontenido (prompts/historias_system.md o
+    gaming_system.md): el formato de salida que exigen los parsers.
+    FileNotFoundError => el eslabon LLM se salta y la cadena falla clara."""
+    return (_PROMPTS_DIR / f"{kind}_system.md").read_text(encoding="utf-8")
+
+TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
+STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo"}  # los demas (posts) no traen bloques Imagen
+
+# Alimento protagonista de cada historia/post de niño selectivo. Sin esto el modelo
+# se ancla a los ejemplos del prompt (brocoli) y todo gira alrededor de lo mismo; se
+# sortea aqui (no lo decide el modelo) y nunca se repite el de la vez anterior.
+NINIO_FOODS = (
+    "brócoli", "zanahoria", "calabacín", "espinaca", "zapallo (calabaza)", "tomate", "palta (aguacate)",
+    "arroz", "pollo", "pan", "huevo", "fideos", "lentejas", "plátano", "papa", "manzana",
+)
+_NINIO_KINDS = {"ninio_selectivo", "ninio_post"}
+_last_ninio_food: Optional[str] = None
+
+
+def _pick_ninio_food() -> str:
+    global _last_ninio_food
+    food = random.choice([f for f in NINIO_FOODS if f != _last_ninio_food])
+    _last_ninio_food = food
+    return food
+
+
+def _generate_text_with_chain(
+    kind: str,
+    page_name: str,
+    trigger_message: str,
+    story_id: str,
+    duration_seconds: Optional[int] = None,
+    prefer: str = "",
+    attempted: Optional[list] = None,
+) -> str:
+    """Texto (guion/idea de post) con FreeLLM (text_provider).
+    Si falla, lanza excepción (no hay fallback). `attempted` recibe
+    el nombre del proveedor intentado (diagnostico/logs)."""
+    def _mark(name: str) -> None:
+        if attempted is not None:
+            attempted.append(name)
+
+    errors = []
+    if kind in _NINIO_KINDS:
+        trigger_message += (
+            f"\n\nAlimento protagonista de esta pieza: {_pick_ninio_food()}. "
+            "Es el que el niño rechaza o el que aparece en el plato; no lo cambies por brócoli."
+        )
+
+    if text_provider.available_backends():
+        _mark("freellm")
+        try:
+            system = _text_system_prompt(kind)
+            # Cada intento usa el siguiente modelo de la cadena: si uno esta sin cuota
+            # o se queda razonando, el que sigue lo cubre (en vez de repetir el mismo).
+            models = text_provider.model_chain()
+            attempts = max(TEXT_FORMAT_ATTEMPTS, len(models))
+            for attempt in range(1, attempts + 1):
+                try:
+                    text, backend = text_provider.generate_text(
+                        system,
+                        trigger_message,
+                        max_tokens=4096,
+                        temperature=0.8,
+                        model=models[(attempt - 1) % len(models)],
+                    )
+                    # Los nichos de historia piden bloques "Imagen N": sin ellos es
+                    # razonamiento volcado por el modelo, no una historia.
+                    if kind in STORY_TEXT_KINDS and not auto_pipeline.has_image_blocks(text):
+                        raise text_provider.TextProviderError(
+                            "freellm: la respuesta no trae bloques Imagen/Frase/Prompt (razonamiento o formato roto)")
+                except text_provider.TextProviderError as e:
+                    retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "rate limit"))
+                    if not retryable or attempt == attempts:
+                        raise
+                    logger.warning("batch: %s; reintento %d/%d con otro modelo", e, attempt, attempts)
+                    continue
+                logger.info("batch: texto generado por %s (story_id=%s)", backend, story_id)
+                return text
+        except FileNotFoundError as e:
+            errors.append(f"text_provider: system prompt {kind} no encontrado")
+            logger.warning("batch: %s", errors[-1])
+        except text_provider.TextProviderError as e:
+            errors.append(str(e))
+            logger.warning("batch: text_provider fallo: %s", e)
+
+    raise RuntimeError(
+        "Sin proveedor de texto disponible (" + ("; ".join(errors) or "ningun eslabon intentado") + ")"
+    )
 
 import auto_pipeline
 import video_maker
@@ -31,9 +130,11 @@ import facebook_publisher
 import instagram_publisher
 import youtube_publisher
 import feedback_analyzer
+import gaming_clip
 import job_store
+import meme_maker
 import seo_optimizer
-from tts_engine import text_to_speech_long, DEFAULT_VOICE, BEDTIME_PRESET
+from tts_engine import text_to_speech_verified, get_default_voice, BEDTIME_PRESET, NARRATION_CHECK_SUFFIX
 
 # logging.getLogger(__name__) ("batch_pipeline") no tenia ningun handler propio
 # ni de un ancestro configurado (el logger "pipeline" de auto_pipeline.py es un
@@ -63,6 +164,44 @@ BATCH_MIN_GAP_SECONDS = 3600
 BATCH_HOUR_START = 9
 BATCH_HOUR_END = 20  # inclusive
 
+# Posts de imagen gaming (Workflow JugadasEpicasVideojuegos, sec. 4): Facebook
+# a las 13:00 y 20:00 (son el scheduled_at del video), Instagram una hora
+# antes (12:00 y 19:00, via network_offsets del proyecto).
+GAMING_SLOT_HOURS = [13, 20]
+GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_at
+# Plantillas de la "semana tipo" (sec. 2 y 4): [slot del mediodia, slot de la
+# noche] por dia, lunes=0. Domingo solo trae T1 en el workflow; el segundo
+# slot repite T2 (la otra plantilla mas usada).
+GAMING_TEMPLATES = {
+    "T1": "Dilema Binario",
+    "T2": "Situación Relatable 2AM",
+    "T3": "Screenshot Tweet / Fake Chat",
+    "T4": "Honor Level / Stat Absurdo",
+}
+GAMING_WEEK = [("T1", "T2"), ("T1", "T4"), ("T2", "T3"), ("T1", "T2"), ("T1", "T4"), ("T2", "T3"), ("T1", "T2")]
+# Hashtags por red (sec. 6): Instagram hasta 8, Facebook 2-3.
+GAMING_MAX_HASHTAGS = {"instagram": 8, "facebook": 3, "youtube": 5}
+# Posts de imagen de "Niño Selectivo, Familia en Paz": un post antes del almuerzo
+# (12:00) y otro antes de la cena (19:00), a la misma hora en Facebook e Instagram.
+# Plantillas N1-N4 y semana tipo (mediodia, noche) por dia, lunes=0: mito, error y
+# ritual rotan al mediodia (3 formatos/semana del plan de mejoras); la noche es
+# casi siempre una frase de paz.
+NINIO_SLOT_HOURS = [12, 19]
+NINIO_TEMPLATES = {
+    "N1": "Mito vs Realidad",
+    "N2": "El error que empeora todo",
+    "N3": "Ritual de 1 minuto",
+    "N4": "Frase de paz",
+}
+NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N1", "N4"), ("N3", "N4"), ("N2", "N4"), ("N1", "N4")]
+# Tipos de lote de la pagina gaming: mismos horarios. YouTube solo para los
+# clips (video 9:16 -> Short), nunca para la imagen.
+GAMING_TYPES = {"gaming_image", "gaming_clip"}
+# Canal de YouTube de videojuegos (clave de youtube_publisher.list_channels():
+# YT_CHANNEL_<N>_*; su token es youtube_token_<N>.json). Separado del canal de
+# historias para no mezclar contenido.
+GAMING_YT_CHANNEL = os.environ.get("YT_GAMING_CHANNEL") or "3"
+
 # Reintentos por etapa de _generate_batch_video. Etapas que dependen de
 # agent-browser (guion/imagenes) fallan seguido por timeouts de red
 # transitorios (os error 10060/10061, daemon colgado) -- se reintentan mas
@@ -86,22 +225,32 @@ _TRANSIENT_ERROR_MARKERS = (
 )
 
 # Auto-sanado de videos que agotaron MAX_AUTO_RETRIES y quedaron en "error":
-# las caidas de Qwen/WhatsApp duran horas (17/9: ~3h de timeouts) y las 3
+# las caidas de WhatsApp duran horas (17/9: ~3h de timeouts) y las 3
 # corridas se gastan en minutos, asi que sin esto el video queda muerto hasta
 # que alguien aprieta "reintentar". Cada ciclo espera el doble del anterior
 # (30min, 1h, 2h, 4h) para no martillar un servicio caido.
 HEAL_COOLDOWN_SECONDS = 1800
 MAX_HEAL_CYCLES = 4
+
+# Cuota de Gemini agotada (gaming_vision.QuotaExceededError, propagada como
+# ClipError con este texto): el free tier resetea por DIA, no en minutos, asi
+# que usa su propio cooldown mucho mas largo que HEAL_COOLDOWN_SECONDS -- 
+# reintentar cada 30min contra una cuota diaria agotada solo gasta ciclos de
+# heal en vano y nunca da tiempo a que resetee.
+GEMINI_QUOTA_MARKER = "cuota de gemini agotada"
+GEMINI_QUOTA_COOLDOWN_SECONDS = 6 * 3600  # 6h, 12h, 24h, 48h con MAX_HEAL_CYCLES=4
+
 # Ademas de los transitorios: fallos de proveedor que un nuevo guion/prompt
 # suele resolver. NO incluye "no encontre el proyecto" (nombre mal puesto:
 # reintentar no lo arregla) ni errores de parseo, salvo respuestas sin prompts.
 _HEALABLE_EXTRA_MARKERS = (
-    "meta ai no pudo generar", "algunas sesiones de qwen",
+    "el audio no coincide con el guion",  # el TTS invento/omitio palabras: otro audio suele salir bien
+    "meta ai no pudo generar",
     "no encontre el boton 'meta ai'", "no encontre (habilitado)",
     "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
     "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
-    "is covered by",  # overlay de carga (splash) tapando el clic en Qwen/WhatsApp: pasa solo
-    "no se encontraron prompts de imagen",  # Qwen a veces responde solo el guion: otra respuesta suele traerlos
+    "is covered by",  # overlay de carga (splash) tapando el clic en WhatsApp: pasa solo
+    "no se encontraron prompts de imagen",  # el modelo a veces responde solo el guion: otra respuesta suele traerlos
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -109,7 +258,7 @@ _HEALABLE_EXTRA_MARKERS = (
 # hook en pantalla, horario 20:00 sin lunes y anti-fatiga. Se guarda en
 # video_settings["copy_profile"] para no afectar a los demas proyectos.
 RESCUE_PROFILE = "rescate_animal"
-RESCUE_QWEN_PROJECT = "HISTORIAS"  # el perfil se activa solo en este proyecto (con YouTube)
+RESCUE_PAGE_NAME = "HISTORIAS"  # el perfil se activa solo en esta pagina (con YouTube)
 RESCUE_HISTORY_LIMIT = 8
 RESCUE_AI_LABEL = "Historia recreada con IA"
 _HOOK_TEXT_LINE = re.compile(r"^[ \t]*HOOK_TEXT:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
@@ -121,7 +270,7 @@ def _is_rescue_project(project: dict) -> bool:
 
 def _split_hook_text(story_text: str) -> tuple:
     """Separa la linea `HOOK_TEXT: ...` (texto corto para la pantalla) del
-    resto de la respuesta de Qwen. Se quita SIEMPRE del texto: si quedara,
+    resto de la respuesta del modelo. Se quita SIEMPRE del texto: si quedara,
     el parser la metería dentro del último prompt de imagen o de la narración."""
     match = _HOOK_TEXT_LINE.search(story_text)
     if not match:
@@ -132,7 +281,7 @@ def _split_hook_text(story_text: str) -> tuple:
 
 def _rescue_history_block() -> str:
     """Anti-fatiga (§9): lista los ganchos recientes de los proyectos de
-    rescate para que Qwen no repita animal/conflicto/final consecutivos."""
+    rescate para que el modelo no repita animal/conflicto/final consecutivos."""
     hooks = []
     for project in _load().values():
         if not _is_rescue_project(project):
@@ -146,14 +295,81 @@ def _rescue_history_block() -> str:
         return ""
     lines = "\n".join(f"- {h}" for h in recent)
     return (
-        "\n\nNo repitas el animal, el conflicto, el escenario ni el tipo de final "
+        "\n\nNo repitas el animal, el conflicto, el escenario, el pais, el tipo de final ni el "
+        "nombre del rescatista (crea personaje y lugar nuevos cada vez) "
         f"de estas historias recientes:\n{lines}"
     )
 
 
+# Patrones de historia validados (Workflow V6, posts reales de la pagina).
+# El peso es el promedio de la mezcla recomendada para FB e IG (50/50), porque
+# el mismo video sale a ambas redes. Elegir el patron en codigo (y no dejarlo a
+# el codigo) garantiza la mezcla y permite no repetir el de los ultimos videos.
+# "injusticia_visual" no nombra maltrato: la instruccion del Project prohibe
+# abuso/violencia y Meta AI rechaza esos prompts.
+STORY_PATTERNS = {
+    "separacion": (12, "Separacion + huelga: el animal deja de comer o de moverse tras separarlo de su companero o de su dueno; todos creen que es enfermedad y es duelo."),
+    "supervivencia": (7, "Supervivencia imposible: el animal aparece solo en un lugar imposible (el mar, un techo, una isla, una montana nevada); como llego ahi y quien lo rescata."),
+    "cuenta_regresiva": (6, "Cuenta regresiva: le quedan pocas horas o dias antes de un desalojo, un cierre o un traslado; el rescatista llega en el ultimo momento."),
+    "ladron": (16, "Ladron heroe: todos lo odian por robar un objeto (mantas, calcetines, zapatos, comida); en realidad se lo lleva a alguien que lo necesita."),
+    "guardian": (8, "Guardian sagrado: lo quieren echar de un lugar (cementerio, iglesia, hospital); esperaba o cuidaba a alguien."),
+    "injusticia_visual": (15, "Injusticia visual: el animal aparece con algo raro que la gente ve y ignora (cubierto de pintura, con una cinta, con una marca); no digas quien ni por que, ni describas crueldad; el rescatista lo limpia y vuelve su aspecto natural."),
+    "perdida_reencuentro": (8, "Hermanos separados: dos animales crecieron juntos; uno \"no pudo quedarse\" en el lugar y el otro lo espera cada dia sin comer bien; meses despues el rescatista los reune y el final es agridulce pero esperanzador. Nunca nombres la muerte ni uses palabras de dano."),
+    "promesa_cumplida": (8, "Promesa cumplida: al inicio el narrador promete algo concreto y pequeno (un dia en la playa, correr en un campo, dormir en una cama) a un animal muy debil; la recuperacion se narra con avances graduales naturales (sin contar dia por dia) y la ultima escena cumple la promesa."),
+    "condenado_vuelve": (5, "El que nadie esperaba: todos decian que ya no habia esperanza para el animal; el rescatista no se rindio; el final salta anos adelante y lo muestra sano y feliz. Nunca uses palabras como dormir, sacrificar o eutanasia."),
+    "espera_diaria": (15, "Espera diaria: cada dia a la misma hora espera en el mismo lugar (una parada, una puerta, una ventana); esperaba a alguien; final de reencuentro o nuevo hogar."),
+}
+STORY_PATTERN_COOLDOWN = 2  # no repite un patron usado en los ultimos N videos
+
+RESCUE_STORY_CRAFT = (
+    "\n\nESTRUCTURA (obligatoria): 1) Gancho: la primera frase lleva un numero o plazo concreto "
+    "(\"Durante nueve dias no comio\", \"Le quedaban tres dias\"). "
+    "2) Contexto: lugar especifico y DIFERENTE en cada historia, internacional (rota pais y "
+    "continente: una costa de Portugal, un pueblo de montana en Nepal, un puerto de Japon, un "
+    "desierto de Mexico, una aldea en los Andes, una ciudad europea, etc.; NUNCA siempre el mismo "
+    "pais) y el juicio de la gente (\"todos pensaban que era...\"). 3) Escalada con referencias temporales "
+    "VARIADAS y naturales (esa manana, varios dias despues, semanas mas tarde, tras una tormenta, "
+    "al llegar el invierno); evita el conteo mecanico repetitivo de dias. "
+    "4) Giro antes de la mitad: el rescatista descubre la razon emocional oculta (duelo, crias, "
+    "proteger algo): no era lo que todos creian. "
+    "5) Rescate con una accion concreta y una transformacion visible (flaco a sano, solo a "
+    "acompanado, sucio a limpio); el final puede ser agridulce pero siempre esperanzador. 6) Cierre: moraleja de una linea y pregunta final que invita a "
+    "comentar una palabra clave en mayusculas (ej. \"Comenta CABALLO si...\"); no prometas Parte 2. "
+    "El rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y ocupacion (nunca "
+    "reuses el nombre de una historia anterior). Incluye su ficha completa en PERSONAJES y usa su "
+    "etiqueta en los prompts. La ultima "
+    "imagen muestra la transformacion (antes y despues, o feliz en su hogar). Si la historia no "
+    "tiene una transformacion visible o un misterio resuelto, cambia la idea."
+)
+
+
+def _pick_story_pattern(recent: list) -> str:
+    """Patron ponderado que no este entre los `recent` (mas nuevo al final)."""
+    avoid = set(recent[-STORY_PATTERN_COOLDOWN:])
+    keys = [k for k in STORY_PATTERNS if k not in avoid] or list(STORY_PATTERNS)
+    return random.choices(keys, weights=[STORY_PATTERNS[k][0] for k in keys])[0]
+
+
+def _recent_story_patterns(projects: dict) -> list:
+    """Patrones de los ultimos videos de rescate, del mas viejo al mas nuevo."""
+    seen = []
+    for project in projects.values():
+        if _is_rescue_project(project):
+            seen += [(v.get("scheduled_at", ""), v["story_pattern"])
+                     for v in project.get("videos", []) if v.get("story_pattern")]
+    return [pattern for _, pattern in sorted(seen)]
+
+
+def rescue_story_block(pattern: str) -> str:
+    """Pedido de estructura + patron para el mensaje al generador de texto (historias de
+    rescate). Va en el mensaje y no en la instruccion del Project por el tope
+    de 1000 caracteres de esta (ver auto_pipeline.CHARACTER_SHEET_REQUEST)."""
+    return f"{RESCUE_STORY_CRAFT}\n\nPATRON de esta historia: {STORY_PATTERNS[pattern][1]}"
+
+
 def _is_healable_error(message: "str | None") -> bool:
     msg = (message or "").lower()
-    return any(m in msg for m in _TRANSIENT_ERROR_MARKERS + _HEALABLE_EXTRA_MARKERS)
+    return any(m in msg for m in _TRANSIENT_ERROR_MARKERS + _HEALABLE_EXTRA_MARKERS) or GEMINI_QUOTA_MARKER in msg
 
 
 def _reset_session(session: str) -> None:
@@ -252,7 +468,51 @@ def _into_publish_window(dt: datetime) -> datetime:
     return dt
 
 
-def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False) -> list:
+def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime) -> datetime:
+    """Encuentra un scheduled_at libre para un reschedule por falta de gap,
+    escalonandolo respecto de TODOS los demas videos "ready"/"publishing"
+    de TODOS los proyectos (no solo el actual) que ya apuntan a >= base_dt.
+
+    Sin esto, cuando el scheduler reintenta en el mismo tick varios videos
+    que fallan el chequeo de gap de Instagram (_gap_ok), cada uno calcula
+    "ahora + 1h" de forma independiente y todos quedan con el mismo
+    scheduled_at (solo distinguido por microsegundos) -- ese mismo campo es
+    el que Facebook/YouTube usan para su scheduling nativo, asi que todos
+    terminan publicandose casi en el mismo minuto en vez de espaciados.
+    Ver conversacion 2026-09-23: 3 videos de HISTORIAS salieron con ~1 min
+    de diferencia por este bug.
+    """
+    taken = []
+    for pid, project in projects.items():
+        for i, v in enumerate(project.get("videos", [])):
+            if (pid, i) == exclude:
+                continue
+            if v.get("status") not in ("ready", "publishing"):
+                continue
+            try:
+                dt = datetime.fromisoformat(v["scheduled_at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if dt >= base_dt - timedelta(seconds=BATCH_MIN_GAP_SECONDS):
+                taken.append(dt)
+    slot = _into_publish_window(base_dt)
+    # Mientras el candidato caiga a menos de BATCH_MIN_GAP_SECONDS de algun
+    # slot ya ocupado, lo empuja justo despues de ese slot y lo vuelve a
+    # encuadrar en la ventana horaria (empujar puede cruzar las 20h, o el
+    # propio encuadre a "manana 9am" puede generar una NUEVA colision con
+    # otro slot ya empujado a esa misma hora) -- repite hasta estabilizar.
+    changed = True
+    while changed:
+        changed = False
+        for dt in taken:
+            if abs((slot - dt).total_seconds()) < BATCH_MIN_GAP_SECONDS:
+                slot = _into_publish_window(dt + timedelta(seconds=BATCH_MIN_GAP_SECONDS))
+                changed = True
+    return slot
+
+
+def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False,
+                      fixed_hours: Optional[list] = None, skip_days: int = 0) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -263,9 +523,14 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     a BATCH_HOUR_END para que la extension tampoco se escape del rango.
     Con `rescue` (Manual v3.2 §8) se publica en el bloque 20:00 -> 16:00 y
     nunca en lunes (el dia de menor alcance del historico de la pagina).
+    Con `fixed_hours` se usan esas horas tal cual, en ese orden (posts gaming).
+    Con `skip_days` se agregan dias vacios entre fechas de publicacion
+    (skip_days=1 = publicar cada 2 dias).
     Devuelve `total` timestamps ISO."""
     base_hours = [h for _, _, h in feedback_analyzer.DAYPARTS if BATCH_HOUR_START <= h <= BATCH_HOUR_END]
-    if rescue:
+    if fixed_hours:
+        base_hours = list(fixed_hours)
+    elif rescue:
         base_hours = [20, 19, 18, 17, 16]
     elif best_hour is not None:
         base_hours = sorted(base_hours, key=lambda h: min(abs(h - best_hour), 24 - abs(h - best_hour)))
@@ -280,8 +545,9 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     days_needed = -(-total // per_day)
     publish_days = []
     offset = 0
+    day_step = skip_days + 1  # skip_days=1 -> cada 2 dias
     while len(publish_days) < days_needed:
-        day_date = (now + timedelta(days=offset)).date()
+        day_date = (now + timedelta(days=offset * day_step)).date()
         offset += 1
         if rescue and day_date.weekday() == 0:  # lunes
             continue
@@ -296,55 +562,95 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     return schedule
 
 
-def _next_project_name(projects: dict, qwen_project: str) -> str:
+def _project_page_name(project: dict) -> str:
+    """Nombre de pagina del lote. Los lotes creados antes del desmontaje de
+    Qwen lo guardaban como `qwen_project`: se lee como fallback para no
+    romper reanudaciones/conteos de lotes ya en el job_store."""
+    return project.get("page_name") or project.get("qwen_project") or ""
+
+
+def _text_kind_for_page(page_name: str) -> str:
+    """System prompt (kind) de generacion de texto segun la pagina del lote.
+    Cada nicho tiene su propio prompts/<kind>_system.md; default: historias."""
+    name = (page_name or "").strip().upper()
+    if name == "MACRAME CREATIVO":
+        return "macrame"
+    if "SELECTIVO" in name:
+        return "ninio_selectivo"
+    return "historias"
+
+
+def _next_project_name(projects: dict, page_name: str) -> str:
     """Nombre automatico incremental: "<proyecto> <n>", con n = lotes que ya
-    hay de ese mismo Project de Qwen + 1 (ej. "historias 2")."""
-    same = sum(1 for p in projects.values() if p.get("qwen_project") == qwen_project)
-    return f"{qwen_project.lower()} {same + 1}"
+    hay de ese mismo nombre de pagina + 1 (ej. "historias 2")."""
+    same = sum(1 for p in projects.values() if _project_page_name(p) == page_name)
+    return f"{page_name.lower()} {same + 1}"
 
 
-def create_project(qwen_project: str, total_videos: int, per_day: int,
+def create_project(page_name: str, total_videos: int, per_day: int,
                     networks: dict, video_settings: dict,
                     trigger_message: str = "dame una historia",
                     content_type: str = "video") -> dict:
-    """qwen_project es el nombre de la pagina elegida (igual al del Project de
-    Qwen); el nombre del lote se genera solo (_next_project_name).
+    """page_name es el nombre de la pagina elegida (define el nicho del
+    lote); el nombre del lote se genera solo (_next_project_name).
 
     El perfil rescate animal (Manual v3.2) se activa solo: proyecto
-    RESCUE_QWEN_PROJECT + YouTube entre las redes.
+    RESCUE_PAGE_NAME + YouTube entre las redes.
 
     networks = {"youtube": bool, "facebook": {"page_id": str} | None,
     "instagram": {"page_id": str} | None}. trigger_message es el mensaje que
-    se manda al Project de Qwen para pedir la historia -- distintos Projects
-    pueden esperar frases distintas segun como este configurado su system
-    prompt.
+    se manda al generador de texto para pedir la historia.
 
     content_type: "video" (default, el pipeline completo guion+clips+audio+
-    render) o "gaming_image" (un solo post de imagen 1:1 + caption, ver
-    _generate_batch_image_post/_publish_batch_image_post) -- nunca YouTube
-    para este ultimo, sin importar lo que venga en `networks`."""
+    render), "gaming_image" / "ninio_image" (un solo post de imagen 4:5 + caption;
+    ver IMAGE_POST_PROFILES, _generate_batch_image_post/_publish_batch_image_post)
+    o "gaming_clip" (clip viral de Medal editado en vertical, ver
+    _generate_batch_clip) -- YouTube solo para el clip (canal de gaming)."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
+    if content_type == "gaming_clip" and not gaming_clip.gaming_vision.is_configured():
+        raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
     best_hour = _best_hour_for_networks(networks)
     video_settings = dict(video_settings or {})
+    # Proveedor de texto del lote (guion/idea). "auto" = FreeLLM endpoint local
+    # (ver _generate_text_with_chain). Solo un backend disponible.
+    video_settings["text_provider"] = (
+        str(video_settings.get("text_provider") or "auto").strip().lower()
+        if str(video_settings.get("text_provider") or "auto").strip().lower() in TEXT_PROVIDER_CHOICES
+        else "auto"
+    )
     rescue = (
         content_type == "video"
-        and qwen_project.strip().upper() == RESCUE_QWEN_PROJECT
+        and page_name.strip().upper() == RESCUE_PAGE_NAME
         and bool(networks.get("youtube"))
     )
     if rescue:
         video_settings["copy_profile"] = RESCUE_PROFILE
-    schedule = _compute_schedule(total_videos, per_day, best_hour, rescue=rescue)
+    profile = IMAGE_POST_PROFILES.get(content_type)
+    clip_post = content_type == "gaming_clip"
+    fixed_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None
+    # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
+    youtube_on = bool(networks.get("youtube"))
+    skip_days = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
+    schedule = _compute_schedule(
+        total_videos, per_day, best_hour, rescue=rescue,
+        fixed_hours=fixed_hours,
+        skip_days=skip_days,
+    )
 
     project = {
         "id": uuid.uuid4().hex[:10],
         "name": "",  # se completa bajo el lock, con el conteo real de lotes
         "type": content_type,
-        "qwen_project": qwen_project,
+        "page_name": page_name,
         "trigger_message": trigger_message,
         "total_videos": total_videos,
         "per_day": per_day,
         "networks": networks,
+        # Desfase (segundos) del horario real de cada red respecto de
+        # scheduled_at; solo las redes sin scheduling nativo lo aplican al
+        # decidir cuando publicar (ver _publish_networks).
+        "network_offsets": dict(profile["network_offsets"]) if profile else dict(GAMING_NETWORK_OFFSETS) if clip_post else {},
         "video_settings": video_settings,
         "status": "running",
         "created_at": datetime.now().isoformat(),
@@ -367,7 +673,7 @@ def create_project(qwen_project: str, total_videos: int, per_day: int,
     }
     with _lock:
         projects = _load()
-        project["name"] = _next_project_name(projects, qwen_project)
+        project["name"] = _next_project_name(projects, page_name)
         projects[project["id"]] = project
         _save(projects)
     return project
@@ -403,17 +709,51 @@ def cancel_project(project_id: str) -> bool:
     return set_status(project_id, "cancelled")
 
 
+def _purge_video_assets(project_id: str, video: dict) -> None:
+    """Borra lo que un video del lote dejo en disco: el mp4, el audio narrado
+    (y sus subtitulos), la carpeta de clips y el guion de scratch. Los nombres
+    de story_id son deterministas (ver _generate_batch_video/_image_post), asi
+    que tambien limpia videos que fallaron antes de guardar story_id."""
+    def _unlink(path) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("batch %s: no se pudo borrar %s", project_id, path, exc_info=True)
+
+    index = video["index"]
+    if video.get("video_path"):
+        _unlink(video["video_path"])
+    if video.get("audio_path"):
+        _unlink(video["audio_path"])
+        _unlink(f"{video['audio_path']}.subs.json")
+        _unlink(f"{video['audio_path']}{NARRATION_CHECK_SUFFIX}")
+    story_ids = [
+        f"batch_{project_id}_{index:03d}", f"batch_img_{project_id}_{index:03d}",
+        f"gclip_{project_id}_{index:03d}",
+    ]
+    folders = job_store.load("clip_folders")
+    for story_id in story_ids:
+        shutil.rmtree(video_maker.VIDEO_PUBLIC_DIR / story_id, ignore_errors=True)
+        _unlink(auto_pipeline.SCRATCH_DIR / f"historia_{story_id}.json")
+        folders.pop(story_id, None)
+    job_store.save("clip_folders", folders)
+
+
 def delete_project(project_id: str) -> bool:
-    """Borra el proyecto de batch_projects.json. El scheduler ya ignora todo
-    proyecto que no este "running" (ver _batch_scheduler_tick), asi que borrar
-    uno cancelado no corta ningun hilo en curso -- solo evita que se lo siga
-    mostrando/reintentando. No borra videos ya publicados ni sus archivos."""
+    """Borra el proyecto de batch_projects.json y todos los archivos de sus
+    videos, publicados o no (las redes guardan su propia copia). No cancela lo
+    ya programado en Facebook/YouTube, pero lo pendiente (ej. Instagram) deja
+    de publicarse. El scheduler ya ignora todo proyecto que no este "running"
+    (ver _batch_scheduler_tick), asi que borrar uno cancelado no corta ningun
+    hilo en curso. No toca los registros *_published.json (anti-repeticion)."""
     with _lock:
         projects = _load()
-        if project_id not in projects:
+        project = projects.pop(project_id, None)
+        if project is None:
             return False
-        del projects[project_id]
         _save(projects)
+    for video in project["videos"]:
+        _purge_video_assets(project_id, video)
     return True
 
 
@@ -530,10 +870,12 @@ def _requeue_healable_errors() -> None:
                 cycles = v.get("heal_cycles", 0)
                 if cycles >= MAX_HEAL_CYCLES:
                     continue
+                is_quota = GEMINI_QUOTA_MARKER in (v.get("error") or "").lower()
+                base_cooldown = GEMINI_QUOTA_COOLDOWN_SECONDS if is_quota else HEAL_COOLDOWN_SECONDS
                 error_at = v.get("error_at")
                 if error_at:
                     try:
-                        wait = timedelta(seconds=HEAL_COOLDOWN_SECONDS * 2 ** cycles)
+                        wait = timedelta(seconds=base_cooldown * 2 ** cycles)
                         if now - datetime.fromisoformat(error_at) < wait:
                             continue
                     except (TypeError, ValueError):
@@ -562,38 +904,52 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         project["videos"][index]["status"] = "generating"
         project["videos"][index]["stage"] = "guion"
         project["videos"][index]["error"] = None
+        pattern = None
+        if _is_rescue_project(project):
+            pattern = _pick_story_pattern(_recent_story_patterns(projects))
+            project["videos"][index]["story_pattern"] = pattern
         _save(projects)
 
     vs = project["video_settings"]
     story_id = f"batch_{project_id}_{index:03d}"
-    trigger_message = auto_pipeline.build_qwen_trigger_message(
+    trigger_message = auto_pipeline.build_trigger_message(
         project.get("trigger_message", "dame una historia"),
         vs.get("duration_seconds"),
+        kind=_text_kind_for_page(_project_page_name(project)),
     )
     rescue = _is_rescue_project(project)
     if rescue:
-        trigger_message += _rescue_history_block()
+        trigger_message += rescue_story_block(pattern) + _rescue_history_block()
+    text_provider_pref = vs.get("text_provider", "auto")
+    _provider_attempts: list = []
     try:
         story_text = _run_stage_with_retry(
-            lambda: auto_pipeline.generate_story_from_qwen_project(
-                project["qwen_project"],
-                trigger_message=trigger_message,
+            lambda: _generate_text_with_chain(
+                _text_kind_for_page(_project_page_name(project)),
+                _project_page_name(project),
+                trigger_message,
+                story_id,
+                duration_seconds=vs.get("duration_seconds"),
+                prefer=text_provider_pref,
+                attempted=_provider_attempts,
             ),
             attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-            on_retry=lambda attempt: _reset_session(auto_pipeline.QWEN_BATCH_SESSION),
+            on_retry=None,
             stage_label="guion",
         )
         hook_text = ""
         if rescue:
             hook_text, story_text = _split_hook_text(story_text)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
+        if _text_kind_for_page(_project_page_name(project)) == "macrame":
+            auto_pipeline.validate_macrame_story(story)
         visual_style = vs.get("visual_style")
         if visual_style and visual_style != "realista":
             for p in story["prompts"]:
                 p["prompt"] = auto_pipeline.apply_visual_style(p["prompt"], visual_style)
         script_text = auto_pipeline.extract_script(story_text)
         if not script_text.strip():
-            # Algunos Projects de Qwen (ej. Macrame Creativo) no mandan un
+            # Algunos generadores de texto (ej. el de macrame) no mandan un
             # bloque "Guion" separado antes de "Imagen 1" -- la respuesta
             # arranca directo en el primer bloque de imagen. extract_script
             # devuelve "" en ese caso (nada que cortar antes de "Imagen 1")
@@ -609,6 +965,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 "batch: guion vacio via extract_script, reconstruido desde %d frases de imagen (%d chars)",
                 len(story["prompts"]), len(script_text),
             )
+        auto_pipeline.validate_script(script_text)
         script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:
             forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
@@ -622,6 +979,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         # video vuelto a "pending") son de OTRA historia. resume_index solo
         # sirve para los reintentos de esta misma historia, mas abajo.
         shutil.rmtree(clips_dir, ignore_errors=True)
+        clips_dir.mkdir(parents=True, exist_ok=True)
 
         _set_stage(project_id, index, "imagenes")
         provider = vs.get("provider", "whatsapp")
@@ -651,10 +1009,10 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         job_store.save("clip_folders", folders)
 
         _set_stage(project_id, index, "audio")
-        audio_path = _run_stage_with_retry(
-            lambda: text_to_speech_long(
+        audio_path, narration = _run_stage_with_retry(
+            lambda: text_to_speech_verified(
                 script_text,
-                voice=vs.get("voice", DEFAULT_VOICE),
+                voice=vs.get("voice") or get_default_voice(),
                 exaggeration=BEDTIME_PRESET["exaggeration"],
                 cfg_weight=BEDTIME_PRESET["cfg_weight"],
             ),
@@ -675,6 +1033,12 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 f"para {len(frases)} escenas"
             )
         subtitle_style = video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
+        # Ambientación (luciérnagas + viñeta): configurable por proyecto vía
+        # video_settings["mood"] ("warm_night" default | "bright" | "none").
+        # Sin definir, se mantiene "warm_night" (comportamiento igual al de
+        # antes de este campo) para no cambiarle el look a ningún proyecto
+        # ya corriendo sin que se elija explícitamente.
+        mood = vs.get("mood", "warm_night")
 
         def _do_render():
             with app._video_render_lock:
@@ -687,6 +1051,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                     frases=frases,
                     animate_images=vs.get("animate_images", True),
                     ai_label=RESCUE_AI_LABEL if rescue else None,
+                    mood=mood,
+                    script_text=script_text,
                 )
                 if not timeline:
                     return None
@@ -718,18 +1084,157 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         v["stage"] = None
         v["story_id"] = story_id
         v["video_path"] = str(video_path)
+        v["audio_path"] = str(audio_path)
+        v["narration_check"] = {
+            "ok": narration.get("ok"), "similarity": narration.get("similarity"),
+            "attempt": narration.get("attempt"), "skipped": narration.get("skipped", False),
+        }
         v["script_text"] = script_text
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
 
 
-GAMING_IMAGE_RATIO = "1:1"
+# Proporcion que se le pide al generador de imagen: la mas cercana a 4:5
+# (Instagram) que ofrece su selector; meme_maker la recorta a 4:5.
+GAMING_IMAGE_RATIO = "3:4"
+# Se agrega al IMAGE_PROMPT: el meme pone texto arriba y abajo, asi que
+# el HUD y el sujeto tienen que quedar en la franja central. La ultima frase
+# evita que el generador (Meta AI sobre todo) entregue la captura como un
+# rectangulo dentro de barras borrosas o como foto de un monitor.
+GAMING_IMAGE_COMPOSITION = (
+    " Composition: keep the main subject and every HUD/UI element (health bars, minimap, "
+    "dialogue boxes, buttons) inside the central 60% of the frame, compact and away from "
+    "the edges; leave the top 20% and bottom 20% as calm background with no UI and no key details. "
+    "The in-game screenshot fills the entire image edge to edge: no borders, no letterboxing, "
+    "no blurred bars, no frame, and not a photo of a monitor or TV screen."
+)
+
+
+NINIO_IMAGE_COMPOSITION = (
+    " Composition: keep the faces, hands and plate inside the central 60% of the frame; leave "
+    "the top 20% and bottom 20% calm and uncluttered (soft background, no key details) because "
+    "text is added there later. Full-bleed photo edge to edge: no borders, no frame, no text, "
+    "no letters, no logos."
+)
+
+GAMING_HISTORY_STORE_NAME = "gaming_post_history"
+GAMING_HISTORY_LIMIT = 15  # entradas que se listan en el prompt
+GAMING_HISTORY_MAX = 60  # entradas guardadas antes de podar
+
+# Un "post de imagen" = idea (texto) -> foto (IA) -> texto superpuesto 4:5 -> Facebook +
+# Instagram. Cada nicho es un perfil: gaming y niño selectivo comparten todo el flujo y solo
+# difieren en estos valores. La clave es el tipo de lote (`content_type`).
+IMAGE_POST_PROFILES = {
+    "gaming_image": {
+        "kind": "gaming",  # prompts/gaming_system.md
+        "templates": GAMING_TEMPLATES, "week": GAMING_WEEK,
+        "slot_hours": GAMING_SLOT_HOURS, "network_offsets": GAMING_NETWORK_OFFSETS,
+        "history_store": GAMING_HISTORY_STORE_NAME,
+        "composition": GAMING_IMAGE_COMPOSITION, "text_fill": (255, 255, 255),
+        "max_hashtags": {"instagram": GAMING_MAX_HASHTAGS["instagram"], "facebook": GAMING_MAX_HASHTAGS["facebook"]},
+        "default_trigger": "dame el próximo post gaming", "label": "Post gaming",
+    },
+    "ninio_image": {
+        "kind": "ninio_post",  # prompts/ninio_post_system.md
+        "templates": NINIO_TEMPLATES, "week": NINIO_WEEK,
+        "slot_hours": NINIO_SLOT_HOURS, "network_offsets": {},
+        "history_store": "ninio_post_history",
+        "composition": NINIO_IMAGE_COMPOSITION, "text_fill": (255, 221, 51),  # amarillo con borde negro
+        "max_hashtags": {"instagram": 5, "facebook": 3},
+        "default_trigger": "dame el próximo post de niño selectivo", "label": "Post niño selectivo",
+    },
+}
+
+
+def _image_post_template(profile_key: str, scheduled_at: Optional[str]) -> str:
+    """Plantilla de la semana tipo del perfil que le toca a este horario."""
+    try:
+        dt = datetime.fromisoformat(scheduled_at)
+    except (TypeError, ValueError):
+        dt = datetime.now()
+    return IMAGE_POST_PROFILES[profile_key]["week"][dt.weekday()][0 if dt.hour < 16 else 1]
+
+
+def generate_gaming_post(
+    page_name: str,
+    trigger_message: str,
+    image_provider: str,
+    dest_dir: Path,
+    template: str,
+    on_stage: Optional[Callable[[str], None]] = None,
+    text_provider_pref: str = "",
+    profile_key: str = "gaming_image",
+) -> dict:
+    """Idea (generador de texto) -> imagen base -> meme 4:5 en dest_dir/cover.jpg.
+    `profile_key` elige el nicho (IMAGE_POST_PROFILES).
+    Devuelve el post parseado (idea/hook/top/bottom/caption). Lo comparten el
+    lote (_generate_batch_image_post) y el post suelto de "Crear video"; el
+    llamador decide que hacer con los errores y con el historial."""
+    import app
+
+    profile = IMAGE_POST_PROFILES[profile_key]
+
+    def _stage(name: str) -> None:
+        if on_stage:
+            on_stage(name)
+
+    _stage("idea")
+    template_message = (
+        trigger_message
+        + f"\n\nPlantilla de este post: {template} ({profile['templates'][template]})."
+        + _gaming_history_block(store_name=profile["history_store"])
+    )
+    provider_pref = (text_provider_pref if text_provider_pref in TEXT_PROVIDER_CHOICES else "auto")
+    _provider_attempts: list = []
+    reply = _run_stage_with_retry(
+        lambda: _generate_text_with_chain(
+            profile["kind"],
+            page_name,
+            template_message,
+            f"{profile['kind']}_{dest_dir.name}",
+            prefer=provider_pref,
+            attempted=_provider_attempts,
+        ),
+        attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+        on_retry=None,
+        stage_label="idea",
+    )
+    post = _parse_gaming_post(reply)
+
+    _stage("imagen")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    base_path = dest_dir / "base.jpg"
+    image_prompt = post["image_prompt"].rstrip() + profile["composition"]
+
+    def _do_generate_image():
+        with app._clipgen_lock:
+            story = {"prompts": [{
+                "index": 0,
+                "prompt": image_prompt,
+                "frase": post.get("hook") or post["image_prompt"],
+            }]}
+            generated = auto_pipeline.generate_clips(
+                story, dest_dir, unattended=True, start_index=0,
+                provider="whatsapp", generate_video=False,
+            )
+            Path(generated[0]).replace(base_path)
+
+    _run_stage_with_retry(
+        _do_generate_image,
+        attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+        on_retry=lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION),
+        stage_label="imagen",
+    )
+    meme_maker.render_meme(
+        base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG,
+        fill=profile["text_fill"],
+    )
+    base_path.unlink(missing_ok=True)
+    return post
 
 
 def _generate_batch_image_post(project_id: str, index: int) -> None:
-    import app
-
     with _lock:
         projects = _load()
         project = projects.get(project_id)
@@ -741,56 +1246,23 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         _save(projects)
 
     story_id = f"batch_img_{project_id}_{index:03d}"
-    trigger_message = project.get("trigger_message", "dame el próximo post gaming") + _gaming_history_block()
+    profile_key = project.get("type", "gaming_image")
+    profile = IMAGE_POST_PROFILES[profile_key]
+    template = _image_post_template(profile_key, project["videos"][index].get("scheduled_at"))
+    dest_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
+    dest_path = dest_dir / "cover.jpg"  # 4:5 con texto (Facebook e Instagram)
 
     try:
-        reply = _run_stage_with_retry(
-            lambda: auto_pipeline.generate_story_from_qwen_project(
-                project["qwen_project"],
-                trigger_message=trigger_message,
-            ),
-            attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-            on_retry=lambda attempt: _reset_session(auto_pipeline.QWEN_BATCH_SESSION),
-            stage_label="idea",
+        post = generate_gaming_post(
+            _project_page_name(project),
+            project.get("trigger_message", profile["default_trigger"]),
+            "whatsapp",
+            dest_dir,
+            template,
+            on_stage=lambda stage: _set_stage(project_id, index, stage),
+            text_provider_pref=project.get("video_settings", {}).get("text_provider", "auto"),
+            profile_key=profile_key,
         )
-        post = _parse_gaming_post(reply)
-
-        _set_stage(project_id, index, "imagen")
-        dest_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / "cover.jpg"
-        image_provider = project.get("video_settings", {}).get("image_provider", "qwen")
-
-        def _do_generate_image():
-            with app._clipgen_lock:
-                if image_provider == "whatsapp":
-                    story = {"prompts": [{
-                        "index": 0,
-                        "prompt": post["image_prompt"],
-                        "frase": post.get("hook") or post["image_prompt"],
-                    }]}
-                    generated = auto_pipeline.generate_clips(
-                        story, dest_dir, unattended=True, start_index=0,
-                        provider="whatsapp", generate_video=False,
-                    )
-                    Path(generated[0]).replace(dest_path)
-                else:
-                    auto_pipeline.generate_qwen_image_in_session(
-                        auto_pipeline.QWEN_BATCH_SESSION,
-                        post["image_prompt"],
-                        dest_path,
-                        image_ratio=GAMING_IMAGE_RATIO,
-                    )
-
-        _run_stage_with_retry(
-            _do_generate_image,
-            attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-            on_retry=lambda attempt: _reset_session(
-                auto_pipeline.WHATSAPP_SESSION if image_provider == "whatsapp" else auto_pipeline.QWEN_BATCH_SESSION
-            ),
-            stage_label="imagen",
-        )
-        _normalize_cover_image(dest_path)
     except Exception as e:
         logger.exception("batch %s post %d: fallo la generacion", project_id, index)
         _record_generation_failure(project_id, index, e)
@@ -801,8 +1273,9 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         "index": index,
         "hook": post["hook"],
         "idea": post["idea"],
+        "template": template,
         "created_at": datetime.now().isoformat(),
-    })
+    }, profile["history_store"])
     with _lock:
         projects = _load()
         v = projects[project_id]["videos"][index]
@@ -810,8 +1283,49 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         v["stage"] = None
         v["story_id"] = story_id
         v["video_path"] = str(dest_path)
+        v["template"] = template
         v["idea"] = post["idea"]
         v["caption"] = post["caption"]
+        v["gen_attempts"] = 0
+        v["heal_cycles"] = 0
+        _save(projects)
+
+
+def _generate_batch_clip(project_id: str, index: int) -> None:
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return
+        project["videos"][index]["status"] = "generating"
+        project["videos"][index]["stage"] = "clip"
+        project["videos"][index]["error"] = None
+        _save(projects)
+
+    try:
+        game = gaming_clip.game_for_index(
+            project.get("video_settings", {}).get("gaming_game", "mix"), index,
+        )
+        clip = gaming_clip.generate_gaming_clip(
+            game, f"{project_id}_{index:03d}",
+            on_stage=lambda stage: _set_stage(project_id, index, stage),
+        )
+    except Exception as e:
+        logger.exception("batch %s clip %d: fallo la generacion", project_id, index)
+        _record_generation_failure(project_id, index, e)
+        return
+
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        v["status"] = "ready"
+        v["stage"] = None
+        v["story_id"] = f"gclip_{project_id}_{index:03d}"
+        v["video_path"] = clip["video_path"]
+        v["title"] = clip["title"]
+        v["caption"] = clip["caption"]
+        v["game"] = game["key"]
+        v["source_clip"] = clip["clip"]["page_url"]
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -847,6 +1361,77 @@ _NETWORK_PUBLISHED_PATH_ATTR = {
 _NATIVE_SCHEDULE_NETWORKS = {"facebook", "youtube"}
 
 
+# Anticipacion minima para programar de forma nativa: el minimo de Facebook
+# (10 min) mas un margen para que la subida del archivo no lo deje justo debajo.
+NATIVE_SCHEDULE_MIN_LEAD = timedelta(seconds=facebook_publisher.MIN_SCHEDULE_SECONDS + 300)
+
+
+def _future_slot(projects: dict, exclude: tuple, scheduled_at: Optional[str]) -> datetime:
+    """Horario con el que se programa un video que ya esta listo: su
+    scheduled_at si cae en un dia valido; si no, el mismo horario del dia
+    siguiente, y asi hasta uno que no choque (a menos de BATCH_MIN_GAP_SECONDS)
+    con el de otro video ya listo o publicado. Mover de a dias enteros mantiene
+    el horario dentro de 9-20 y respeta los N por dia del lote.
+
+    Dentro de 9-20 vale el resto del dia (con NATIVE_SCHEDULE_MIN_LEAD de
+    anticipacion); fuera de esa franja (de noche o de madrugada) el dia de hoy
+    se da por terminado y el primer dia valido es manana."""
+    now = datetime.now()
+    if BATCH_HOUR_START <= now.hour <= BATCH_HOUR_END:
+        earliest = now + NATIVE_SCHEDULE_MIN_LEAD
+    else:
+        earliest = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+    try:
+        slot = datetime.fromisoformat(scheduled_at)
+    except (TypeError, ValueError):
+        slot = _into_publish_window(earliest)
+    taken = []
+    for pid, project in projects.items():
+        for i, v in enumerate(project.get("videos", [])):
+            # Solo cuentan los que ya tienen un horario firme; un "pending" o
+            # "generating" se mueve solo cuando le toque (mismo criterio).
+            if (pid, i) == exclude or v.get("status") not in ("ready", "publishing", "published"):
+                continue
+            try:
+                taken.append(datetime.fromisoformat(v["scheduled_at"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    while slot < earliest or any(
+        abs((slot - dt).total_seconds()) < BATCH_MIN_GAP_SECONDS for dt in taken
+    ):
+        slot += timedelta(days=1)
+    return slot
+
+
+def _youtube_slot(projects: dict, exclude: tuple, scheduled_at: str) -> datetime:
+    """Horario de YouTube: el de la red principal si su dia esta libre; YouTube
+    lleva un video por dia, asi que si ya hay uno programado ese dia se pasa al
+    mismo horario del dia siguiente, y asi hasta uno libre. La fuente de verdad
+    es el canal (youtube_publisher.list_scheduled): incluye lo que se programo
+    o movio a mano. Si no se puede consultar, se usan los registros del lote
+    (youtube_at, o scheduled_at en los subidos antes de existir ese campo)."""
+    slot = datetime.fromisoformat(scheduled_at)
+    remote = youtube_publisher.list_scheduled()
+    if remote is not None:
+        days = {dt.date() for dt in remote}
+        while slot.date() in days:
+            slot += timedelta(days=1)
+        return slot
+    logger.warning("youtube: no se pudo leer el canal, uso los registros del lote para el dia libre")
+    days = set()
+    for pid, project in projects.items():
+        for i, v in enumerate(project.get("videos", [])):
+            if (pid, i) == exclude or not v.get("published_at", {}).get("youtube"):
+                continue
+            try:
+                days.add(datetime.fromisoformat(v.get("youtube_at") or v["scheduled_at"]).date())
+            except (KeyError, TypeError, ValueError):
+                continue
+    while slot.date() in days:
+        slot += timedelta(days=1)
+    return slot
+
+
 def _scheduled_epoch(video: dict) -> Optional[float]:
     """scheduled_at (ISO local) como timestamp epoch, para pasarle a
     facebook_publisher (scheduled_time). None si falta o esta corrupto."""
@@ -875,7 +1460,7 @@ def _rfc3339_utc(iso_str: Optional[str], min_lead_seconds: int = 600) -> Optiona
 
 
 _GAMING_POST_RE = re.compile(
-    r"IDEA:\s*(.+?)\s*HOOK:\s*(.+?)\s*IMAGE_PROMPT:\s*(.+?)\s*CAPTION:\s*(.+)",
+    r"IDEA:\s*(.+?)\s*HOOK:\s*(.+?)\s*IMAGE_PROMPT:\s*(.+?)\s*TOP:\s*(.+?)\s*BOTTOM:\s*(.*?)\s*CAPTION:\s*(.+)",
     re.DOTALL,
 )
 
@@ -886,44 +1471,58 @@ _GAMING_TRAILING_RE = re.compile(
 
 
 def _parse_gaming_post(text: str) -> dict:
-    """Parsea la respuesta del Project de Qwen dedicado a posts gaming
-    (formato IDEA/HOOK/IMAGE_PROMPT/CAPTION, ver plan). Saca los `**` antes
-    de parsear -- Qwen suele resaltar los labels en negrita, igual que
+    """Parsea la respuesta del generador de texto dedicado a posts gaming
+    (formato IDEA/HOOK/IMAGE_PROMPT/TOP/BOTTOM/CAPTION). BOTTOM puede venir
+    vacio (plantilla T4: un solo texto). Saca los `**` antes
+    de parsear -- el modelo suele resaltar los labels en negrita, igual que
     auto_pipeline._parse_story con el guion."""
     cleaned = text.replace("**", "")
     m = _GAMING_POST_RE.search(cleaned)
     if not m:
         raise auto_pipeline.PipelineError(
-            "La respuesta de Qwen no vino en el formato esperado "
-            "(IDEA/HOOK/IMAGE_PROMPT/CAPTION)."
+            "La respuesta del generador de texto no vino en el formato esperado "
+            "(IDEA/HOOK/IMAGE_PROMPT/TOP/BOTTOM/CAPTION). "
+            f"Respuesta recibida: {cleaned.strip()[:300]!r}"
         )
-    idea, hook, image_prompt, caption = (g.strip() for g in m.groups())
+    idea, hook, image_prompt, top, bottom, caption = (g.strip() for g in m.groups())
     # El manual v2 pide PERFORMANCE GOAL y SERIE POTENTIAL tras el caption:
     # son notas internas, no van al post.
     caption = _GAMING_TRAILING_RE.split(caption)[0].strip()
-    return {"idea": idea, "hook": hook, "image_prompt": image_prompt, "caption": caption}
+    return {
+        "idea": idea, "hook": hook, "image_prompt": image_prompt,
+        "top": top, "bottom": bottom.strip("-— "), "caption": caption,
+    }
 
 
-GAMING_HISTORY_STORE_NAME = "gaming_post_history"
-GAMING_HISTORY_LIMIT = 15  # entradas que se listan en el prompt
-GAMING_HISTORY_MAX = 60  # entradas guardadas antes de podar
+_TRAILING_HASHTAGS_RE = re.compile(r"(?:\s*#\w+)+\s*$")
 
 
-def _load_gaming_history() -> list:
-    return job_store.load(GAMING_HISTORY_STORE_NAME).get("entries", [])
+def _limit_hashtags(caption: str, max_tags: int) -> str:
+    """Deja como mucho `max_tags` hashtags en el bloque final del caption
+    (el workflow los quiere al final, y distinto tope por red)."""
+    m = _TRAILING_HASHTAGS_RE.search(caption)
+    if not m:
+        return caption
+    tags = re.findall(r"#\w+", m.group())[:max_tags]
+    body = caption[:m.start()].rstrip()
+    return f"{body}\n\n{' '.join(tags)}" if tags else body
 
 
-def _append_gaming_history(entry: dict) -> None:
+def _load_gaming_history(store_name: str = GAMING_HISTORY_STORE_NAME) -> list:
+    return job_store.load(store_name).get("entries", [])
+
+
+def _append_gaming_history(entry: dict, store_name: str = GAMING_HISTORY_STORE_NAME) -> None:
     with _lock:
-        store = job_store.load(GAMING_HISTORY_STORE_NAME)
+        store = job_store.load(store_name)
         entries = store.get("entries", [])
         entries.append(entry)
         store["entries"] = entries[-GAMING_HISTORY_MAX:]
-        job_store.save(GAMING_HISTORY_STORE_NAME, store)
+        job_store.save(store_name, store)
 
 
-def _gaming_history_block(limit: int = GAMING_HISTORY_LIMIT) -> str:
-    entries = _load_gaming_history()[-limit:]
+def _gaming_history_block(limit: int = GAMING_HISTORY_LIMIT, store_name: str = GAMING_HISTORY_STORE_NAME) -> str:
+    entries = _load_gaming_history(store_name)[-limit:]
     if not entries:
         return ""
     lines = "\n".join(f"- {e['hook']}" for e in entries)
@@ -931,21 +1530,6 @@ def _gaming_history_block(limit: int = GAMING_HISTORY_LIMIT) -> str:
         "\n\nNo repitas ninguna de estas ideas/hooks/conceptos visuales ya "
         f"usados en posts anteriores:\n{lines}"
     )
-
-
-def _normalize_cover_image(path: Path) -> None:
-    """Red de seguridad independiente de lo que _select_qwen_image_ratio
-    ("1:1") realmente haya producido en vivo: recorta al centro a cuadrado
-    real y re-guarda como JPEG."""
-    with Image.open(path) as img:
-        img = img.convert("RGB")
-        w, h = img.size
-        if w != h:
-            side = min(w, h)
-            left = (w - side) // 2
-            top = (h - side) // 2
-            img = img.crop((left, top, left + side, top + side))
-        img.save(path, "JPEG", quality=90)
 
 
 def get_public_base_url() -> Optional[str]:
@@ -960,6 +1544,7 @@ def set_public_base_url(url: str) -> None:
 
 
 def _public_image_url(project_id: str, index: int) -> Optional[str]:
+    """URL publica de la portada del post."""
     base = get_public_base_url()
     if not base:
         return None
@@ -1011,6 +1596,23 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
     networks = project["networks"]
     import app
 
+    # Facebook/YouTube se suben apenas el video esta listo, programados en su
+    # horario; si ese horario ya paso, se pasa al mismo horario del dia
+    # siguiente (queda guardado: Instagram usa el mismo scheduled_at).
+    if any(networks.get(n) and not video["published_at"].get(n)
+           for n in publishers if n in _NATIVE_SCHEDULE_NETWORKS):
+        with _lock:
+            projects = _load()
+            video = projects[project_id]["videos"][index]
+            slot = _future_slot(projects, (project_id, index), video.get("scheduled_at"))
+            try:
+                changed = datetime.fromisoformat(video["scheduled_at"]) != slot
+            except (KeyError, TypeError, ValueError):
+                changed = True
+            if changed:
+                video["scheduled_at"] = slot.isoformat()
+                _save(projects)
+
     rescheduled = False  # gap real de espaciado -> empuja scheduled_at
     waiting = False  # instagram todavia no llego a su horario real -> NO tocar scheduled_at
     error_parts = []
@@ -1025,6 +1627,7 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
                 scheduled_dt = datetime.fromisoformat(video["scheduled_at"])
             except (KeyError, TypeError, ValueError):
                 scheduled_dt = datetime.now()
+            scheduled_dt += timedelta(seconds=project.get("network_offsets", {}).get(network, 0))
             if scheduled_dt > datetime.now():
                 waiting = True
                 continue
@@ -1079,10 +1682,55 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
         else:
             v["status"] = "ready"
             if rescheduled:
-                v["scheduled_at"] = _into_publish_window(
-                    datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS)
+                v["scheduled_at"] = _next_free_reschedule_slot(
+                    projects, (project_id, index),
+                    datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS),
                 ).isoformat()
         _save(projects)
+
+
+def reschedule_published_video(project_id: str, index: int, new_slot: datetime) -> dict:
+    """Cambia el horario de un video del lote que ya salio programado a
+    Facebook/YouTube: actualiza la programacion en cada plataforma (buscando
+    los ids en los registros *_published.json por nombre de archivo). Guarda
+    scheduled_at (el que usa Facebook e Instagram) si Facebook acepto, y
+    youtube_at (un video por dia, ver _youtube_slot) si YouTube acepto.
+    Devuelve {red: resultado} para ver que se pudo y que no."""
+    import app
+
+    with _lock:
+        projects = _load()
+        video = projects[project_id]["videos"][index]
+        gaming_clip_project = projects[project_id].get("type") == "gaming_clip"
+        # El canal de gaming no sigue la regla de 1 video/dia del de historias
+        # (y _youtube_slot consultaria el canal equivocado).
+        yt_slot = new_slot if gaming_clip_project else _youtube_slot(projects, (project_id, index), new_slot.isoformat())
+    yt_channel = GAMING_YT_CHANNEL if gaming_clip_project else None
+    filename = Path(video["video_path"]).name
+    results = {}
+    updates = {}
+    if video["published_at"].get("facebook"):
+        record = next((r for r in _read_json_list(app._PUBLISHED_FB_PATH) if r.get("filename") == filename), None)
+        results["facebook"] = (
+            facebook_publisher.reschedule_video(record["video_id"], new_slot.timestamp(), record.get("page_id"))
+            if record else {"ok": False, "error": "sin registro de publicacion"}
+        )
+        if results["facebook"]["ok"]:
+            updates["scheduled_at"] = new_slot.isoformat()
+    if video["published_at"].get("youtube"):
+        record = next((r for r in _read_json_list(app._PUBLISHED_VIDEOS_PATH) if r.get("filename") == filename), None)
+        results["youtube"] = (
+            youtube_publisher.reschedule_video(record["video_id"], _rfc3339_utc(yt_slot.isoformat()), channel_key=yt_channel)
+            if record else {"ok": False, "error": "sin registro de publicacion"}
+        )
+        if results["youtube"]["ok"]:
+            updates["youtube_at"] = yt_slot.isoformat()
+    if updates:
+        with _lock:
+            projects = _load()
+            projects[project_id]["videos"][index].update(updates)
+            _save(projects)
+    return results
 
 
 def _publish_batch_video(project_id: str, index: int) -> None:
@@ -1094,12 +1742,21 @@ def _publish_batch_video(project_id: str, index: int) -> None:
     title = content["title"]
 
     def _yt(v, page_id):
+        with _lock:
+            try:
+                slot = _youtube_slot(_load(), (project_id, index), v["scheduled_at"]).isoformat()
+            except (KeyError, TypeError, ValueError):
+                slot = v.get("scheduled_at")
         result = youtube_publisher.publish_video(
             v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True,
-            publish_at=_rfc3339_utc(v.get("scheduled_at")),
+            publish_at=_rfc3339_utc(slot),
         )
         if result.get("ok"):
             app._record_published_video(result["video_id"], title, Path(v["video_path"]).name)
+            with _lock:
+                projects = _load()
+                projects[project_id]["videos"][index]["youtube_at"] = slot
+                _save(projects)
         return result
 
     def _fb(v, page_id):
@@ -1128,10 +1785,11 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
     project = get_project(project_id)
     video = project["videos"][index]
     caption = video.get("caption", "")
+    max_tags = IMAGE_POST_PROFILES[project.get("type", "gaming_image")]["max_hashtags"]
 
     def _fb(v, page_id):
         result = facebook_publisher.publish_photo(
-            v["video_path"], caption, page_id=page_id, scheduled_time=_scheduled_epoch(v),
+            v["video_path"], _limit_hashtags(caption, max_tags["facebook"]), page_id=page_id, scheduled_time=_scheduled_epoch(v),
         )
         if result.get("ok"):
             app._record_published_facebook(result["post_id"], project["name"], Path(v["video_path"]).name, page_id)
@@ -1141,7 +1799,9 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
         url = _public_image_url(project_id, index)
         if not url:
             return {"ok": False, "error": "Falta configurar la URL pública del Cloudflare Tunnel (pestaña Ajustes)."}
-        result = instagram_publisher.publish_photo(url, caption, page_id=page_id)
+        result = instagram_publisher.publish_photo(
+            url, _limit_hashtags(caption, max_tags["instagram"]), page_id=page_id,
+        )
         if result.get("ok"):
             app._record_published_instagram(result["media_id"], project["name"], Path(v["video_path"]).name, page_id)
         return result
@@ -1149,8 +1809,65 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
     _publish_networks(project_id, index, {"facebook": _fb, "instagram": _ig})  # nunca youtube
 
 
+def _publish_batch_clip(project_id: str, index: int) -> None:
+    import app
+
+    project = get_project(project_id)
+    video = project["videos"][index]
+    title = video.get("title") or project["name"]
+    caption = video.get("caption", "")
+
+    def _fb(v, page_id):
+        result = facebook_publisher.publish_video(
+            v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["facebook"]),
+            page_id=page_id, scheduled_time=_scheduled_epoch(v),
+        )
+        if result.get("ok"):
+            app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
+        return result
+
+    def _ig(v, page_id):
+        # Es gameplay real, no contenido generado con IA: sin la etiqueta "AI info".
+        result = instagram_publisher.publish_video(
+            v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["instagram"]),
+            page_id=page_id, ai_generated=False,
+        )
+        if result.get("ok"):
+            app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
+        return result
+
+    def _yt(v, page_id):
+        # Facebook y YouTube programan nativo: _publish_networks ya movio
+        # scheduled_at a un horario futuro valido. El canal es el de gaming, no el de historias.
+        yt_title, yt_description = shorts_text(title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["youtube"]))
+        result = youtube_publisher.publish_video(
+            v["video_path"], yt_title, yt_description, "public", [], False,
+            publish_at=_rfc3339_utc(v.get("scheduled_at")), channel_key=GAMING_YT_CHANNEL,
+        )
+        if result.get("ok"):
+            app._record_published_video(result["video_id"], yt_title, Path(v["video_path"]).name)
+            with _lock:
+                projects = _load()
+                projects[project_id]["videos"][index]["youtube_at"] = v.get("scheduled_at")
+                _save(projects)
+        return result
+
+    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig})
+
+
+def shorts_text(title: str, description: str) -> tuple:
+    """Titulo (<=100) y descripcion con #Shorts para subir un clip 9:16 a YouTube."""
+    title = (title or "Clip gaming").strip()[:100]
+    description = (description or "").strip()
+    if "#shorts" not in description.lower():
+        description = f"{description}\n\n#Shorts".strip()
+    return title, description
+
+
 def _generate_batch_item(project_id: str, index: int, content_type: str) -> None:
-    if content_type == "gaming_image":
+    if content_type == "gaming_clip":
+        _generate_batch_clip(project_id, index)
+    elif content_type in IMAGE_POST_PROFILES:
         _generate_batch_image_post(project_id, index)
     else:
         _generate_batch_video(project_id, index)
@@ -1177,7 +1894,9 @@ def _record_publish_failure(project_id: str, index: int, exc: Exception) -> None
 
 def _publish_batch_item(project_id: str, index: int, content_type: str) -> None:
     try:
-        if content_type == "gaming_image":
+        if content_type == "gaming_clip":
+            _publish_batch_clip(project_id, index)
+        elif content_type in IMAGE_POST_PROFILES:
             _publish_batch_image_post(project_id, index)
         else:
             _publish_batch_video(project_id, index)
@@ -1217,7 +1936,7 @@ def _batch_scheduler_tick() -> None:
 def run_publish_tick(running: Optional[list] = None) -> list:
     """Mitad de "publicacion" de _batch_scheduler_tick, separada para poder
     correrla sola (sin la mitad de generacion, que depende del browser
-    automation de Qwen) -- la reusa tanto el loop de 60s de start_scheduler
+    automation desatendida) -- la reusa tanto el loop de 60s de start_scheduler
     como publish_worker.py, el script liviano por Task Scheduler que no
     necesita a app.py corriendo. `running` se puede pasar ya cargado (evita
     un _load() de mas si el caller ya lo tiene); si no, lo carga solo.
@@ -1234,18 +1953,15 @@ def run_publish_tick(running: Optional[list] = None) -> list:
         )
 
     started = []
-    now = datetime.now()
-    in_window = BATCH_HOUR_START <= now.hour <= BATCH_HOUR_END
     for project in running:
         project_id = project["id"]
         videos = project["videos"]
         for v in videos:
-            # Fuera de 9-20 no se intenta nada: sale a la primera hora habil.
-            # Ya no se espera a que llegue scheduled_at para las redes con
-            # scheduling nativo (Facebook/YouTube) -- eso lo decide
-            # _publish_networks por red; Instagram (sin scheduling nativo)
-            # sigue esperando ahi su horario real.
-            if v["status"] != "ready" or not in_window:
+            # Un video listo se intenta subir de inmediato, a cualquier hora:
+            # Facebook/YouTube quedan programados en su horario (9-20) y
+            # _publish_networks decide por red; Instagram (sin scheduling
+            # nativo) espera ahi su horario real.
+            if v["status"] != "ready":
                 continue
             if _claim_for_publish(project_id, v["index"]):
                 t = threading.Thread(
@@ -1314,7 +2030,7 @@ def _acquire_scheduler_lock() -> bool:
     un mismo proceso) para que nunca haya 2 procesos con scheduler propio
     escribiendo batch_projects.json a la vez -- eso rompe MAX_AUTO_RETRIES
     (cada proceso lee/incrementa/escribe el contador sin ver al otro) y hace
-    que 2 llamadas a Qwen compartiendo la misma sesion de browser se pisen.
+    que 2 llamadas compartiendo la misma sesion de browser se pisen.
     El SO libera el lock solo, sin codigo de cleanup, cuando el proceso muere
     (crash, kill, cierre normal) -- asi un reinicio despues de matar el
     proceso viejo a la fuerza recupera el lock automaticamente.

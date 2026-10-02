@@ -34,6 +34,12 @@ from typing import Optional
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_file, render_template_string
 
+# Cargar .env ANTES de importar los modulos del proyecto: text_provider y
+# otros leen variables de entorno (ej. HERMES_CUSTOM_FREELLMAPI_API_KEY)
+# al importarse -- si esto corre despues, la config llega tarde y el
+# pipeline falla con "Sin proveedor de texto disponible".
+load_dotenv()
+
 import video_maker
 import auto_pipeline
 import facebook_publisher
@@ -45,17 +51,27 @@ import job_store
 import seo_optimizer
 import thumbnail_maker
 import batch_pipeline
+import gaming_clip
 import cloudflare_tunnel
+import text_provider
 from tts_engine import (
     text_to_speech_long,
+    text_to_speech_verified,
+    NARRATION_CHECK_SUFFIX,
     VOICE_LIBRARY,
     DEFAULT_VOICE,
     BEDTIME_PRESET,
     voice_is_ready,
     OUTPUT_DIR,
+    list_custom_voices,
+    add_custom_voice,
+    delete_custom_voice,
+    custom_voice_sample,
+    is_custom_voice,
+    CUSTOM_VOICE_PREFIX,
+    CUSTOM_VOICE_EXTENSIONS,
+    get_default_voice,
 )
-
-load_dotenv()
 
 GDRIVE_VIDEOS_DIR = Path(os.environ.get("GDRIVE_VIDEOS_DIR", r"G:\Mi unidad\VIDEOS DE FACEBOOK"))
 PORT = int(os.environ.get("PORT", 5000))
@@ -63,7 +79,7 @@ PORT = int(os.environ.get("PORT", 5000))
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB: tope de subida (imágenes/clips del pipeline manual)
 
-_PUBLIC_PATHS = ("/api/batch/cover/",)  # Instagram la baja directo vía el túnel, sin credenciales
+_PUBLIC_PATHS = ("/api/batch/cover/", "/api/gaming/cover/")  # Instagram la baja directo vía el túnel, sin credenciales
 
 
 @app.before_request
@@ -483,10 +499,31 @@ HTML = r"""<!DOCTYPE html>
   .progress-bar { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 10px; }
   .progress-bar-fill { height: 100%; background: var(--red-light); border-radius: 999px; transition: width .4s; }
 
-  .lote-video-list { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--surface-3); display: flex; flex-direction: column; gap: 8px; }
-  .lote-video-row { font-size: 12.5px; color: var(--text-secondary); }
-  .lote-video-row .progress-bar { margin-top: 5px; height: 5px; }
-  .lote-video-row-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .lote-video-list { margin-top: 12px; border: 1px solid var(--surface-3); border-radius: var(--radius-md); overflow: hidden; }
+  .lote-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 340px 110px; align-items: center; gap: 14px; padding: 10px 14px; font-size: 13px; }
+  .lote-row + .lote-row { border-top: 1px solid var(--surface-3); }
+  .lote-row-head { padding-top: 8px; padding-bottom: 8px; background: var(--surface-2); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+  .lote-num { color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .lote-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .lote-detail { font-size: 12px; color: var(--text-secondary); line-height: 1.4; overflow-wrap: anywhere; }
+  .lote-nets { display: flex; flex-direction: column; gap: 5px; }
+  .lote-net { display: grid; grid-template-columns: 76px 1fr 14px; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-muted); }
+  .lote-net-name { font-weight: 600; }
+  .lote-net-when { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .lote-net.done { color: var(--success); }
+  .lote-act { display: flex; justify-content: flex-end; }
+  .lote-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--surface-3); color: var(--text-secondary); }
+  .lote-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .lote-badge.ok { color: var(--success); background: rgba(63, 181, 111, .12); }
+  .lote-badge.wait { color: #e0b04a; background: rgba(224, 176, 74, .12); }
+  .lote-badge.busy { color: #6fa8ff; background: rgba(111, 168, 255, .12); }
+  .lote-badge.err { color: var(--error); background: rgba(226, 102, 95, .12); }
+  .lote-main .progress-bar { width: 100%; max-width: 260px; margin-top: 2px; height: 5px; }
+  @media (max-width: 900px) {
+    .lote-row-head { display: none; }
+    .lote-row { grid-template-columns: 30px minmax(0, 1fr); row-gap: 8px; }
+    .lote-nets, .lote-act { grid-column: 2; justify-content: flex-start; }
+  }
 
   @media (max-width: 1199px) {
     .voice-grid { grid-template-columns: repeat(2, 1fr); }
@@ -583,13 +620,23 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3l14 9-14 9V3z"/></svg> Generar video (automático)</h2>
       <p class="card-desc">
-        Elegí la página (su Project de Qwen le pide la historia solo). El
-        servidor narra el guion, genera los clips en WhatsApp/Meta IA con los
+        Elegí la página (define el nicho). El
+        servidor pide el guion a la IA, genera los clips en WhatsApp/Meta IA con los
         prompts y arma el video final con Remotion, todo en un solo paso.
       </p>
 
       <div class="field-label-row">
-        <label for="pipeline-page">Página (su nombre es también el del Project de Qwen)</label>
+        <label for="pipeline-type">Tipo de publicación</label>
+      </div>
+      <select id="pipeline-type">
+        <option value="video">Video completo (guion + clips + audio)</option>
+        <option value="gaming_image">Post de imagen — Gaming viral (4:5, Facebook + Instagram)</option>
+        <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
+        <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
+      </select>
+
+      <div class="field-label-row" style="margin-top:14px">
+        <label for="pipeline-page">Página</label>
       </div>
       <select id="pipeline-page"></select>
 
@@ -601,10 +648,7 @@ HTML = r"""<!DOCTYPE html>
         </select>
       </div>
 
-      <div class="field-label-row" style="margin-top:14px">
-        <label for="pipeline-trigger-message">Mensaje inicial a Qwen (lo que espera ese Project para responder con el formato)</label>
-      </div>
-      <input type="text" id="pipeline-trigger-message" placeholder="dame una historia" value="dame una historia">
+      
 
       <div class="textarea-wrap" style="display:none">
         <textarea id="pipeline-script" rows="6"></textarea>
@@ -615,11 +659,22 @@ HTML = r"""<!DOCTYPE html>
         <div class="char-count" id="pipeline-prompts-char-count">0 / 5000</div>
       </div>
 
+      <div id="pipeline-video-only-fields">
       <div class="voice-section-label">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>
         Voz
       </div>
       <div class="voice-grid" id="pipeline-voice-grid">Cargando...</div>
+
+      <div id="custom-voice-box" style="margin-top:12px">
+        <div class="field-label-row"><label for="custom-voice-name">Mis voces clonadas</label></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="custom-voice-name" maxlength="60" placeholder="Nombre de la voz (ej. Mamá Laura)" style="flex:1;min-width:180px">
+          <input type="file" id="custom-voice-file" accept="audio/*">
+          <button type="button" id="custom-voice-add-btn" class="btn-sm">🎙️ Agregar voz</button>
+        </div>
+        <p class="pub-hint" id="custom-voice-status">Audio de 4 a 20 segundos de una sola persona, sin música ni ruido. Usa solo voces de personas que dieron su permiso para ser clonadas. También puedes copiar archivos a la carpeta voices/custom/.</p>
+      </div>
 
       <div class="row-2col">
         <div>
@@ -655,15 +710,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="600" class="duration-long-option">10 minutos</option>
       </select>
 
-      <div class="field-label-row" style="margin-top:14px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3l14 9-14 9V3z"/></svg>
-        <label for="pipeline-provider">Generador de clips</label>
-      </div>
-      <select id="pipeline-provider">
-        <option value="whatsapp">WhatsApp / Meta IA</option>
-        <option value="qwen">Qwen (chat.qwen.ai)</option>
-        <option value="mixed">Mixto (WhatsApp + Qwen en paralelo)</option>
-      </select>
+      <input type="hidden" id="pipeline-provider" value="whatsapp"><!-- único generador de clips -->
 
       <label class="checkbox-row" for="pipeline-subtitles-enabled">
         <input type="checkbox" id="pipeline-subtitles-enabled" checked>
@@ -679,11 +726,36 @@ HTML = r"""<!DOCTYPE html>
         <input type="checkbox" id="pipeline-generate-video-clips" checked>
         Animar clips al generarlos (si no, solo imagen estática)
       </label>
+      </div>
+
+      <div id="pipeline-gaming-only-fields" style="display:none"></div>
+
+
+
+      <div id="pipeline-clip-only-fields" style="display:none">
+        <div class="field-label-row" style="margin-top:14px">
+          <label for="pipeline-game">Juego (se elige el clip más viral de Medal)</label>
+        </div>
+        <select id="pipeline-game">
+          <option value="cs2">Counter-Strike 2</option>
+          <option value="minecraft">Minecraft</option>
+          <option value="valorant">Valorant</option>
+          <option value="roblox">Roblox</option>
+          <option value="fortnite">Fortnite</option>
+          <option value="marvel-rivals">Marvel Rivals</option>
+          <option value="peak">PEAK</option>
+        </select>
+        <div class="field-label-row" style="margin-top:14px">
+          <label for="pipeline-medal-url">Link de un clip de Medal (opcional: si no, elige el mejor)</label>
+        </div>
+        <input type="text" id="pipeline-medal-url" placeholder="https://medal.tv/es/games/…/clips/…">
+        <p class="pub-hint">El clip es de otra persona: el video le da crédito en pantalla y en el caption, pero pedile permiso antes de publicar.</p>
+      </div>
 
       <div class="pipeline-action-row">
         <button id="pipeline-start-btn" class="btn btn-primary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><path d="M12 3l1.9 5.7L20 10.5l-5.7 1.9L12 18l-1.9-5.6L4 10.5l5.7-1.8z"/></svg>
-          Generar video
+          <span id="pipeline-start-label">Generar video</span>
         </button>
         <button id="pipeline-retry-btn" class="btn btn-primary btn-retry" style="display:none">
           ⟳ Reintentar
@@ -693,14 +765,50 @@ HTML = r"""<!DOCTYPE html>
         ✕ Cancelar (borra audio, clips y video de este intento)
       </button>
 
+      <div id="gaming-panel" style="display:none;margin-top:16px">
+        <div id="gaming-status" class="card-desc"></div>
+        <div id="gaming-preview" style="display:none">
+          <img id="gaming-cover" alt="Portada del post" style="width:100%;max-width:360px;aspect-ratio:4/5;object-fit:cover;border-radius:12px;display:block;margin:10px 0">
+          <video id="gaming-video" controls playsinline style="display:none;width:100%;max-width:300px;aspect-ratio:9/16;border-radius:12px;margin:10px 0;background:#000"></video>
+          <div class="field-label-row"><label for="gaming-caption">Caption</label></div>
+          <textarea id="gaming-caption" rows="7"></textarea>
+
+          <div class="field-label-row" style="margin-top:14px"><label>Redes donde publicar</label></div>
+          <div class="pub-target-row">
+            <label><input type="checkbox" id="gaming-facebook" checked> 📘 Facebook</label>
+            <label><input type="checkbox" id="gaming-instagram" checked> 📸 Instagram</label>
+            <label id="gaming-youtube-wrap" style="display:none"><input type="checkbox" id="gaming-youtube"> ▶️ YouTube (canal de gaming, como Short)</label>
+          </div>
+          <div id="gaming-yt-connect-wrap" style="display:none;margin-top:8px">
+            <button id="gaming-yt-connect-btn" class="btn btn-outline">Conectar canal de YouTube de gaming</button>
+            <span id="gaming-yt-connect-status" class="pub-hint"></span>
+          </div>
+
+          <label class="checkbox-row" for="gaming-schedule">
+            <input type="checkbox" id="gaming-schedule"> 🕒 Programar publicación
+          </label>
+          <div id="gaming-schedule-wrap" style="display:none;margin-top:8px">
+            <input type="datetime-local" id="gaming-schedule-time">
+            <p class="pub-hint">Facebook y YouTube lo programan en sus servidores; Instagram no permite programar, así que esta app lo publica a esa hora y tiene que seguir abierta.</p>
+          </div>
+
+          <div class="pipeline-action-row" style="margin-top:14px">
+            <button id="gaming-publish-btn" class="btn btn-primary">📤 Publicar ahora</button>
+            <button id="gaming-regen-btn" class="btn btn-primary btn-retry">⟳ Regenerar</button>
+            <button id="gaming-cancel-btn" class="btn btn-danger" style="margin-left:8px">❌ Cancelar post</button>
+          </div>
+          <div id="gaming-net-status" class="card-desc" style="margin-top:10px"></div>
+        </div>
+      </div>
+
       <div id="pipeline-panels" style="display:none">
         <div class="status-rows">
-          <div class="status-row" id="pipeline-row-qwen">
+          <div class="status-row" id="pipeline-row-text">
             <div class="status-row-text">
-              <strong>Historia (Qwen)</strong>
-              <span id="pipeline-panel-qwen">—</span>
+              <strong>Historia (IA)</strong>
+              <span id="pipeline-panel-text">—</span>
             </div>
-            <div class="ring pending" id="pipeline-ring-qwen"></div>
+            <div class="ring pending" id="pipeline-ring-text"></div>
           </div>
           <div class="status-row" id="pipeline-row-tts">
             <div class="status-row-text">
@@ -865,7 +973,7 @@ HTML = r"""<!DOCTYPE html>
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> Nuevo proyecto de lote</h2>
       <p class="card-desc">
         Genera y publica varios videos completos de forma automática, sacando
-        guion y prompts de un Project de Qwen (chat.qwen.ai). Los videos se
+        guion y prompts del generador de texto (cadena de LLMs). Los videos se
         publican espaciados en varios días, revisando antes de cada uno cuándo
         se publicó el anterior en cada red.
       </p>
@@ -875,7 +983,9 @@ HTML = r"""<!DOCTYPE html>
       </div>
       <select id="lote-type">
         <option value="video">Video completo (guion + clips + audio)</option>
-        <option value="gaming_image">Post de imagen — Gaming viral (1:1, Facebook + Instagram)</option>
+        <option value="gaming_image">Post de imagen — Gaming viral (4:5, Facebook + Instagram)</option>
+        <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
+        <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
       </select>
 
       <div id="lote-gaming-only-fields" style="display:none">
@@ -883,15 +993,27 @@ HTML = r"""<!DOCTYPE html>
           <label for="lote-image-provider">Generador de la imagen de portada</label>
         </div>
         <select id="lote-image-provider">
-          <option value="qwen">Qwen (chat.qwen.ai)</option>
           <option value="whatsapp">WhatsApp / Meta IA</option>
         </select>
       </div>
 
-      <div class="field-label-row" style="margin-top:14px">
-        <label for="lote-trigger-message">Mensaje inicial a Qwen (lo que espera ese Project para responder con el formato)</label>
+      <div id="lote-clip-only-fields" style="display:none">
+        <div class="field-label-row" style="margin-top:14px">
+          <label for="lote-game">Juego (cada clip es el más viral de Medal que aún no se usó)</label>
+        </div>
+        <select id="lote-game">
+          <option value="mix">Mixto (rota entre todos)</option>
+          <option value="cs2">Counter-Strike 2</option>
+          <option value="minecraft">Minecraft</option>
+          <option value="valorant">Valorant</option>
+          <option value="roblox">Roblox</option>
+          <option value="fortnite">Fortnite</option>
+          <option value="marvel-rivals">Marvel Rivals</option>
+          <option value="peak">PEAK</option>
+        </select>
       </div>
-      <input type="text" id="lote-trigger-message" placeholder="dame una historia" value="dame una historia">
+
+      
 
       <div class="row-2col">
         <div>
@@ -917,7 +1039,7 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
       <div id="lote-page-wrap" style="margin-top:10px">
-        <label for="lote-page">Página (su nombre es también el del Project de Qwen)</label>
+        <label for="lote-page">Página</label>
         <select id="lote-page"></select>
       </div>
       <div id="lote-style-wrap" style="display:none; margin-top:10px">
@@ -954,16 +1076,7 @@ HTML = r"""<!DOCTYPE html>
               <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
             </select>
           </div>
-          <div>
-            <div class="field-label-row">
-              <label for="lote-provider">Generador de clips</label>
-            </div>
-            <select id="lote-provider">
-              <option value="whatsapp">WhatsApp / Meta IA</option>
-              <option value="qwen">Qwen (chat.qwen.ai)</option>
-              <option value="mixed">Mixto (WhatsApp + Qwen en paralelo)</option>
-            </select>
-          </div>
+          <input type="hidden" id="lote-provider" value="whatsapp"><!-- único generador de clips -->
         </div>
 
         <div class="field-label-row" style="margin-top:14px">
@@ -1026,42 +1139,6 @@ HTML = r"""<!DOCTYPE html>
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn-sm" id="ajustes-check-whatsapp-btn">Comprobar conexión</button>
         <button class="btn-sm" id="ajustes-reconnect-whatsapp-btn" style="display:none">Reconectar</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de Qwen</h2>
-      <p class="card-desc">Proveedor alternativo para generar clips. Si aparece "Necesita reconectar", tocá el botón para iniciar sesión de nuevo.</p>
-      <div class="status-rows">
-        <div class="status-row" id="ajustes-row-qwen">
-          <div class="status-row-text">
-            <strong>Qwen</strong>
-            <span id="ajustes-msg-qwen">Sin comprobar todavía.</span>
-          </div>
-          <div class="ring pending" id="ajustes-ring-qwen"></div>
-        </div>
-      </div>
-      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
-        <button class="btn-sm" id="ajustes-check-qwen-btn">Comprobar conexión</button>
-        <button class="btn-sm" id="ajustes-reconnect-qwen-btn" style="display:none">Reconectar</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de Qwen (Generación en lote)</h2>
-      <p class="card-desc">Sesión aparte, solo para el módulo de "Generación en lote" (independiente de la sesión de Qwen normal). Si aparece "Necesita reconectar", tocá el botón para iniciar sesión de nuevo.</p>
-      <div class="status-rows">
-        <div class="status-row" id="ajustes-row-qwen_batch">
-          <div class="status-row-text">
-            <strong>Qwen (lote)</strong>
-            <span id="ajustes-msg-qwen_batch">Sin comprobar todavía.</span>
-          </div>
-          <div class="ring pending" id="ajustes-ring-qwen_batch"></div>
-        </div>
-      </div>
-      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
-        <button class="btn-sm" id="ajustes-check-qwen_batch-btn">Comprobar conexión</button>
-        <button class="btn-sm" id="ajustes-reconnect-qwen_batch-btn" style="display:none">Reconectar</button>
       </div>
     </div>
 
@@ -1214,7 +1291,6 @@ function activateTab(tab) {
   }
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
-    checkSessionStatus("qwen");
     checkYoutubeSettings();
     loadPublicUrl();
   }
@@ -1364,10 +1440,28 @@ async function loadPipelineVoices() {
     card.dataset.voice = key;
     card.tabIndex = 0;
     card.innerHTML = `
-      <div class="name">${info.label}</div>
+      <div class="name">${_escapeHtml(info.label)}</div>
       <div class="status${info.ready ? " ready" : ""}">${info.ready ? "✓ Lista" : "↓ Se genera al usar"}</div>
-      ${info.gentle ? '<span class="gentle-badge">Suave</span>' : ""}
+      ${info.custom ? '<span class="gentle-badge">Clonada</span>' : info.gentle ? '<span class="gentle-badge">Suave</span>' : ""}
+      ${info.custom ? '<div style="margin-top:8px;display:flex;gap:6px"><button type="button" class="btn-sm voice-play">▶ Escuchar</button><button type="button" class="btn-sm voice-del">🗑</button></div>' : ""}
     `;
+    if (info.custom) {
+      const slug = key.slice("custom:".length);
+      card.querySelector(".voice-play").addEventListener("click", (e) => {
+        e.stopPropagation();
+        new Audio(`/api/voices/custom/${slug}/sample`).play();
+      });
+      card.querySelector(".voice-del").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const ok = await appConfirm(`Se borra la voz «${info.label}» y su muestra.`, { title: "¿Borrar voz?", confirmLabel: "Borrar", cancelLabel: "Cancelar" });
+        if (!ok) return;
+        const res = await fetch(`/api/voices/custom/${slug}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!data.ok) { await appAlert(data.error || "No se pudo borrar la voz.", "Error"); return; }
+        if (pipelineVoice === key) pipelineVoice = "{default_voice}";
+        loadPipelineVoices(); loadLoteVoices();
+      });
+    }
     const select = () => {
       grid.querySelectorAll(".voice-card").forEach(c => c.classList.remove("active"));
       card.classList.add("active");
@@ -1380,11 +1474,62 @@ async function loadPipelineVoices() {
 }
 loadPipelineVoices();
 
+$("custom-voice-add-btn").addEventListener("click", async () => {
+  const btn = $("custom-voice-add-btn");
+  const status = $("custom-voice-status");
+  const file = $("custom-voice-file").files[0];
+  const label = $("custom-voice-name").value.trim();
+  if (!label || !file) { status.textContent = "❌ Escribe un nombre y elige un archivo de audio."; return; }
+  const form = new FormData();
+  form.append("file", file);
+  form.append("label", label);
+  btn.disabled = true;
+  status.textContent = "Procesando la muestra...";
+  try {
+    const res = await fetch("/api/voices/custom", { method: "POST", body: form });
+    const data = await res.json();
+    if (!data.ok) { status.textContent = `❌ ${data.error || "No se pudo agregar la voz."}`; return; }
+    pipelineVoice = data.voice;
+    $("custom-voice-name").value = "";
+    $("custom-voice-file").value = "";
+    status.textContent = `✅ Voz «${label}» agregada y seleccionada.`;
+    loadPipelineVoices(); loadLoteVoices();
+  } catch (e) {
+    status.textContent = "❌ Error de conexión con el servidor.";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 function updatePipelineStyleVisibility() {
   const pageSel = $("pipeline-page");
   const page = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
-  $("pipeline-style-wrap").style.display = page === "Historias" ? "" : "none";
+  const isGaming = isPostType($("pipeline-type").value);
+  $("pipeline-style-wrap").style.display = page === "Historias" && !isGaming ? "" : "none";
 }
+
+let gamingJobId = null;
+try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
+// Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
+const isPostType = (type) => type.startsWith("gaming_") || type === "ninio_image";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image";
+const PIPELINE_TRIGGER_DEFAULTS = {
+  video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
+  ninio_image: "dame el próximo post de niño selectivo",
+};
+function updatePipelineTypeVisibility() {
+  const type = $("pipeline-type").value;
+  const isGaming = isPostType(type);
+  $("pipeline-video-only-fields").style.display = isGaming ? "none" : "";
+  $("pipeline-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
+  $("pipeline-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
+  $("pipeline-trigger-wrap").style.display = type === "gaming_clip" ? "none" : "";
+  $("pipeline-start-label").textContent = type === "gaming_clip" ? "Generar clip" : isGaming ? "Generar post" : "Generar video";
+  $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
+  if (isGaming && gamingJobId) pollGamingJob();
+  updatePipelineStyleVisibility();
+}
+$("pipeline-type").addEventListener("change", updatePipelineTypeVisibility);
 
 async function loadPipelinePages() {
   try {
@@ -1392,8 +1537,8 @@ async function loadPipelinePages() {
     const data = await res.json();
     const pages = (data.ok && data.pages) || [];
     const sel = $("pipeline-page");
-    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${qwenProjectForPage(p.name)}</option>`).join("");
-    updatePipelineStyleVisibility();
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
+    updatePipelineTypeVisibility();
   } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
 }
 loadPipelinePages();
@@ -1528,7 +1673,10 @@ $("pipeline-clipgen-restart-btn").addEventListener("click", async (e) => {
     const data = await res.json();
     const state = data.status && data.status.state;
     if (state === "ok") {
-      await appAlert("Sesión reiniciada y activa de nuevo. Ya podés reintentar la generación.", "Listo");
+      await appAlert("Sesión reiniciada y activa de nuevo. Al aceptar se reintenta la generación.", "Listo");
+      // Reintenta solo, con lo ya generado (mismo botón "Reintentar"), si el job quedó en error.
+      const retryBtn = $("pipeline-retry-btn");
+      if (retryBtn.style.display !== "none" && !retryBtn.disabled) retryBtn.click();
     } else if (state === "needs_login") {
       await appAlert("Sesión reiniciada, pero hace falta volver a iniciar sesión (escanear QR / loguearse) antes de reintentar.", "Falta iniciar sesión");
     } else {
@@ -1588,7 +1736,7 @@ async function pollPipelineStatus(jobId) {
       return;
     }
 
-    renderPipelinePanel(data.story.qwen, "pipeline-panel-qwen", "pipeline-ring-qwen", "pipeline-row-qwen");
+    renderPipelinePanel(data.story.text, "pipeline-panel-text", "pipeline-ring-text", "pipeline-row-text");
     renderPipelinePanel(data.story.tts, "pipeline-panel-tts", "pipeline-ring-tts", "pipeline-row-tts");
     renderPipelinePanel(data.story.clipgen, "pipeline-panel-clipgen", "pipeline-ring-clipgen", "pipeline-row-clipgen");
     renderPipelinePanel(data.story.video, "pipeline-panel-video", "pipeline-ring-video", "pipeline-row-video");
@@ -1690,14 +1838,186 @@ $("pipeline-retry-btn").addEventListener("click", async () => {
   $("pipeline-retry-btn").disabled = false;
 });
 
+// Post gaming suelto: se genera (idea + imagen + meme 4:5), se ve la vista previa
+// y se publica ya o se programa, sin pasar por un lote.
+const GAMING_STAGE_LABELS = {
+  idea: "Pidiendo la idea a la IA…", imagen: "Generando la imagen…",
+  clip: "Buscando el clip más viral en Medal…", descarga: "Descargando el clip…",
+  render: "Editando el clip con Remotion (tarda unos 5 minutos)…",
+};
+const GAMING_NETWORKS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube" };
+const GAMING_JOB_KEY = "gamingJobId";
+let gamingPollTimer = null;
+
+function setGamingJobId(id) {
+  gamingJobId = id;
+  try { id ? localStorage.setItem(GAMING_JOB_KEY, id) : localStorage.removeItem(GAMING_JOB_KEY); } catch (e) {}
+}
+
+function gamingNetworkLine(name, net) {
+  const when = net.scheduled_time ? new Date(net.scheduled_time * 1000).toLocaleString() : null;
+  if (net.status === "running") return `⏳ ${name}: ${net.stage || "publicando"}…`;
+  if (net.status === "waiting") return `🕒 ${name}: se publica el ${when} (dejá esta app abierta)`;
+  if (net.status === "done") return `✅ ${name}: ${when ? "programado para el " + when : "publicado"}`;
+  return `❌ ${name}: ${net.error || "no se pudo publicar"}`;
+}
+
+async function checkGamingYoutube(isClip) {
+  let connected = true;
+  if (isClip) {
+    try {
+      const res = await fetch("/api/youtube/connected?channel=gaming");
+      connected = !!(await res.json()).connected;
+    } catch (e) { /* si falla la consulta no se bloquea: publicar da el error real */ }
+  }
+  $("gaming-yt-connect-wrap").style.display = isClip && !connected ? "" : "none";
+}
+
+$("gaming-yt-connect-btn").addEventListener("click", () =>
+  runYoutubeConnect($("gaming-yt-connect-btn"), (t) => { $("gaming-yt-connect-status").textContent = t; }, "gaming"));
+
+function renderGamingJob(job) {
+  const busy = Object.values(job.networks).some((n) => n.status === "waiting" || n.status === "running");
+  const isClip = job.kind === "clip";
+  $("gaming-panel").style.display = $("pipeline-type").value === (isClip ? "gaming_clip" : job.profile || "gaming_image") ? "" : "none";
+  $("gaming-preview").style.display = job.status === "ready" ? "" : "none";
+  $("gaming-status").textContent = job.status === "generating"
+    ? GAMING_STAGE_LABELS[job.stage] || "Generando…"
+    : job.status === "error" ? `❌ ${job.error || "Falló la generación."}` : `✅ ${isClip ? "Clip" : "Post"} listo: «${job.hook}»`;
+  $("pipeline-start-btn").disabled = job.status === "generating";
+  if (job.status !== "ready") return;
+
+  $("gaming-cover").style.display = isClip ? "none" : "block";
+  $("gaming-video").style.display = isClip ? "block" : "none";
+  const media = isClip ? $("gaming-video") : $("gaming-cover");
+  if (media.dataset.job !== job.job_id) { // recién al ver el post nuevo: no pisar el caption que se esté editando
+    media.src = `${job.cover_url}?t=${Date.now()}`;
+    media.dataset.job = job.job_id;
+    $("gaming-caption").value = job.caption || "";
+    // YouTube solo para clips (Short); por defecto marcado.
+    $("gaming-youtube").checked = isClip;
+    checkGamingYoutube(isClip);
+  }
+  $("gaming-youtube-wrap").style.display = isClip ? "" : "none";
+  for (const key of Object.keys(GAMING_NETWORKS)) {
+    const st = (job.networks[key] || {}).status;
+    const locked = st === "waiting" || st === "running" || st === "done";
+    $(`gaming-${key}`).disabled = locked;
+    if (locked) $(`gaming-${key}`).checked = false;
+  }
+  $("gaming-publish-btn").disabled = busy;
+  $("gaming-regen-btn").disabled = busy;
+  $("gaming-net-status").innerHTML = Object.entries(job.networks)
+    .map(([key, net]) => gamingNetworkLine(GAMING_NETWORKS[key], net)).join("<br>");
+}
+
+async function pollGamingJob() {
+  clearTimeout(gamingPollTimer);
+  if (!gamingJobId) return;
+  let job;
+  try {
+    const res = await fetch(`/api/gaming/status/${gamingJobId}`);
+    if (res.status === 404) { setGamingJobId(null); $("gaming-panel").style.display = "none"; return; }
+    const data = await res.json();
+    if (!data.ok) return;
+    job = data;
+  } catch (e) {
+    gamingPollTimer = setTimeout(pollGamingJob, 5000);
+    return;
+  }
+  renderGamingJob(job);
+  const busy = Object.values(job.networks).some((n) => n.status === "waiting" || n.status === "running");
+  if (job.status === "generating" || busy) gamingPollTimer = setTimeout(pollGamingJob, 3000);
+}
+
+async function startGamingPost(pageName, triggerMessage) {
+  $("pipeline-start-btn").disabled = true;
+  let started = false;
+  try {
+    const res = await fetch("/api/gaming/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify($("pipeline-type").value === "gaming_clip" ? {
+        kind: "clip", game: $("pipeline-game").value, medal_url: $("pipeline-medal-url").value.trim(),
+      } : {
+        kind: $("pipeline-type").value === "ninio_image" ? "ninio" : "image",
+        page_name: pageName,
+        trigger_message: triggerMessage || PIPELINE_TRIGGER_DEFAULTS[$("pipeline-type").value],
+        text_provider: "auto",
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || "No se pudo iniciar el post."); return; }
+    started = true;
+    setGamingJobId(data.job_id);
+    $("gaming-cover").dataset.job = "";
+    $("gaming-video").dataset.job = "";
+    pollGamingJob();
+  } catch (e) {
+    alert("Error de conexión con el servidor.");
+  } finally {
+    if (!started) $("pipeline-start-btn").disabled = false;
+  }
+}
+
+$("gaming-schedule").addEventListener("change", () => {
+  const on = $("gaming-schedule").checked;
+  $("gaming-schedule-wrap").style.display = on ? "block" : "none";
+  $("gaming-publish-btn").textContent = on ? "🕒 Programar" : "📤 Publicar ahora";
+});
+
+$("gaming-publish-btn").addEventListener("click", async () => {
+  const networks = Object.fromEntries(Object.keys(GAMING_NETWORKS).map((k) => [k, $(`gaming-${k}`).checked]));
+  if (!Object.values(networks).some(Boolean)) { alert("Elegí al menos una red social."); return; }
+  const scheduling = $("gaming-schedule").checked;
+  const scheduledTime = scheduling ? $("gaming-schedule-time").value : "";
+  if (scheduling && !scheduledTime) { alert("Elegí la fecha y hora de publicación."); return; }
+
+  $("gaming-publish-btn").disabled = true;
+  try {
+    const res = await fetch("/api/gaming/publish", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        job_id: gamingJobId, ...networks, page_id: $("pipeline-page").value || null,
+        caption: $("gaming-caption").value, scheduled_time: scheduledTime,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) alert(data.error || "No se pudo publicar.");
+  } catch (e) {
+    alert("Error de conexión con el servidor.");
+  }
+  pollGamingJob();
+});
+
+$("gaming-regen-btn").addEventListener("click", () => {
+  const pageSel = $("pipeline-page");
+  if (!pageSel.selectedOptions.length) return;
+  startGamingPost(pageSel.selectedOptions[0].textContent.trim(), "dame una historia");
+});
+
+$("gaming-cancel-btn").addEventListener("click", async () => {
+  if (!gamingJobId) return;
+  if (!confirm("¿Seguro que querés cancelar y eliminar este post? Se perderán imagen/clip generados.")) return;
+  try {
+    const res = await fetch(`/api/gaming/cancel/${gamingJobId}`, { method: "POST" });
+    const data = await res.json();
+    if (!data.ok) alert(data.error || "No se pudo cancelar.");
+    else { setGamingJobId(null); $("gaming-panel").style.display = "none"; $("gaming-preview").style.display = "none"; $("gaming-status").textContent = "Post cancelado y eliminado."; }
+  } catch (e) { alert("Error de conexión con el servidor."); }
+});
+
 $("pipeline-start-btn").addEventListener("click", async () => {
   const pageSel = $("pipeline-page");
   if (!pageSel.selectedOptions.length) { alert("Elegí una página antes de generar."); return; }
-  const qwenProject = pageSel.selectedOptions[0].textContent.trim();
-  const triggerMessage = $("pipeline-trigger-message").value.trim();
+  const pageName = pageSel.selectedOptions[0].textContent.trim();
+
+  if (isPostType($("pipeline-type").value)) {
+    await startGamingPost(pageName, PIPELINE_TRIGGER_DEFAULTS[$("pipeline-type").value]);
+    return;
+  }
 
   const confirmado = await appConfirm(
-    `Se le va a pedir una historia nueva al Project de Qwen "${qwenProject}" y se genera el video con esa historia.`,
+    `Se pide una historia nueva a la IA y se genera el video con esa historia.`,
     { title: "Revisá antes de generar", confirmLabel: "Generar video", cancelLabel: "Cancelar" }
   );
   if (!confirmado) return;
@@ -1707,7 +2027,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
   $("pipeline-cancel-btn").style.display = "none";
   $("pipeline-panels").style.display = "";
   $("pipeline-result").classList.remove("visible");
-  renderPipelinePanel(null, "pipeline-panel-qwen", "pipeline-ring-qwen", "pipeline-row-qwen");
+  renderPipelinePanel(null, "pipeline-panel-text", "pipeline-ring-text", "pipeline-row-text");
   renderPipelinePanel(null, "pipeline-panel-tts", "pipeline-ring-tts", "pipeline-row-tts");
   renderPipelinePanel(null, "pipeline-panel-clipgen", "pipeline-ring-clipgen", "pipeline-row-clipgen");
   renderPipelinePanel(null, "pipeline-panel-video", "pipeline-ring-video", "pipeline-row-video");
@@ -1717,9 +2037,15 @@ $("pipeline-start-btn").addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        qwen_project: qwenProject,
-        trigger_message: triggerMessage,
+        page_name: pageName,
+        // Trigger: el input "pipeline-trigger" ya no existe en el panel. La
+        // historia (IA) se escribe en el textarea "pipeline-script", cuyo
+        // placeholder por defecto es el mensaje que llama la IA. Leemos ese
+        // valor (vacío => el placeholder por defecto del mismo input), y no
+        // hay variables ni IDs que no estén declarados.
+        trigger_message: $("pipeline-script").value.trim() || $("pipeline-script").placeholder || "dame una historia",
         visual_style: $("pipeline-visual-style").value,
+        text_provider: "auto",
         voice: pipelineVoice,
         provider: $("pipeline-provider").value,
         orientation: $("pipeline-orientation").value,
@@ -1732,7 +2058,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
     });
     const data = await res.json();
     if (!data.ok) {
-      alert(data.error);
+      appAlert(data.error || "Error desconocido.", "No se pudo iniciar el pipeline");
       $("pipeline-start-btn").disabled = false;
       return;
     }
@@ -1740,7 +2066,12 @@ $("pipeline-start-btn").addEventListener("click", async () => {
     if (pipelinePollTimer) clearInterval(pipelinePollTimer);
     pipelinePollTimer = setInterval(() => pollPipelineStatus(data.job_id), 3000);
   } catch (e) {
-    alert("No se pudo iniciar el pipeline.");
+    const detalle = (e && e.message) ? e.message : String(e);
+    appAlert(
+      `${detalle}\n\nSi dice "Failed to fetch" la app se está reiniciando o no responde — esperá unos segundos y probá de nuevo.`,
+      "No se pudo iniciar el pipeline"
+    );
+    console.error("pipeline/start falló:", e);
     $("pipeline-start-btn").disabled = false;
   }
 });
@@ -1763,7 +2094,7 @@ async function loadLotePages() {
     const data = await res.json();
     const pages = (data.ok && data.pages) || [];
     const sel = $("lote-page");
-    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${qwenProjectForPage(p.name)}</option>`).join("");
+    sel.innerHTML = pages.map(p => `<option value="${p.page_id}">${p.name}</option>`).join("");
     updateLoteStyleVisibility();
   } catch (e) { console.error("No se pudieron cargar las páginas de Facebook/Instagram", e); }
 }
@@ -1773,7 +2104,7 @@ async function loadLoteVoices() {
     const res = await fetch("/api/voices");
     const data = await res.json();
     const sel = $("lote-voice");
-    sel.innerHTML = Object.entries(data).map(([key, info]) => `<option value="${key}">${info.label}</option>`).join("");
+    sel.innerHTML = Object.entries(data).map(([key, info]) => `<option value="${key}">${info.custom ? "🎙️ " : ""}${_escapeHtml(info.label)}</option>`).join("");
   } catch (e) { console.error("No se pudieron cargar las voces", e); }
 }
 
@@ -1807,75 +2138,95 @@ function _loteVideoSummary(project) {
 }
 
 const _LOTE_STAGE_INFO = {
-  guion: { label: "Escribiendo guion (Qwen)", pct: 10 },
+  guion: { label: "Escribiendo guion (IA)", pct: 10 },
   imagenes: { label: "Generando imágenes/clips", pct: 35 },
   audio: { label: "Generando audio (TTS)", pct: 65 },
   render: { label: "Renderizando video", pct: 85 },
-  idea: { label: "Generando idea y prompt de imagen (Qwen)", pct: 25 },
-  imagen: { label: "Generando imagen de portada (Qwen)", pct: 70 },
+  idea: { label: "Generando idea y prompt de imagen (IA)", pct: 25 },
+  imagen: { label: "Generando imagen de portada", pct: 70 },
+  clip: { label: "Buscando el clip en Medal", pct: 15 },
+  descarga: { label: "Descargando el clip", pct: 30 },
 };
 
 function _loteDate(iso) {
-  try { return new Date(iso).toLocaleString(); } catch (e) { return iso || "—"; }
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso || "—";
+    const day = d.toLocaleDateString("es-CL", { weekday: "short", day: "2-digit", month: "short" });
+    const time = d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${day} · ${time} h`;
+  } catch (e) { return iso || "—"; }
 }
 
-function _loteVideoRowHtml(v, projectId) {
+const _LOTE_NETS = [["youtube", "YouTube"], ["facebook", "Facebook"], ["instagram", "Instagram"]];
+
+function _loteNetSchedule(v, project) {
+  // YouTube lleva un video por dia, asi que su horario puede diferir del de
+  // Facebook/Instagram (youtube_at); las demas redes usan scheduled_at.
+  return _LOTE_NETS.filter(([k]) => project.networks && project.networks[k]).map(([k, label]) => {
+    const done = v.published_at && v.published_at[k];
+    let at = k === "youtube" ? (v.youtube_at || v.scheduled_at) : v.scheduled_at;
+    const offset = (project.network_offsets || {})[k];
+    if (offset && at) at = new Date(new Date(at).getTime() + offset * 1000).toISOString();
+    const title = done ? `${label}: ya programado o publicado` : `${label}: pendiente de subir`;
+    return `<div class="lote-net${done ? " done" : ""}" title="${title}"><span class="lote-net-name">${label}</span><span class="lote-net-when">${_escapeHtml(_loteDate(at))}</span><span>${done ? "✓" : ""}</span></div>`;
+  }).join("");
+}
+
+function _loteVideoRowHtml(v, project) {
+  const projectId = project.id;
   const n = v.index + 1;
+  let badge = ["", "Pendiente"], detail = "", extra = "", action = "";
+  const caption = v.caption ? _escapeHtml(v.caption) : "";
   if (v.status === "generating") {
     const info = _LOTE_STAGE_INFO[v.stage] || { label: "Generando...", pct: 5 };
-    return `
-      <div class="lote-video-row">
-        <div>#${n} — ⚙️ ${_escapeHtml(info.label)}</div>
-        <div class="progress-bar"><div class="progress-bar-fill" style="width:${info.pct}%"></div></div>
-      </div>`;
-  }
-  if (v.status === "publishing") {
-    return `<div class="lote-video-row">#${n} — 📤 Publicando...</div>`;
-  }
-  if (v.status === "error") {
-    const intentos = v.gen_attempts || 0;
-    return `
-      <div class="lote-video-row lote-video-row-line">
-        <div>#${n} — ❌ Error tras ${intentos} intentos automáticos: ${_escapeHtml(v.error || "desconocido")}</div>
-        <button class="btn-sm" data-lote-retry="${projectId}" data-lote-retry-index="${v.index}">Reintentar</button>
-      </div>`;
-  }
-  if (v.status === "publish_error") {
-    const redesListas = Object.keys(v.published_at || {}).filter(k => v.published_at[k]);
-    const parcial = redesListas.length ? ` (ya publicado en ${_escapeHtml(redesListas.join(", "))})` : "";
-    const authMsg = v.last_publish_auth_error
-      ? ` — el token de esa red venció o perdió permisos, renovalo en Ajustes antes de reintentar`
-      : "";
-    return `
-      <div class="lote-video-row lote-video-row-line">
-        <div>#${n} — ❌ Error publicando: ${_escapeHtml(v.error || "desconocido")}${parcial}${authMsg}</div>
-        <button class="btn-sm" data-lote-retry-publish="${projectId}" data-lote-retry-index="${v.index}">Reintentar publicación</button>
-      </div>`;
-  }
-  const captionLine = v.caption
-    ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${_escapeHtml(v.caption)}</div>` : "";
-  if (v.status === "published") {
-    const redes = Object.keys(v.published_at || {}).filter(k => v.published_at[k]).join(", ") || "—";
-    return `<div class="lote-video-row">#${n} — ✅ Publicado (${_escapeHtml(redes)})${captionLine}</div>`;
-  }
-  if (v.status === "ready") {
-    const redesListas = Object.keys(v.published_at || {}).filter(k => v.published_at[k]);
-    const parcial = redesListas.length ? ` — ya publicado en ${_escapeHtml(redesListas.join(", "))}, falta el resto` : "";
+    badge = ["busy", "Generando"];
+    detail = _escapeHtml(info.label);
+    extra = `<div class="progress-bar"><div class="progress-bar-fill" style="width:${info.pct}%"></div></div>`;
+  } else if (v.status === "publishing") {
+    badge = ["busy", "Publicando"];
+  } else if (v.status === "error") {
+    badge = ["err", "Error de generación"];
+    detail = `Tras ${v.gen_attempts || 0} intentos automáticos: ${_escapeHtml(v.error || "desconocido")}`;
+    action = `<button class="btn-sm" data-lote-retry="${projectId}" data-lote-retry-index="${v.index}">Reintentar</button>`;
+  } else if (v.status === "publish_error") {
+    badge = ["err", "Error al publicar"];
+    detail = _escapeHtml(v.error || "desconocido");
+    if (v.last_publish_auth_error) detail += " — el token de esa red venció o perdió permisos, renovalo en Ajustes antes de reintentar.";
+    action = `<button class="btn-sm" data-lote-retry-publish="${projectId}" data-lote-retry-index="${v.index}">Reintentar</button>`;
+  } else if (v.status === "published") {
+    badge = ["ok", "Publicado"];
+    detail = caption;
+  } else if (v.status === "ready") {
     if (v.publish_attempts > 0) {
-      return `<div class="lote-video-row">#${n} — 🔄 Reintentando publicación automáticamente (intento ${v.publish_attempts}/3)${parcial}${captionLine}</div>`;
+      badge = ["wait", `Reintentando publicación (${v.publish_attempts}/3)`];
+    } else {
+      const parcial = Object.keys(v.published_at || {}).some(k => v.published_at[k]);
+      badge = ["wait", parcial ? "Programado" : "Listo, en espera"];
     }
-    return `<div class="lote-video-row">#${n} — 🟡 Listo, espera publicación (${_loteDate(v.scheduled_at)})${parcial}${captionLine}</div>`;
+    detail = caption;
+  } else if (v.gen_attempts > 0) {
+    badge = ["busy", `Reintentando generación (${v.gen_attempts}/3)`];
   }
-  if (v.gen_attempts > 0) {
-    return `<div class="lote-video-row">#${n} — 🔄 Reintentando generación automáticamente (intento ${v.gen_attempts}/3)</div>`;
-  }
-  return `<div class="lote-video-row">#${n} — ⏳ Pendiente (programado ${_loteDate(v.scheduled_at)})</div>`;
+  return `
+    <div class="lote-row">
+      <div class="lote-num">${n}</div>
+      <div class="lote-main">
+        <span class="lote-badge ${badge[0]}">${badge[1]}</span>
+        ${detail ? `<div class="lote-detail">${detail}</div>` : ""}${extra}
+      </div>
+      <div class="lote-nets">${_loteNetSchedule(v, project)}</div>
+      <div class="lote-act">${action}</div>
+    </div>`;
 }
 
 function _loteVideoRows(project) {
   const videos = project.videos || [];
   if (!videos.length) return "";
-  return `<div class="lote-video-list">${videos.map(v => _loteVideoRowHtml(v, project.id)).join("")}</div>`;
+  return `<div class="lote-video-list">
+    <div class="lote-row lote-row-head"><div>#</div><div>Estado</div><div>Horario por red</div><div></div></div>
+    ${videos.map(v => _loteVideoRowHtml(v, project)).join("")}
+  </div>`;
 }
 
 async function loadLoteProjects() {
@@ -1971,33 +2322,20 @@ updateDurationOptions("pipeline-orientation", "pipeline-duration");
 updateDurationOptions("lote-orientation", "lote-duration");
 
 function updateLoteTypeVisibility() {
-  const isGaming = $("lote-type").value === "gaming_image";
+  const type = $("lote-type").value;
+  const isGaming = isPostType(type);
   $("lote-video-only-fields").style.display = isGaming ? "none" : "";
-  $("lote-gaming-only-fields").style.display = isGaming ? "" : "none";
-  $("lote-yt").checked = isGaming ? false : $("lote-yt").checked;
-  $("lote-yt").closest("label").style.display = isGaming ? "none" : "";
-  $("lote-trigger-message").placeholder = isGaming ? "dame el próximo post gaming" : "dame una historia";
+  $("lote-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
+  $("lote-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
+  $("lote-trigger-wrap").style.display = type === "gaming_clip" ? "none" : "";
+  // YouTube: videos normales y clips gaming (canal de gaming); no imagen.
+  const noYoutube = isImagePostType(type);
+  $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
+  $("lote-yt").closest("label").style.display = noYoutube ? "none" : "";
+  // placeholder removed
 }
 $("lote-type").addEventListener("change", updateLoteTypeVisibility);
 updateLoteTypeVisibility();
-
-// Nombres reales de los Projects en chat.qwen.ai, que no siempre coinciden
-// con el nombre de la pagina de Facebook/Instagram (p.ej. la pagina se
-// renombro a "HISTORIAS QUE VER" pero el Project de Qwen sigue "Historias").
-// Sin este mapeo _open_qwen_project no encuentra el proyecto en el sidebar
-// de Qwen y el lote falla al pedir la historia.
-const QWEN_PROJECT_NAMES = {
-  "HISTORIAS QUE VER": "Historias",
-  "HISTORIAS": "Historias",
-  "JUGADASEPICASVIDEOJUEGOS": "Jugadasepicasvideojuegos",
-  "MACRAME CREATIVO": "Macramé Creativo",
-  "NINO SELECTIVO, FAMILIA EN PAZ": "Niño Selectivo, Familia en Paz",
-};
-function qwenProjectForPage(pageText) {
-  const key = pageText.trim().toUpperCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return QWEN_PROJECT_NAMES[key] || pageText;
-}
 
 function updateLoteStyleVisibility() {
   const pageSel = $("lote-page");
@@ -2010,30 +2348,30 @@ $("lote-create-btn").addEventListener("click", async () => {
   const btn = $("lote-create-btn");
   const statusEl = $("lote-create-status");
   const pageSel = $("lote-page");
-  const qwenProject = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
-  if (!qwenProject) {
-    statusEl.innerHTML = `<div class="analytics-empty">No hay páginas configuradas: el nombre de la página define el proyecto de Qwen.</div>`;
+  const pageName = pageSel.selectedOptions.length ? pageSel.selectedOptions[0].textContent.trim() : "";
+  if (!pageName) {
+    statusEl.innerHTML = `<div class="analytics-empty">No hay páginas configuradas.</div>`;
     return;
   }
   const contentType = $("lote-type").value;
-  const isGaming = contentType === "gaming_image";
+  const isGaming = isPostType(contentType);
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
   if ($("lote-ig").checked) networks.instagram = { page_id: pageId };
-  if (!isGaming && $("lote-yt").checked) networks.youtube = true;
+  if (!isImagePostType(contentType) && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
     return;
   }
   const payload = {
-    qwen_project: qwenProject, type: contentType,
-    trigger_message: $("lote-trigger-message").value.trim()
-      || (isGaming ? "dame el próximo post gaming" : "dame una historia"),
+    page_name: pageName, type: contentType,
+    trigger_message: PIPELINE_TRIGGER_DEFAULTS[contentType],
     total_videos: parseInt($("lote-total").value, 10) || 1,
     per_day: parseInt($("lote-per-day").value, 10) || 1,
     networks,
-    video_settings: isGaming ? { image_provider: $("lote-image-provider").value } : {
+    video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
+      : isGaming ? { image_provider: $("lote-image-provider").value } : {
       voice: $("lote-voice").value,
       subtitle_preset: $("lote-subtitle-preset").value,
       orientation: $("lote-orientation").value,
@@ -2043,6 +2381,7 @@ $("lote-create-btn").addEventListener("click", async () => {
       animate_images: $("lote-animate-images").checked,
       generate_video_clips: $("lote-generate-video-clips").checked,
       visual_style: $("lote-visual-style").value,
+      text_provider: "auto",
     },
   };
   btn.disabled = true;
@@ -2057,7 +2396,7 @@ $("lote-create-btn").addEventListener("click", async () => {
       return;
     }
     statusEl.innerHTML = `<div class="analytics-empty">✅ Proyecto "${_escapeHtml(data.project.name)}" creado.</div>`;
-    $("lote-trigger-message").value = "";
+    // reset removed
     loadLoteProjects();
   } catch (e) {
     statusEl.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
@@ -2349,14 +2688,17 @@ async function checkYoutubeConnection() {
 
 // Login OAuth de YouTube: bloquea hasta que el usuario aprueba/cancela en el
 // navegador de la PC del servidor. Compartido por la pestaña Video y Ajustes.
-async function runYoutubeConnect(btn, setStatus) {
+async function runYoutubeConnect(btn, setStatus, channel) {
   btn.disabled = true;
   setStatus("Abriendo el navegador para conectar tu cuenta de Google...");
   try {
-    const res = await fetch("/api/youtube/connect", { method: "POST" });
+    const res = await fetch("/api/youtube/connect", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: channel || null }),
+    });
     const data = await res.json();
     if (data.ok) {
       setStatus("");
+      if (channel === "gaming") { $("gaming-yt-connect-wrap").style.display = "none"; return; }
       checkYoutubeConnection();
       checkYoutubeSettings();
     } else {
@@ -2590,10 +2932,10 @@ $("publish-btn").addEventListener("click", async () => {
   btn.disabled = false;
 });
 
-// ── Ajustes: estado y reconexión de sesiones (WhatsApp / Qwen) ──
+// ── Ajustes: estado y reconexión de sesiones (WhatsApp) ──
 const _ajustesPollTimers = {};
 
-const _ajustesProviderLabel = { whatsapp: "WhatsApp", qwen: "Qwen", qwen_batch: "Qwen (lote)" };
+const _ajustesProviderLabel = { whatsapp: "WhatsApp" };
 
 function closeQrModal() {
   $("qr-modal-backdrop").style.display = "none";
@@ -2668,34 +3010,11 @@ async function reconnectSession(provider) {
       const devtoolsLink = $("qr-modal-devtools-link");
       const label = _ajustesProviderLabel[provider] || provider;
       backdrop.dataset.provider = provider;
-      const isQwen = provider === "qwen" || provider === "qwen_batch";
-      if (isQwen) {
-        // Qwen no tiene QR (no renderiza <canvas>) -- esta sesion es un Chrome
-        // aparte, sin relacion con el Chrome personal del usuario aunque ahi
-        // ya este logueado. Hay que loguear ESTA sesion puntual via DevTools.
-        $("qr-modal-title").textContent = `Iniciar sesión en ${label}`;
-        qrImg.style.display = "none";
-        hint.textContent = "Esta es una sesión de navegador aislada, separada de tu Chrome personal. Estar logueado en tu Chrome no la loguea a ella. Hacé clic abajo para abrir esta sesión en una pestaña de DevTools y loguearte ahí (con tu cuenta de Qwen).";
-        devtoolsLink.style.display = "block";
-        devtoolsLink.textContent = "Cargando enlace...";
-        fetch(`/api/session/devtools-url/${provider}`)
-          .then((r) => r.json())
-          .then((d) => {
-            if (d.ok) {
-              devtoolsLink.href = d.url;
-              devtoolsLink.textContent = "Abrir sesión para loguearme";
-            } else {
-              devtoolsLink.textContent = "No se pudo generar el enlace";
-            }
-          })
-          .catch(() => { devtoolsLink.textContent = "No se pudo generar el enlace"; });
-      } else {
-        $("qr-modal-title").textContent = `Escaneá el QR de ${label}`;
-        qrImg.style.display = "block";
-        hint.textContent = "WhatsApp → Menú → Dispositivos vinculados → Vincular un dispositivo, y escaneá esto con la cámara del celular.";
-        devtoolsLink.style.display = "none";
-        qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
-      }
+      $("qr-modal-title").textContent = `Escaneá el QR de ${label}`;
+      qrImg.style.display = "block";
+      hint.textContent = "WhatsApp → Menú → Dispositivos vinculados → Vincular un dispositivo, y escaneá esto con la cámara del celular.";
+      devtoolsLink.style.display = "none";
+      qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
       backdrop.style.display = "flex";
       if (_ajustesPollTimers[provider]) clearInterval(_ajustesPollTimers[provider]);
       _ajustesPollTimers[provider] = setInterval(async () => {
@@ -2703,7 +3022,7 @@ async function reconnectSession(provider) {
         if (s === "ok") {
           clearInterval(_ajustesPollTimers[provider]);
           _ajustesPollTimers[provider] = null;
-        } else if (s === "needs_login" && !isQwen && backdrop.dataset.provider === provider) {
+        } else if (s === "needs_login" && backdrop.dataset.provider === provider) {
           qrImg.src = `/api/session/screenshot/${provider}?t=${Date.now()}`;
         }
       }, 5000);
@@ -2717,11 +3036,9 @@ async function reconnectSession(provider) {
 }
 
 $("ajustes-check-whatsapp-btn").addEventListener("click", () => checkSessionStatus("whatsapp"));
-$("ajustes-check-qwen-btn").addEventListener("click", () => checkSessionStatus("qwen"));
-$("ajustes-check-qwen_batch-btn").addEventListener("click", () => checkSessionStatus("qwen_batch"));
+
 $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSession("whatsapp"));
-$("ajustes-reconnect-qwen-btn").addEventListener("click", () => reconnectSession("qwen"));
-$("ajustes-reconnect-qwen_batch-btn").addEventListener("click", () => reconnectSession("qwen_batch"));
+
 
 // ── Ajustes: conexión de YouTube (OAuth) ──
 async function checkYoutubeSettings() {
@@ -2734,7 +3051,7 @@ async function checkYoutubeSettings() {
     const data = await res.json();
     const connected = !!data.connected;
     ring.className = connected ? "ring done" : "ring error";
-    msg.textContent = connected ? "Conectado." : "Necesita reconectar (sin token válido).";
+    msg.textContent = connected ? "Conectado." : "Necesita reconectar (sin token válido o sin permiso para leer el canal).";
     reconnectBtn.style.display = connected ? "none" : "";
   } catch (e) {
     ring.className = "ring error";
@@ -2784,20 +3101,83 @@ $("ajustes-save-public-url-btn").addEventListener("click", async () => {
 
 @app.route("/")
 def index():
-    html = HTML.replace("{default_voice}", DEFAULT_VOICE)
+    html = HTML.replace("{default_voice}", get_default_voice())
     return render_template_string(html)
+
+
+def _voice_error(voice) -> Optional[str]:
+    """Mensaje de error si `voice` es una voz clonada que ya no existe (si no, las
+    voces desconocidas caerian en silencio a la voz por defecto)."""
+    if is_custom_voice(voice) and custom_voice_sample(voice) is None:
+        return "La voz clonada elegida ya no existe: elige otra voz o vuelve a subir la muestra."
+    return None
 
 
 @app.route("/api/voices")
 def api_voices():
     result = {}
-    for key, info in VOICE_LIBRARY.items():
-        result[key] = {
-            "label": info["label"],
-            "gentle": info["gentle"],
-            "ready": voice_is_ready(key),
+    for slug, info in list_custom_voices().items():  # las clonadas primero
+        result[CUSTOM_VOICE_PREFIX + slug] = {
+            "label": info.get("label") or slug, "gentle": False, "ready": True, "custom": True,
         }
+    if not result:  # sin voces clonadas el selector no puede quedar vacio: biblioteca de respaldo
+        for key, info in VOICE_LIBRARY.items():
+            result[key] = {
+                "label": info["label"],
+                "gentle": info["gentle"],
+                "ready": voice_is_ready(key),
+            }
     return jsonify(result)
+
+
+CUSTOM_VOICE_MAX_UPLOAD = 15 * 1024 * 1024
+
+
+@app.route("/api/voices/custom", methods=["POST"])
+def api_voices_custom_add():
+    """Sube una muestra de voz (5-20 s) para clonarla en los videos."""
+    upload = request.files.get("file")
+    label = (request.form.get("label") or "").strip()
+    if upload is None or not upload.filename:
+        return jsonify({"ok": False, "error": "Elige un archivo de audio."}), 400
+    if not label:
+        return jsonify({"ok": False, "error": "Ponle un nombre a la voz."}), 400
+    suffix = Path(upload.filename).suffix.lower()
+    if suffix not in CUSTOM_VOICE_EXTENSIONS:
+        return jsonify({"ok": False, "error": "Formato no soportado: usa wav, mp3, m4a, ogg o flac."}), 400
+    tmp = OUTPUT_DIR / f"_voice_upload_{uuid.uuid4().hex}{suffix}"
+    try:
+        upload.save(str(tmp))
+        if tmp.stat().st_size > CUSTOM_VOICE_MAX_UPLOAD:
+            return jsonify({"ok": False, "error": "El audio pesa mas de 15 MB: recorta la muestra a 5-20 segundos."}), 400
+        key = add_custom_voice(str(tmp), label)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    finally:
+        tmp.unlink(missing_ok=True)
+    return jsonify({"ok": True, "voice": key})
+
+
+@app.route("/api/voices/custom/<slug>", methods=["DELETE"])
+def api_voices_custom_delete(slug):
+    key = CUSTOM_VOICE_PREFIX + slug
+    in_use = [
+        p["name"] for p in batch_pipeline._load().values()
+        if p.get("status") == "running" and (p.get("video_settings") or {}).get("voice") == key
+    ]
+    if in_use:
+        return jsonify({"ok": False, "error": f"La voz la usa un lote en curso ({', '.join(in_use)}): espera a que termine."}), 409
+    if not delete_custom_voice(slug):
+        return jsonify({"ok": False, "error": "Voz no encontrada."}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/voices/custom/<slug>/sample")
+def api_voices_custom_sample(slug):
+    sample = custom_voice_sample(CUSTOM_VOICE_PREFIX + slug)
+    if sample is None:
+        return jsonify({"ok": False, "error": "Voz no encontrada."}), 404
+    return send_file(str(sample), mimetype="audio/wav")
 
 
 @app.route("/api/subtitle-presets")
@@ -2852,10 +3232,13 @@ def api_tts_start():
         return jsonify({"ok": False, "error": "El texto supera los 20000 caracteres."}), 400
 
     kwargs = {
-        "voice": data.get("voice", DEFAULT_VOICE),
+        "voice": data.get("voice") or get_default_voice(),
         "exaggeration": float(data.get("exaggeration", BEDTIME_PRESET["exaggeration"])),
         "cfg_weight": float(data.get("cfg_weight", BEDTIME_PRESET["cfg_weight"])),
     }
+    voice_error = _voice_error(kwargs["voice"])
+    if voice_error:
+        return jsonify({"ok": False, "error": voice_error}), 400
 
     job_id = uuid.uuid4().hex
     with _tts_jobs_lock:
@@ -3058,18 +3441,13 @@ def api_clipgen_restart_browser():
     provider = data.get("provider", "whatsapp").strip()
     if provider not in auto_pipeline.PROVIDERS:
         return jsonify({"ok": False, "error": f"Proveedor desconocido: {provider}"}), 400
-    session = auto_pipeline.QWEN_SESSION if provider == "qwen" else auto_pipeline.WHATSAPP_SESSION
+    session = auto_pipeline.WHATSAPP_SESSION
     result = auto_pipeline.hard_reset_browser_session(session)
     return jsonify(result)
 
 
 def _session_for_provider(provider):
-    # "mixed" no es una sesion real de agent-browser (usa whatsapp+qwen a la
-    # vez) -- solo whatsapp/qwen tienen estado de login individual chequeable.
-    if provider == "qwen":
-        return auto_pipeline.QWEN_SESSION
-    if provider == "qwen_batch":
-        return auto_pipeline.QWEN_BATCH_SESSION
+
     if provider == "whatsapp":
         return auto_pipeline.WHATSAPP_SESSION
     return None
@@ -3195,24 +3573,42 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                        subtitle_style: Optional[dict], title: str, provider: str = "whatsapp",
                        skip_tts: bool = False, script_text: Optional[str] = None,
                        wait_tts_from: Optional[str] = None, animate_images: bool = True,
-                       generate_video_clips: bool = True, qwen_project: Optional[str] = None,
+                       generate_video_clips: bool = True, page_name: Optional[str] = None,
                        trigger_message: Optional[str] = None, visual_style: Optional[str] = None,
-                       duration_seconds: Optional[int] = None):
-    if qwen_project and not story_text:
-        _pipeline_sub_update(job_id, "qwen", status="running",
-                              message=f"Pidiendo historia al proyecto de Qwen '{qwen_project}'...")
+                       duration_seconds: Optional[int] = None,
+                       text_provider_pref: str = ""):
+    if page_name and not story_text:
+        _pipeline_sub_update(job_id, "text", status="running",
+                              message=f"Generando historia (proveedor de texto: {text_provider_pref or 'auto'})...")
         try:
-            story_text = auto_pipeline.generate_story_from_qwen_project(
-                qwen_project, unattended=True, trigger_message=trigger_message or "dame una historia",
+            text_kind = batch_pipeline._text_kind_for_page(page_name)
+            trigger_text = auto_pipeline.build_trigger_message(
+                trigger_message or "dame una historia", duration_seconds, kind=text_kind,
             )
+            if page_name.strip().upper() == batch_pipeline.RESCUE_PAGE_NAME:
+                pattern = batch_pipeline._pick_story_pattern(
+                    batch_pipeline._recent_story_patterns(batch_pipeline._load()))
+                trigger_text += batch_pipeline.rescue_story_block(pattern) + batch_pipeline._rescue_history_block()
+            _provider_attempts: list = []
+            story_text = batch_pipeline._generate_text_with_chain(
+                text_kind,
+                page_name,
+                trigger_text,
+                story_id,
+                duration_seconds=duration_seconds,
+                prefer=text_provider_pref,
+                attempted=_provider_attempts,
+            )
+            if text_kind == "macrame":
+                auto_pipeline.validate_macrame_story(auto_pipeline.load_story_from_text(story_text, story_id))
         except Exception as e:
-            logger.exception("pipeline job %s: fallo al pedir historia a Qwen", job_id)
-            _pipeline_sub_update(job_id, "qwen", status="error", error=str(e))
+            logger.exception("pipeline job %s: fallo al generar la historia", job_id)
+            _pipeline_sub_update(job_id, "text", status="error", error=str(e))
             with _pipeline_jobs_lock:
                 _pipeline_jobs[job_id].update(status="error", error=str(e))
                 job_store.save("pipeline", _pipeline_jobs)
             return
-        _pipeline_sub_update(job_id, "qwen", status="done", message="Listo")
+        _pipeline_sub_update(job_id, "text", status="done", message="Listo")
         with _pipeline_jobs_lock:
             job = _pipeline_jobs.get(job_id)
             if job is not None:
@@ -3225,16 +3621,25 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
     if not script_text:
         script_text = auto_pipeline.extract_script(story_text)
         if not script_text.strip():
-            # Algunos Projects de Qwen (ej. Macrame Creativo) no mandan un bloque
+            # Algunos generadores de texto no mandan un bloque
             # "Guion" separado antes de "Imagen 1" -- se reconstruye concatenando
             # las frases de cada escena (mismo fallback que batch_pipeline.py).
             story_for_script = auto_pipeline.load_story_from_text(story_text, story_id)
             script_text = " ".join(
                 p["frase"] for p in sorted(story_for_script["prompts"], key=lambda p: p["index"])
             )
+        try:
+            auto_pipeline.validate_script(script_text)
+        except auto_pipeline.PipelineError as e:
+            logger.error("pipeline job %s: %s", job_id, e)
+            _pipeline_sub_update(job_id, "text", status="error", error=str(e))
+            with _pipeline_jobs_lock:
+                _pipeline_jobs[job_id].update(status="error", error=str(e))
+                job_store.save("pipeline", _pipeline_jobs)
+            return
         if duration_seconds:
             script_text = auto_pipeline.cap_script_to_duration(script_text, duration_seconds)
-        if qwen_project:
+        if page_name:
             with _pipeline_jobs_lock:
                 job = _pipeline_jobs.get(job_id)
                 if job is not None:
@@ -3250,14 +3655,15 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             _pipeline_sub_update(job_id, "tts", percent=pct, message=msg)
 
         try:
-            output_path = text_to_speech_long(script_text, on_progress=on_progress, **tts_kwargs)
+            output_path, narration = text_to_speech_verified(script_text, on_progress=on_progress, **tts_kwargs)
         except Exception as e:
             logger.exception("pipeline job %s: tts fallo", job_id)
             _pipeline_sub_update(job_id, "tts", status="error", error=str(e), percent=100)
             return
         if output_path:
             logger.info("pipeline job %s: tts listo (%s)", job_id, output_path)
-            _pipeline_sub_update(job_id, "tts", status="done", percent=100, message="Listo",
+            check = "narración validada" if narration.get("ok") and not narration.get("skipped") else "Listo"
+            _pipeline_sub_update(job_id, "tts", status="done", percent=100, message=check,
                                   filename=Path(output_path).name)
         else:
             logger.error("pipeline job %s: tts fallo sin excepcion", job_id)
@@ -3383,6 +3789,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 frases=frases,
                 animate_images=animate_images,
                 on_progress=on_progress,
+                script_text=script_text,
             )
             video_path = None
             if timeline:
@@ -3439,11 +3846,14 @@ def api_pipeline_preview():
 def api_pipeline_start():
     data = request.get_json(force=True)
     story_text = data.get("story_text", "").strip()
-    qwen_project = (data.get("qwen_project") or "").strip() or None
+    page_name = (data.get("qwen_project") or (data.get("page_name") or "")).strip() or None
     trigger_message = (data.get("trigger_message") or "").strip() or None
     visual_style = (data.get("visual_style") or "").strip() or None
-    if not story_text and not qwen_project:
-        return jsonify({"ok": False, "error": "Pega el texto completo de la historia o elegí una página de Qwen."}), 400
+    text_provider_pref = (data.get("text_provider") or "").strip().lower()
+    if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
+        text_provider_pref = ""
+    if not story_text and not page_name:
+        return jsonify({"ok": False, "error": "Pega el texto completo de la historia o elegí una página."}), 400
     script_text = data.get("script_text", "").strip() or None
     duration_seconds = data.get("duration_seconds") or None
     duration_seconds = int(duration_seconds) if duration_seconds else None
@@ -3455,10 +3865,13 @@ def api_pipeline_start():
     title = data.get("title", "").strip()
 
     tts_kwargs = {
-        "voice": data.get("voice", DEFAULT_VOICE),
+        "voice": data.get("voice") or get_default_voice(),
         "exaggeration": float(data.get("exaggeration", BEDTIME_PRESET["exaggeration"])),
         "cfg_weight": float(data.get("cfg_weight", BEDTIME_PRESET["cfg_weight"])),
     }
+    voice_error = _voice_error(tts_kwargs["voice"])
+    if voice_error:
+        return jsonify({"ok": False, "error": voice_error}), 400
     orientation = data.get("orientation", "vertical").strip()
     if orientation not in ("vertical", "horizontal"):
         orientation = "vertical"
@@ -3482,10 +3895,11 @@ def api_pipeline_start():
         "provider": provider,
         "animate_images": animate_images,
         "generate_video_clips": generate_video_clips,
-        "qwen_project": qwen_project,
+        "page_name": page_name,
         "trigger_message": trigger_message,
         "visual_style": visual_style,
         "duration_seconds": duration_seconds,
+        "text_provider_pref": text_provider_pref,
     }
     with _pipeline_jobs_lock:
         _pipeline_jobs[job_id] = {
@@ -3495,7 +3909,7 @@ def api_pipeline_start():
             "started_at": time.time(),
             "inputs": inputs,
             "story": {
-                "qwen": {"status": "pending", "message": "", "error": None},
+                "text": {"status": "pending", "message": "", "error": None},
                 "tts": {"status": "pending", "percent": 0, "message": "", "error": None},
                 "clipgen": {"status": "pending", "message": "", "error": None},
                 "video": {"status": "pending", "message": "", "error": None},
@@ -3508,9 +3922,10 @@ def api_pipeline_start():
         args=(job_id, story_text, story_id, clips_dir, tts_kwargs, orientation,
               subtitles_enabled, subtitle_style, title, provider),
         kwargs={"script_text": script_text, "animate_images": animate_images,
-                "generate_video_clips": generate_video_clips, "qwen_project": qwen_project,
+                "generate_video_clips": generate_video_clips, "page_name": page_name,
                 "trigger_message": trigger_message, "visual_style": visual_style,
-                "duration_seconds": duration_seconds},
+                "duration_seconds": duration_seconds,
+                "text_provider_pref": text_provider_pref},
         daemon=True,
     )
     thread.start()
@@ -3566,7 +3981,7 @@ def api_pipeline_retry(job_id):
                      "message": "Esperando el audio del intento anterior..." if wait_tts_from else "",
                      "error": None}
                 ),
-                "qwen": {"status": "done" if inputs.get("story_text") else "pending", "message": "", "error": None},
+                "text": {"status": "done" if inputs.get("story_text") else "pending", "message": "", "error": None},
                 "clipgen": {"status": "pending", "message": "", "error": None},
                 "video": {"status": "pending", "message": "", "error": None},
             },
@@ -3582,10 +3997,11 @@ def api_pipeline_retry(job_id):
                 "wait_tts_from": wait_tts_from,
                 "animate_images": inputs.get("animate_images", True),
                 "generate_video_clips": inputs.get("generate_video_clips", True),
-                "qwen_project": inputs.get("qwen_project"),
+                "page_name": inputs.get("page_name"),
                 "trigger_message": inputs.get("trigger_message"),
                 "visual_style": inputs.get("visual_style"),
-                "duration_seconds": inputs.get("duration_seconds")},
+                "duration_seconds": inputs.get("duration_seconds"),
+                "text_provider_pref": inputs.get("text_provider_pref") or ""},
         daemon=True,
     )
     thread.start()
@@ -3595,7 +4011,7 @@ def api_pipeline_retry(job_id):
 
 def _kill_provider_sessions(provider: str) -> dict:
     sessions = (
-        [auto_pipeline.WHATSAPP_SESSION, auto_pipeline.QWEN_SESSION]
+        [auto_pipeline.WHATSAPP_SESSION]
         if provider == "mixed" else [_session_for_provider(provider)]
     )
     return {s: auto_pipeline.hard_reset_browser_session(s) for s in sessions if s}
@@ -3911,6 +4327,7 @@ def _cleanup_generation_records_for_video(video_filename: str) -> None:
             audio_filename = job.get("story", {}).get("tts", {}).get("filename")
             if audio_filename:
                 (OUTPUT_DIR / audio_filename).unlink(missing_ok=True)
+                (OUTPUT_DIR / (audio_filename + NARRATION_CHECK_SUFFIX)).unlink(missing_ok=True)
             del _pipeline_jobs[job_id]
         job_store.save("pipeline", _pipeline_jobs)
 
@@ -4038,6 +4455,370 @@ def _resolve_page_id(data: dict) -> tuple[Optional[str], Optional[dict]]:
     if page_id not in {p["page_id"] for p in pages}:
         return None, {"ok": False, "error": "La página seleccionada no está configurada."}
     return page_id, None
+
+
+# ─────────────────────────────────────────────
+# POST GAMING SUELTO (Crear video): generar -> vista previa -> publicar o programar
+# ─────────────────────────────────────────────
+# Mismo generador que el lote (batch_pipeline.generate_gaming_post) pero sin
+# proyecto: el post queda en _gaming_jobs hasta que se lo publica. Facebook
+# se programa de forma nativa (scheduled_publish_time); Instagram no tiene
+# scheduling, asi que su hilo duerme hasta la hora (el server tiene que seguir
+# vivo) y la imagen se baja por el tunel desde /api/gaming/cover/<job_id>.
+
+_gaming_jobs = job_store.load("gaming")  # job_id -> {status, stage, error, hook, top, bottom, caption, networks}
+_gaming_jobs_lock = threading.Lock()
+GAMING_JOB_KEEP_SECONDS = 7 * 24 * 3600
+_GAMING_NETWORKS = {"facebook": "Facebook", "instagram": "Instagram", "youtube": "YouTube"}
+
+for _gaming_job in _gaming_jobs.values():  # los hilos no sobreviven a un reinicio
+    if _gaming_job.get("status") == "generating":
+        _gaming_job.update(status="error", stage=None, error="Se interrumpió por un reinicio del servidor.")
+    for _net in (_gaming_job.get("networks") or {}).values():
+        if _net.get("status") in ("waiting", "running"):
+            _net.update(status="error", error="Se interrumpió por un reinicio del servidor.")
+
+
+def _gaming_dir(job_id: str) -> Path:
+    return video_maker.VIDEO_PUBLIC_DIR / f"gaming_{job_id}"
+
+
+def _gaming_update(job_id: str, **fields) -> None:
+    with _gaming_jobs_lock:
+        if job_id in _gaming_jobs:
+            _gaming_jobs[job_id].update(fields)
+            job_store.save("gaming", _gaming_jobs)
+
+
+def _gaming_net_update(job_id: str, network: str, **fields) -> None:
+    with _gaming_jobs_lock:
+        job = _gaming_jobs.get(job_id)
+        if job:
+            job.setdefault("networks", {}).setdefault(network, {}).update(fields)
+            job_store.save("gaming", _gaming_jobs)
+
+
+@app.route("/api/gaming/reload", methods=["POST"])
+def api_gaming_reload():
+    global _gaming_jobs
+    _gaming_jobs = job_store.load("gaming")
+    for _gaming_job in _gaming_jobs.values():
+        if _gaming_job.get("status") == "generating":
+            _gaming_job.update(status="error", stage=None, error="Se interrumpió por un reinicio del servidor.")
+        for _net in (_gaming_job.get("networks") or {}).values():
+            if _net.get("status") in ("waiting", "running"):
+                _net.update(status="error", error="Se interrumpió por un reinicio del servidor.")
+    return jsonify({"ok": True})
+
+
+def _gaming_public(job_id: str, job: dict) -> dict:
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "stage": job.get("stage"),
+        "error": job.get("error"),
+        "hook": job.get("hook"),
+        "top": job.get("top"),
+        "bottom": job.get("bottom"),
+        "caption": job.get("caption"),
+        "networks": job.get("networks") or {},
+        "kind": job.get("kind", "image"),
+        "profile": job.get("profile", "gaming_image"),
+        "title": job.get("title"),
+        "cover_url": f"/api/gaming/cover/{job_id}" if job["status"] == "ready" else None,
+    }
+
+
+def _prune_gaming_jobs() -> None:
+    cutoff = time.time() - GAMING_JOB_KEEP_SECONDS
+    with _gaming_jobs_lock:
+        for job_id, job in list(_gaming_jobs.items()):
+            waiting = any(n.get("status") in ("waiting", "running") for n in (job.get("networks") or {}).values())
+            if job.get("created_at", 0) < cutoff and job["status"] != "generating" and not waiting:
+                shutil.rmtree(_gaming_dir(job_id), ignore_errors=True)
+                if job.get("video_path"):
+                    Path(job["video_path"]).unlink(missing_ok=True)
+                del _gaming_jobs[job_id]
+        job_store.save("gaming", _gaming_jobs)
+
+
+def _run_gaming_generate(job_id: str, page_name: str, trigger_message: str,
+                         image_provider: str, text_provider_pref: str = "",
+                         profile_key: str = "gaming_image") -> None:
+    """Post de imagen suelto del nicho `profile_key` (batch_pipeline.IMAGE_POST_PROFILES)."""
+    profile = batch_pipeline.IMAGE_POST_PROFILES[profile_key]
+    template = batch_pipeline._image_post_template(profile_key, None)
+    try:
+        post = batch_pipeline.generate_gaming_post(
+            page_name, trigger_message, image_provider, _gaming_dir(job_id), template,
+            on_stage=lambda stage: _gaming_update(job_id, stage=stage),
+            text_provider_pref=text_provider_pref, profile_key=profile_key,
+        )
+    except Exception as e:
+        logger.exception("gaming %s: fallo la generacion", job_id)
+        _gaming_update(job_id, status="error", stage=None, error=str(e))
+        return
+    batch_pipeline._append_gaming_history({
+        "project_id": "manual", "index": 0, "hook": post["hook"], "idea": post["idea"],
+        "template": template, "created_at": datetime.now().isoformat(),
+    }, profile["history_store"])
+    _gaming_update(
+        job_id, status="ready", stage=None, error=None, hook=post["hook"], top=post["top"],
+        bottom=post["bottom"], caption=post["caption"], template=template,
+        image_path=str(_gaming_dir(job_id) / "cover.jpg"),
+    )
+
+
+def _run_gaming_clip_generate(job_id: str, game_key: str, medal_url: Optional[str]) -> None:
+    try:
+        clip = gaming_clip.generate_gaming_clip(
+            gaming_clip.game_for_index(game_key, 0), f"manual_{job_id}", medal_url=medal_url,
+            on_stage=lambda stage: _gaming_update(job_id, stage=stage),
+        )
+    except Exception as e:
+        logger.exception("gaming %s: fallo el clip", job_id)
+        _gaming_update(job_id, status="error", stage=None, error=str(e))
+        return
+    _gaming_update(
+        job_id, status="ready", stage=None, error=None, hook=clip["hook"], title=clip["title"],
+        caption=clip["caption"], video_path=clip["video_path"], source_clip=clip["clip"]["page_url"],
+    )
+
+
+@app.route("/api/gaming/start", methods=["POST"])
+def api_gaming_start():
+    data = request.get_json(force=True)
+    kind = "clip" if data.get("kind") == "clip" else "image"
+    # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
+    profile_key = "ninio_image" if data.get("kind") == "ninio" else "gaming_image"
+    if kind == "clip":
+        game_key = data.get("game") or ""
+        if game_key not in gaming_clip.GAMES:
+            return jsonify({"ok": False, "error": "Elegí un juego."}), 400
+        medal_url = (data.get("medal_url") or "").strip() or None
+        if medal_url and not medal_url.startswith("https://medal.tv/"):
+            return jsonify({"ok": False, "error": "El link tiene que ser de medal.tv."}), 400
+        if not gaming_clip.gaming_vision.is_configured():
+            return jsonify({"ok": False, "error": gaming_clip.gaming_vision.NOT_CONFIGURED_MSG}), 400
+        target, args = _run_gaming_clip_generate, (game_key, medal_url)
+    else:
+        page_name = (data.get("qwen_project") or (data.get("page_name") or "")).strip()
+        if not page_name:
+            return jsonify({"ok": False, "error": "Falta la página."}), 400
+        trigger_message = (data.get("trigger_message") or "").strip() or batch_pipeline.IMAGE_POST_PROFILES[profile_key]["default_trigger"]
+        text_provider_pref = (data.get("text_provider") or "").strip().lower()
+        if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
+            text_provider_pref = ""
+        image_provider = (data.get("image_provider") or "whatsapp").strip()
+        target, args = _run_gaming_generate, (page_name, trigger_message, image_provider, text_provider_pref, profile_key)
+
+    _prune_gaming_jobs()
+    job_id = uuid.uuid4().hex
+    with _gaming_jobs_lock:
+        if any(j["status"] == "generating" for j in _gaming_jobs.values()):
+            return jsonify({"ok": False, "error": "Ya hay un post gaming generándose. Esperá a que termine."}), 409
+        _gaming_jobs[job_id] = {
+            "kind": kind, "profile": profile_key, "status": "generating", "stage": "clip" if kind == "clip" else "idea",
+            "error": None, "networks": {}, "created_at": time.time(),
+        }
+        job_store.save("gaming", _gaming_jobs)
+    threading.Thread(target=target, args=(job_id, *args), daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/gaming/status/<job_id>")
+def api_gaming_status(job_id):
+    with _gaming_jobs_lock:
+        job = _gaming_jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Post no encontrado."}), 404
+        return jsonify({"ok": True, **_gaming_public(job_id, job)})
+
+
+@app.route("/api/gaming/cover/<job_id>")
+def api_gaming_cover(job_id):
+    with _gaming_jobs_lock:
+        job = _gaming_jobs.get(job_id)
+    path = job and (job.get("video_path") or job.get("image_path"))
+    if not path or not Path(path).exists():
+        return jsonify({"ok": False, "error": "Portada no encontrada."}), 404
+    return send_file(path)
+
+
+@app.route("/api/gaming/cancel/<job_id>", methods=["POST"])
+def api_gaming_cancel(job_id):
+    with _gaming_jobs_lock:
+        job = _gaming_jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Post no encontrado."}), 404
+        if job.get("networks"):
+            any_running = any(n.get("status") in ("waiting", "running", "done") for n in job["networks"].values())
+            if any_running:
+                return jsonify({"ok": False, "error": "No se puede cancelar: ya está publicándose/publicado."}), 409
+        # Eliminar archivos generados
+        image_path = job.get("image_path")
+        video_path = job.get("video_path")
+        if image_path and Path(image_path).exists():
+            try:
+                Path(image_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        if video_path and Path(video_path).exists():
+            try:
+                Path(video_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        # Eliminar carpeta del job si existe
+        try:
+            import shutil
+            dir_path = Path(str(Path.cwd()) ) / "video" / f"{job_id}"
+            if dir_path.exists():
+                shutil.rmtree(dir_path, ignore_errors=True)
+        except Exception:
+            pass
+        # Borrar job
+        del _gaming_jobs[job_id]
+        job_store.save("gaming", _gaming_jobs)
+    return jsonify({"ok": True})
+
+
+def _run_gaming_publish(job_id: str, network: str, page_id: str, target_ts: Optional[float]) -> None:
+    with _gaming_jobs_lock:
+        job = dict(_gaming_jobs[job_id])
+    max_tags = (
+        batch_pipeline.GAMING_MAX_HASHTAGS if job.get("kind") == "clip"
+        else batch_pipeline.IMAGE_POST_PROFILES[job.get("profile", "gaming_image")]["max_hashtags"]
+    )
+    caption = batch_pipeline._limit_hashtags(job["caption"], max_tags[network])
+    if job.get("kind") == "clip":
+        _run_gaming_clip_publish(job_id, job, network, page_id, target_ts, caption)
+        return
+    if network == "facebook":
+        # Facebook retiene el post hasta target_ts: la subida pasa ya mismo.
+        # Sin horario se pasa "ahora": None activaria el auto-espaciado de
+        # facebook_publisher, que programa el post una hora despues del anterior.
+        result = facebook_publisher.publish_photo(
+            job["image_path"], caption, page_id=page_id, scheduled_time=target_ts or time.time(),
+            on_status=lambda st: _gaming_net_update(job_id, network, stage=st),
+        )
+        item_id = result.get("post_id")
+        record = _record_published_facebook
+    else:
+        if target_ts is not None:
+            time.sleep(max(0, target_ts - time.time()))
+            _gaming_net_update(job_id, network, status="running")
+        result = instagram_publisher.publish_photo(
+            f"{batch_pipeline.get_public_base_url()}/api/gaming/cover/{job_id}", caption, page_id=page_id,
+            on_status=lambda st: _gaming_net_update(job_id, network, stage=st),
+        )
+        item_id = result.get("media_id")
+        record = _record_published_instagram
+    if result.get("ok"):
+        _gaming_net_update(
+            job_id, network, status="done", error=None, stage=None, item_id=item_id,
+            scheduled_time=result.get("scheduled_time") and datetime.fromisoformat(result["scheduled_time"]).timestamp(),
+        )
+        record(item_id, job.get("hook") or "Post gaming", f"gaming_{job_id}.jpg", page_id)
+    else:
+        _gaming_net_update(
+            job_id, network, status="error", stage=None, error=result.get("error"),
+            auth_error=result.get("auth_error", False),
+        )
+
+
+def _run_gaming_clip_publish(job_id: str, job: dict, network: str, page_id: str, target_ts: Optional[float], caption: str) -> None:
+    """Clip de video: sube el mp4 directo (sin tunel). Facebook y YouTube (canal
+    de gaming, como Short) programan nativo; Instagram duerme hasta la hora,
+    igual que con la imagen."""
+    title = job.get("title") or "Clip gaming"
+    on_status = lambda st: _gaming_net_update(job_id, network, stage=st)
+    if network == "youtube":
+        yt_title, yt_description = batch_pipeline.shorts_text(title, caption)
+        publish_at = batch_pipeline._rfc3339_utc(datetime.fromtimestamp(target_ts).isoformat()) if target_ts else None
+        result = youtube_publisher.publish_video(
+            job["video_path"], yt_title, yt_description, "public", [], False,
+            on_status=on_status, publish_at=publish_at, channel_key=batch_pipeline.GAMING_YT_CHANNEL,
+        )
+        if result.get("ok"):
+            if publish_at:
+                result["scheduled_time"] = datetime.fromtimestamp(target_ts).isoformat()
+            _record_published_video(result["video_id"], yt_title, Path(job["video_path"]).name)
+        item_id = result.get("video_id")
+        record = None
+    elif network == "facebook":
+        result = facebook_publisher.publish_video(
+            job["video_path"], title, caption, page_id=page_id, scheduled_time=target_ts or time.time(),
+            on_status=on_status,
+        )
+        item_id = result.get("video_id")
+        record = _record_published_facebook
+    else:
+        if target_ts is not None:
+            time.sleep(max(0, target_ts - time.time()))
+            _gaming_net_update(job_id, network, status="running")
+        result = instagram_publisher.publish_video(
+            job["video_path"], title, caption, page_id=page_id, on_status=on_status, ai_generated=False,
+        )
+        item_id = result.get("media_id")
+        record = _record_published_instagram
+    if result.get("ok"):
+        _gaming_net_update(
+            job_id, network, status="done", error=None, stage=None, item_id=item_id,
+            scheduled_time=result.get("scheduled_time") and datetime.fromisoformat(result["scheduled_time"]).timestamp(),
+        )
+        if record:
+            record(item_id, title, Path(job["video_path"]).name, page_id)
+    else:
+        _gaming_net_update(
+            job_id, network, status="error", stage=None, error=result.get("error"),
+            auth_error=result.get("auth_error", False),
+        )
+
+
+@app.route("/api/gaming/publish", methods=["POST"])
+def api_gaming_publish():
+    data = request.get_json(force=True)
+    job_id = data.get("job_id") or ""
+    networks = [n for n in _GAMING_NETWORKS if data.get(n)]
+    if not networks:
+        return jsonify({"ok": False, "error": "Elegí al menos una red social."}), 400
+    page_id, page_err = _resolve_page_id(data)
+    if page_err:
+        return jsonify(page_err), 400
+    target_ts, sched_err = _parse_scheduled_time(data)
+    if sched_err:
+        return jsonify({"ok": False, "error": sched_err}), 400
+
+    with _gaming_jobs_lock:
+        job = _gaming_jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Post no encontrado."}), 404
+        if "youtube" in networks and job.get("kind") != "clip":
+            return jsonify({"ok": False, "error": "YouTube es solo para clips de video, no para posts de imagen."}), 400
+        # Solo la imagen de Instagram se descarga por el tunel; el clip se sube directo.
+        if "instagram" in networks and job.get("kind") != "clip" and not batch_pipeline.get_public_base_url():
+            return jsonify({"ok": False, "error": "Falta configurar la URL pública del Cloudflare Tunnel (pestaña Ajustes)."}), 400
+        if job["status"] != "ready":
+            return jsonify({"ok": False, "error": "El post todavía no está listo."}), 409
+        busy = [
+            _GAMING_NETWORKS[n] for n in networks
+            if (job.get("networks") or {}).get(n, {}).get("status") in ("waiting", "running", "done")
+        ]
+        if busy:
+            return jsonify({"ok": False, "error": f"Ya se publicó o está en curso en: {', '.join(busy)}."}), 409
+        caption = (data.get("caption") or "").strip()
+        if caption:
+            job["caption"] = caption
+        for n in networks:
+            job.setdefault("networks", {})[n] = {
+                "status": "waiting" if (n == "instagram" and target_ts) else "running",
+                "stage": None, "error": None, "scheduled_time": target_ts,
+            }
+        job_store.save("gaming", _gaming_jobs)
+
+    for n in networks:
+        threading.Thread(target=_run_gaming_publish, args=(job_id, n, page_id, target_ts), daemon=True).start()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/facebook/publish", methods=["POST"])
@@ -4192,15 +4973,21 @@ _yt_jobs = {}  # job_id -> {status, error, video_id, started_at}
 _yt_jobs_lock = threading.Lock()
 
 
+def _yt_channel_arg(channel: Optional[str]) -> Optional[str]:
+    """"gaming" -> clave del canal de videojuegos; vacio -> canal por defecto (historias)."""
+    return batch_pipeline.GAMING_YT_CHANNEL if channel == "gaming" else None
+
+
 @app.route("/api/youtube/connected")
 def api_youtube_connected():
-    return jsonify({"ok": True, "connected": youtube_publisher.is_connected()})
+    channel = _yt_channel_arg(request.args.get("channel"))
+    return jsonify({"ok": True, "connected": youtube_publisher.is_connected(channel)})
 
 
 @app.route("/api/youtube/connect", methods=["POST"])
 def api_youtube_connect():
-    result = youtube_publisher.connect()
-    return jsonify(result)
+    data = request.get_json(silent=True) or {}
+    return jsonify(youtube_publisher.connect(_yt_channel_arg(data.get("channel"))))
 
 
 def _yt_set_stage(job_id: str, stage: str):
@@ -4404,7 +5191,7 @@ def api_thumbnail_variants():
     if not scenes:
         return jsonify({"ok": False, "error": "No hay escenas disponibles para generar miniaturas."}), 400
 
-    # con fondo IA (Qwen, vía navegador) cada variante tarda bastante más que un
+    # cada variante tarda bastante más que un
     # recorte local, así que se genera solo una; sin IA disponible (respaldo por
     # recorte de escena) es instantáneo y se generan hasta 3 para elegir entre ellas.
     max_variants = 1 if thumbnail_maker.is_ai_backend_available() else 3
@@ -4524,24 +5311,49 @@ def api_instagram_best_time():
 # Generación en lote (módulo independiente, ver batch_pipeline.py)
 # ─────────────────────────────────────────────
 
+@app.route("/api/text-provider/status")
+def api_text_provider_status():
+    """Semaforo del generador de texto: que backend esta vivo ahora mismo.
+    Para la tarjeta de Ajustes -- diagnostico, no bloqueo."""
+    backends = text_provider.available_backends()
+    freellm_ok = len(backends) > 0
+    return jsonify({
+        "ok": True,
+        "freellm": {"ok": freellm_ok, "model": text_provider.FREELLM_MODEL,
+                    "url": text_provider.FREELLM_URL},
+        "available_backends": backends,
+    })
+
+
 @app.route("/api/batch/create", methods=["POST"])
 def api_batch_create():
     data = request.get_json(force=True) or {}
-    qwen_project = (data.get("qwen_project") or "").strip()
-    if not qwen_project:
-        return jsonify({"ok": False, "error": "Falta la página (su nombre es el del proyecto de Qwen)."})
+    page_name = (data.get("qwen_project") or (data.get("page_name") or "")).strip()
+    if not page_name:
+        return jsonify({"ok": False, "error": "Falta la página."})
     content_type = (data.get("type") or "video").strip()
-    default_trigger = "dame el próximo post gaming" if content_type == "gaming_image" else "dame una historia"
+    image_profile = batch_pipeline.IMAGE_POST_PROFILES.get(content_type)
+    is_gaming = content_type in batch_pipeline.GAMING_TYPES
+    default_trigger = (
+        image_profile["default_trigger"] if image_profile
+        else "dame el próximo post gaming" if is_gaming else "dame una historia"
+    )
     networks = data.get("networks") or {}
-    if content_type == "gaming_image":
-        networks = {k: v for k, v in networks.items() if k != "youtube"}
+    if image_profile:
+        networks = {k: v for k, v in networks.items() if k != "youtube"}  # YouTube solo para clips
+    video_settings = data.get("video_settings") or {}
+    voice_error = _voice_error(video_settings.get("voice"))
+    if voice_error:
+        return jsonify({"ok": False, "error": voice_error})
+    if content_type == "gaming_clip" and video_settings.get("gaming_game", "mix") not in {"mix", *gaming_clip.GAMES}:
+        return jsonify({"ok": False, "error": "Juego inválido."})
     try:
         project = batch_pipeline.create_project(
-            qwen_project=qwen_project,
+            page_name=page_name,
             total_videos=data.get("total_videos", 1),
             per_day=data.get("per_day", 1),
             networks=networks,
-            video_settings=data.get("video_settings") or {},
+            video_settings=video_settings,
             trigger_message=(data.get("trigger_message") or "").strip() or default_trigger,
             content_type=content_type,
         )

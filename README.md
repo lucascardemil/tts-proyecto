@@ -7,6 +7,47 @@ armar automáticamente un video (imágenes + subtítulos + efectos) con
 
 ---
 
+## 🧠 Generación de texto
+
+Los guiones (y las ideas de posts gaming) los escribe el **endpoint FreeLLM
+local** (`http://127.0.0.1:31415/v1`, OpenAI-compatible) — único backend de
+`text_provider.py`. El formato de salida lo garantizan los system prompts de
+`prompts/` (el mismo que ya parsea el pipeline).
+
+```cmd
+:: Ver qué backends están disponibles
+venv\Scripts\python -c "import batch_pipeline; print(batch_pipeline.text_provider.available_backends())"
+```
+
+Variables (`.env`):
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `FREELLM_URL` | `http://127.0.0.1:31415/v1` | Endpoint FreeLLM API |
+| `HERMES_CUSTOM_FREELLMAPI_API_KEY` | — (obligatoria) | API key del endpoint |
+| `FREELLM_MODEL` | `auto` | Modelo (`auto` = router inteligente, o un ID específico) |
+| `FREELLM_TIMEOUT` | `300` | Timeout por request (seg) |
+| `FREELLM_MAX_TOKENS` | `4096` | Tokens máximos de salida |
+
+---
+
+## 🎮 Clips virales de gaming (`gaming_clip`)
+
+Tipo de publicación para jugadasepicas videojuegos: elige un clip viral de
+Medal para el juego pedido (o rota entre todos con "Mixto" en Lotes), lo edita
+con la composición `ClipEdit` de Remotion (cámara lenta, efectos de sonido,
+hook/tag/crédito/CTA) y lo publica en Facebook e Instagram (nunca YouTube).
+
+- Cada highlight se verifica mirando el kill-feed con un modelo de visión
+  (`gaming_vision.py`): **Gemini → Groq → OpenRouter**. Hace falta al menos una
+  de `GEMINI_API_KEY`, `GROQ_API_KEY` u `OPENROUTER_API_KEY` en `.env`. Si el
+  clip no tiene ningún momento verificable se descarta y se prueba con otro.
+- El render usa la GPU (NVENC) si está disponible y cae a CPU si no.
+- El clip es de otra persona: el video le da crédito en pantalla y en el
+  caption, pero pedile permiso antes de publicar.
+
+---
+
 ## ✨ Voz: Chatterbox con biblioteca de acentos
 
 Chatterbox es un modelo de clonación de voz "zero-shot": no tiene voces

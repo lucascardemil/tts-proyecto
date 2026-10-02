@@ -60,12 +60,21 @@ export const subtitleStyleSchema = z.object({
   animationType: subtitleAnimationType.default("highlight"),
 });
 
+// Ambientación general del video. "warm_night" es el look original
+// (luciérnagas + viñeta marcada) pensado para historias emocionales de
+// rescate animal — desentona en contenidos de luz de día/producto (macramé)
+// o gaming (jugadasepicas). "bright" atenúa la viñeta y quita luciérnagas.
+// "none" quita ambas por completo. Sin definir = "warm_night" (compatibilidad
+// con props.json ya generados antes de este campo).
+export const videoMood = z.enum(["warm_night", "bright", "none"]);
+
 export const storyVideoSchema = z.object({
   title: z.string(),
   audioSrc: z.string(),
   totalDurationSeconds: z.number().default(10),
   scenes: z.array(sceneClipSchema),
   subtitles: z.array(subtitleWordSchema),
+  mood: videoMood.default("warm_night"),
   // Rótulo fijo durante todo el video (p. ej. "Historia recreada con IA").
   // Sin definir = no se muestra.
   aiLabel: z.string().optional(),
@@ -92,3 +101,4 @@ export type SubtitleStyle = z.infer<typeof subtitleStyleSchema>;
 export type SubtitleFontId = z.infer<typeof subtitleFontId>;
 export type SubtitlePosition = z.infer<typeof subtitlePosition>;
 export type KenBurnsDirection = z.infer<typeof kenBurnsDirection>;
+export type VideoMood = z.infer<typeof videoMood>;

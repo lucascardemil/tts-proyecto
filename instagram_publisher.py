@@ -143,11 +143,13 @@ def publish_video(
     description: str,
     page_id: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
+    ai_generated: bool = True,
 ) -> dict:
     """
     Sube un video como Reel a la cuenta de Instagram vinculada a la Página
     de Facebook indicada (o la primera configurada si no se pasa page_id),
-    marcado como contenido generado con IA.
+    marcado como contenido generado con IA salvo que ai_generated=False
+    (p. ej. clips de gameplay reales, solo editados).
 
     Returns:
         {"ok": True, "media_id": str} si se publicó, o
@@ -184,7 +186,7 @@ def publish_video(
                 "media_type": "REELS",
                 "upload_type": "resumable",
                 "caption": description,
-                "is_ai_generated": True,
+                "is_ai_generated": ai_generated,
                 "share_to_feed": True,
             },
             timeout=30,

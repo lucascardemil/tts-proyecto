@@ -319,6 +319,46 @@ def transcribe_words(audio_path: str, language: str = "es") -> list:
     return words
 
 
+_SCRIPT_WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9]+")
+_WORD_EDGES_RE = re.compile(r"^(\W*)(.*?)(\W*)$", re.DOTALL)
+_MAX_CORRECTION_BLOCK = 4  # palabras por lado; un bloque mas grande no es un error de transcripcion
+
+
+def correct_words_with_script(words: list, script: str) -> list:
+    """Corrige las palabras transcritas (Whisper small, sin ver el guion) con el
+    texto del guion: el audio ya se valido contra el guion, asi que el guion es
+    la verdad ("ansia en el gato" -> "anciana y gato"). Alinea por secuencia; los
+    tramos distintos de hasta _MAX_CORRECTION_BLOCK palabras por lado se
+    reemplazan repartiendo la ventana de tiempo de las palabras oidas entre las
+    del guion (proporcional a su largo). Conserva la puntuacion oida. Las
+    palabras oidas que no estan en el guion y las del guion que no se oyen se
+    dejan como estan."""
+    script_words = _SCRIPT_WORD_RE.findall(script or "")
+    if not words or not script_words:
+        return words
+    heard = [(_normalize_tokens(w["word"]) or [""])[0] for w in words]
+    expected = [w.lower() for w in script_words]
+    out = []
+    matcher = difflib.SequenceMatcher(None, heard, expected, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        block = words[i1:i2]
+        new = script_words[j1:j2]
+        if tag != "replace" or not block or not new or max(len(block), len(new)) > _MAX_CORRECTION_BLOCK:
+            out.extend(block)
+            continue
+        lead = _WORD_EDGES_RE.match(block[0]["word"]).group(1)
+        trail = _WORD_EDGES_RE.match(block[-1]["word"]).group(3)
+        start, end = block[0]["start"], block[-1]["end"]
+        total = sum(len(w) for w in new)
+        t = start
+        for k, w in enumerate(new):
+            t_end = end if k == len(new) - 1 else t + (end - start) * len(w) / total
+            text = (lead if k == 0 else "") + w + (trail if k == len(new) - 1 else "")
+            out.append({"word": text, "start": round(t, 3), "end": round(t_end, 3)})
+            t = t_end
+    return out
+
+
 def _subtitle_cache_path(audio_path: Path) -> Path:
     """Ruta del archivo de caché de transcripción para un audio dado."""
     return audio_path.with_name(audio_path.name + ".subs.json")
@@ -478,6 +518,7 @@ def _build_timeline(
     frases: Optional[list] = None,
     animate_images: bool = True,
     ai_label: Optional[str] = None,
+    mood: str = "warm_night",
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -509,7 +550,7 @@ def _build_timeline(
 
     # Duración objetivo de cada escena: los clips de video usan su duración
     # real (capada a la duración extendida); las imágenes se reparten
-    # el tiempo que sobra, con un mínimo de MIN_IMAGE_SECONDS cada una.
+    # el tiempo que sobra.
     aligned = _align_boundaries_to_script(frases, words, duration) if frases and len(frases) == n else None
 
     if aligned:
@@ -522,6 +563,23 @@ def _build_timeline(
         for i in range(1, len(boundaries) - 1):
             boundaries[i] = max(boundaries[i - 1] + min_gap, min(boundaries[i], boundaries[i + 1] - min_gap))
     else:
+        # Límite duro por escena: TransitionSeries exige que cada Sequence dure
+        # más que la Transition (TRANSITION_FRAMES frames). NO se usa el floor
+        # MIN_IMAGE_SECONDS de upstream -- con muchos cortes (n alto) ese floor
+        # inflaba el total (n × 3.5s ≫ audio) y las escenas que quedaban más
+        # allá del final del audio terminaban con duración 1 frame, crash de
+        # Remotion. Si ni siquiera el mínimo de transición alcanzara para todas
+        # las imágenes, se deciman (se conservan repartidas uniformemente).
+        min_scene_seconds = (TRANSITION_FRAMES + 1) / FPS
+        n_video = sum(1 for sc in scenes if sc["type"] == "video")
+        images_allowed = max(int(extended_duration // min_scene_seconds) - n_video, 1)
+        n_images_total = sum(1 for sc in scenes if sc["type"] != "video")
+        if n_images_total > images_allowed:
+            k = -(-n_images_total // images_allowed)  # techo de la división
+            scenes = [sc for j, sc in enumerate(scenes)
+                      if sc["type"] == "video" or j % k == 0]
+            n = len(scenes)
+
         target = [None] * n
         for i, sc in enumerate(scenes):
             if sc["type"] == "video":
@@ -530,67 +588,48 @@ def _build_timeline(
         video_total = sum(t for t in target if t is not None)
         n_images = target.count(None)
         remaining = max(extended_duration - video_total, 0.0)
-        per_image = max(MIN_IMAGE_SECONDS, remaining / n_images) if n_images else 0.0
+        per_image = remaining / n_images if n_images else 0.0
         target = [per_image if t is None else t for t in target]
 
-        # Sin imágenes que absorban el desfase entre el total de los clips y la
-        # duración del audio, hay que repartirlo proporcionalmente entre todos los
-        # clips (en vez de dejar que el ajuste final de 'boundaries[-1]' lo vuelque
-        # entero sobre el último clip, que terminaría con un playbackRate muy bajo
-        # = cámara lenta / "glitch" perceptible solo en la última escena).
         if n_images == 0 and video_total > 0 and abs(extended_duration - video_total) > 0.01:
             scale = extended_duration / video_total
             target = [t * scale for t in target]
 
-        # Puntos de corte entre dos imágenes consecutivas: se ajustan a la pausa
-        # de habla más cercana para que el cambio de imagen no caiga a mitad de
-        # una palabra. Los cortes que tocan un clip de video no se mueven, porque
-        # su duración es fija (la del archivo). Ver PAUSE_GAP_THRESHOLD/PAUSE_SNAP_WINDOW.
         boundaries = [0.0]
         for dur in target:
             boundaries.append(boundaries[-1] + dur)
         boundaries[-1] = extended_duration
 
-        adjustable_idx = [i for i in range(1, n) if scenes[i - 1]["type"] == "image" and scenes[i]["type"] == "image"]
+        adjustable_idx = [i for i in range(1, n)
+                          if scenes[i - 1]["type"] == "image" and scenes[i]["type"] == "image"]
         if adjustable_idx and words:
             cut_times = [boundaries[i] for i in adjustable_idx]
             snapped = _snap_cuts_to_pauses(cut_times, words)
             for idx, new_t in zip(adjustable_idx, snapped):
                 boundaries[idx] = new_t
-            # Un corte ajustado no puede cruzarse con sus vecinos (mantener orden temporal)
-            # ni dejar una escena más corta que TRANSITION_FRAMES: TransitionSeries exige que
-            # cada Sequence dure al menos lo que la Transition que le sigue, o Remotion falla.
             min_gap = (TRANSITION_FRAMES + 1) / FPS
             for i in range(1, len(boundaries) - 1):
-                boundaries[i] = max(boundaries[i - 1] + min_gap, min(boundaries[i], boundaries[i + 1] - min_gap))
+                boundaries[i] = max(boundaries[i - 1] + min_gap,
+                                    min(boundaries[i], boundaries[i + 1] - min_gap))
 
     directions = _build_kenburns_sequence(n)
-
     clips = []
-    t = 0.0
-    for i, (sc, dur) in enumerate(zip(scenes, target)):
+    for i, sc in enumerate(scenes):
+        start_t = boundaries[i]
         end_t = extended_duration if i == n - 1 else min(boundaries[i + 1], extended_duration)
-        start_frame = round(t * FPS)
+        start_frame = round(start_t * FPS)
         end_frame = max(round(end_t * FPS), start_frame + 1)
 
         clip = {"src": sc["name"], "type": sc["type"], "startFrame": start_frame, "endFrame": end_frame}
         if sc["type"] == "video":
             native = sc["native_duration"] or DEFAULT_CLIP_SECONDS
             clip["nativeDurationInFrames"] = max(round(native * FPS), 1)
-            slot_duration = end_t - t
+            slot_duration = end_t - start_t
             if slot_duration > native:
-                # El slot asignado (p.ej. la última escena, que se estira para
-                # llenar el timeline) es más largo que el clip: en vez de
-                # dejar que Remotion haga loop (reinicia el clip = glitch),
-                # bajamos la velocidad para que una sola pasada llene el slot.
                 clip["playbackRate"] = native / slot_duration
         else:
             clip["kenBurns"] = directions[i] if animate_images else "none"
-
         clips.append(clip)
-        t = end_t
-        if t >= extended_duration:
-            break
 
     timeline = {
         "title": title,
@@ -598,6 +637,7 @@ def _build_timeline(
         "totalDurationSeconds": duration,
         "scenes": clips,
         "subtitles": words,
+        "mood": mood,
     }
     timeline["subtitleStyle"] = {**SUBTITLE_STYLE_DEFAULTS, **(subtitle_style or {})}
     if ai_label:
@@ -698,7 +738,9 @@ def build_props(
     frases: Optional[list] = None,
     animate_images: bool = True,
     ai_label: Optional[str] = None,
+    mood: str = "warm_night",
     on_progress=None,
+    script_text: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Arma la edición: copia los assets al proyecto de Remotion, transcribe el
@@ -724,7 +766,13 @@ def build_props(
             Ken Burns); no afecta a los clips de video.
         ai_label: rótulo fijo durante todo el video (p. ej. "Historia
             recreada con IA"); None = sin rótulo.
+        mood: ambientación general — "warm_night" (default, luciérnagas +
+            viñeta marcada, look original para historias emocionales),
+            "bright" (viñeta suave, sin luciérnagas, para contenido de luz
+            de día/producto) o "none" (sin ninguno de los dos efectos).
         on_progress: función opcional callback(str) para reportar avance.
+        script_text: guion narrado; si se pasa, corrige con él las palabras mal
+            transcritas de los subtítulos (ver correct_words_with_script).
 
     Returns:
         El timeline (dict) escrito en props.json, o None si hubo error.
@@ -793,6 +841,8 @@ def build_props(
             words = transcribe_words(str(VIDEO_PUBLIC_DIR / audio_name), language=language)
             report(f"✓ {len(words)} palabras transcritas")
             _save_cached_words(cache_source, words)
+        if script_text:
+            words = correct_words_with_script(words, script_text)
     else:
         words = []
         report("🔇 Subtítulos desactivados — se omite la transcripción.")
@@ -801,6 +851,7 @@ def build_props(
     timeline = _build_timeline(
         scenes, audio_name, duration, words, title, subtitle_style,
         frases=frases, animate_images=animate_images, ai_label=ai_label,
+        mood=mood,
     )
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -849,6 +900,15 @@ def render_props(
         "--color-space=bt709",
         "--audio-codec=aac",
         "--audio-bitrate=192k",
+        # Medido en esta máquina (12 cores): sin este flag Remotion usa su
+        # default y el render de un video de referencia (44s, 8 escenas)
+        # tardó 12m45s. Con --concurrency=8 bajó a 6m15s (~2x). Probado
+        # también con 12 (todos los cores): no mejora sobre 8 (6m23s, ruido
+        # normal de competir con el resto del pipeline por CPU) — 8 deja
+        # margen para TTS/generación de imágenes de otros proyectos en
+        # paralelo. Si se cambia de máquina, reperfilar con
+        # `npx remotion render ... --concurrency=N` variando N.
+        "--concurrency=8",
     ]
     try:
         proc = subprocess.Popen(

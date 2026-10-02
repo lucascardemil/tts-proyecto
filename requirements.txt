@@ -6,7 +6,7 @@
 flask>=3.0.0
 
 # ─────────────────────────────────────────────
-# Chatterbox (Resemble AI) — único motor de voz del proyecto
+# Chatterbox (Resemble AI) — motor TTS original
 # ─────────────────────────────────────────────
 # MIT license, apto para uso comercial. Usa el checkpoint Multilingual V3
 # (entrenado en 23 idiomas incluido español, no el checkpoint base en
@@ -28,6 +28,15 @@ torchaudio>=2.6.0
 # El wheel de torch en PyPI (arriba) es CPU-only en Windows. Para usar la GPU
 # (NVIDIA), instalar despues con el indice de PyTorch que matchee tu driver, ej:
 #   pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# ─────────────────────────────────────────────
+# OmniVoice (k2-fsa) — motor TTS rápido, DEFAULT en viral-clone-studio
+# ─────────────────────────────────────────────
+# Clonado de voz SOTA en 600+ idiomas. En RTX 3050 6GB: RTF ~2.6x (num_step=16)
+# vs Chatterbox RTF ~17x — ~8x más rápido. Pico VRAM 8.4 GB (se derrama a
+# memoria compartida; funciona pero frena). Caché de prompt de voz en disco
+# (<muestra>.voiceprompt.pt) evita re-transcribir la referencia en reanudaciones.
+omnivoice @ git+https://github.com/k2-fsa/omnivoice.git
 
 # ─────────────────────────────────────────────
 # Edge TTS — NO es un motor seleccionable, se usa internamente UNA SOLA VEZ
@@ -68,3 +77,10 @@ python-dotenv>=1.0.0
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.2.0
+
+# ─────────────────────────────────────────────
+# Generación de texto con FreeLLM endpoint local (text_provider.py)
+# API OpenAI-compatible en http://127.0.0.1:31415/v1
+# Requiere: requests, python-dotenv (ya listos arriba)
+# No necesita bitsandbytes ni transformers — el modelo corre en el servidor FreeLLM
+# ─────────────────────────────────────────────

@@ -369,4 +369,41 @@ def publish_photo(
         return err
 
     _save_next_slot(effective_ts + POST_SPACING_SECONDS)
-    return {"ok": True, "post_id": payload.get("post_id") or payload.get("id")}
+    return {
+        "ok": True,
+        "post_id": payload.get("post_id") or payload.get("id"),
+        "scheduled_time": scheduled_time.isoformat() if scheduled_time else None,
+    }
+
+
+def reschedule_video(video_id: str, scheduled_time: float, page_id: Optional[str] = None) -> dict:
+    """
+    Cambia el horario de un video que ya esta programado en Facebook
+    (scheduled_publish_time de la Graph API sobre el propio video). Mismos
+    limites que la subida: entre 10 minutos y 75 dias en el futuro.
+
+    Returns:
+        {"ok": True, "scheduled_time": iso} o {"ok": False, "error": str}.
+    """
+    delta = scheduled_time - time.time()
+    if delta < MIN_SCHEDULE_SECONDS or delta > MAX_SCHEDULE_SECONDS:
+        return {"ok": False, "error": "El nuevo horario debe estar entre 10 minutos y 75 dias en el futuro."}
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return err
+    try:
+        response = _post_with_retry(
+            f"https://graph.facebook.com/{GRAPH_API_VERSION}/{video_id}",
+            data={
+                "access_token": access_token,
+                "published": "false",
+                "scheduled_publish_time": str(int(scheduled_time)),
+            },
+            timeout=60,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"No se pudo conectar con Facebook: {e}"}
+    _, err = _parse_response(response)
+    if err:
+        return err
+    return {"ok": True, "scheduled_time": datetime.fromtimestamp(scheduled_time).isoformat()}

@@ -4,7 +4,7 @@ cadencia la da Task Scheduler).
 
 Corre solo la mitad de "publicacion" del scheduler de lotes
 (batch_pipeline.run_publish_tick), nunca la de generacion -- esa depende del
-browser automation de Qwen/WhatsApp y necesita el proceso completo de app.py
+browser automation de WhatsApp y necesita el proceso completo de app.py
 abierto con sesion de navegador. Facebook y YouTube ya quedan publicados con
 scheduling nativo (Meta/YouTube sostienen el horario del lado de ellos), asi
 que alcanza con que este script corra una vez para registrarlos. Instagram

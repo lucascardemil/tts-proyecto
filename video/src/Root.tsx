@@ -1,6 +1,7 @@
 import React from "react";
 import { Composition } from "remotion";
 import { StoryVideo } from "./StoryVideo";
+import { ClipEdit, buildTimeline, clipEditDefaultProps, type ClipEditProps } from "./ClipEdit";
 import { storyVideoSchema, type StoryVideoProps } from "./schema";
 
 const FPS = 30;
@@ -11,6 +12,7 @@ const defaultProps = {
   totalDurationSeconds: 30,
   scenes: [],
   subtitles: [],
+  mood: "warm_night",
   subtitleStyle: {
     fontFamily: "cinzel",
     fontSize: 44,
@@ -59,6 +61,19 @@ export const RemotionRoot: React.FC = () => {
         schema={storyVideoSchema}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="ClipEdit"
+        component={ClipEdit}
+        durationInFrames={445} // clip de 14.82 s a 30 fps
+        fps={FPS}
+        width={1080}
+        height={1920}
+        defaultProps={clipEditDefaultProps}
+        // la duración depende de los tramos de slow-mo
+        calculateMetadata={({ props }: { props: ClipEditProps }) => ({
+          durationInFrames: buildTimeline(props, FPS).totalFrames,
+        })}
       />
     </>
   );

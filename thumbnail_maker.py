@@ -1,10 +1,8 @@
 """
-Generación automática de miniaturas (thumbnails) para YouTube. El fondo se
-genera vía chat.qwen.ai (modo "Create Image", composición fotorrealista tipo
-"animal protagonista + secundario + contraluz"); si Qwen no está disponible
-se usa como respaldo un frame de la escena del video, recortado de forma
-inteligente. Encima se superpone un titular corto estilo Anton (headline
-viral: contorno grueso, sombra difuminada, tracking cerrado).
+Generación automática de miniaturas (thumbnails) para YouTube. El fondo es un
+frame de la escena del video, recortado de forma inteligente (detección de
+cara). Encima se superpone un titular corto estilo Anton (headline viral:
+contorno grueso, sombra difuminada, tracking cerrado).
 """
 
 import io
@@ -25,74 +23,6 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 
 FONTS_DIR = Path(__file__).parent / "fonts"
 ANTON_FONT_PATH = FONTS_DIR / "Anton-Regular.ttf"
-
-AI_BACKGROUND_PROMPT_TEMPLATE = (
-    "documentary premium photograph, hyperrealistic emotional rescue scene, "
-    "action shot caught mid-moment (not a calm posed portrait). "
-    "This thumbnail is for this recreated story: \"{hook}\" — the main "
-    "subject/animal in the image MUST be exactly the one mentioned there, "
-    "no other animal or subject. Depict the single most dramatic, climactic, "
-    "high-impact moment implied by that story — the peak of the action or "
-    "emotion (the relief, the trust, the reunion, the first gentle contact, the "
-    "hopeful gaze) — show the emotional consequence, never harm, injury or "
-    "suffering — the subject caught mid-motion or mid-emotion, not "
-    "standing still and calmly staring at the camera. Medium shot, NOT an "
-    "extreme close-up: the subject's full body (or at least head, torso and "
-    "legs) must be entirely visible inside the frame with a comfortable "
-    "margin on all sides — nothing cropped or cut off at the edges. Subject "
-    "large and clearly the focus of the image, but with visible breathing "
-    "room around it, sharp eyes, extreme fur/feather detail, a second "
-    "smaller subject nearby creating scale contrast, cinematic depth of "
-    "field, sharp subject with blurred background, warm dramatic backlight, "
-    "rim light, warm emotional atmosphere matching that moment. "
-    "Framing: shot from a slightly low angle so the subject's body sits "
-    "within the LOWER two-thirds of the frame, fully contained with margin "
-    "— the TOP quarter of the image must be empty open background (sky, "
-    "blurred distant scenery, or out-of-focus space) with absolutely no "
-    "fur, horns, ears, head or any part of the subject in it, reserved for "
-    "a text overlay to be added later. 35mm photograph, volumetric lighting, cinematic contrast, "
-    "natural colors, professional photographic finish, scroll-stopping "
-    "composition, {ratio_label} format. "
-    "Avoid: any text, letters, words, captions, watermark, logo, low "
-    "quality, blurry, cartoon, illustration, 3d render, deformed, extra "
-    "limbs, bad anatomy, painting, drawing, generic calm portrait, subject "
-    "touching the top edge of the frame, subject cropped or cut off by the "
-    "frame edges, extreme close-up, blood, open wounds, gore, visible injury, "
-    "and avoid any animal/subject that is not the one mentioned in the story."
-)
-
-CHATGPT_PROMPT_TEMPLATE = (
-    "Generá una miniatura de YouTube horizontal 1280x720 (16:9), fotografía "
-    "documental hiperrealista y emocional: un animal protagonista enorme y "
-    "dominante en primer plano mirando directo a cámara, ojos nítidos, "
-    "detalle de pelaje extremo, un segundo animal más chico cerca creando "
-    "contraste de escala, historia de rescate y segunda oportunidad, "
-    "profundidad de campo cinematográfica, contraluz cálido y dramático, "
-    "luz de borde sobre el pelaje, composición en capas con espacio libre "
-    "arriba para texto, foto de 35mm, contraste cinematográfico, colores "
-    "naturales, terminación fotográfica profesional. La imagen tiene que "
-    "coincidir fielmente con la historia recreada relatada (mismo animal, mismo "
-    "contexto), sin inventar otro sujeto.\n\n"
-    "Sumale un titular grande en MAYÚSCULAS que diga exactamente: "
-    "\"{headline}\"\n"
-    "Tipografía sans-serif ultra condensada y pesada tipo Anton/Impact "
-    "Condensed, relleno blanco cálido, contorno negro grueso (~5% del alto "
-    "de letra), tracking cerrado (-2% a -5%), interlineado 80-88%, sombra "
-    "difuminada con offset, la palabra clave más grande que el resto, "
-    "bloque de texto ocupando 45-65% del ancho, márgenes 5-7%, sin tapar "
-    "nunca los ojos ni la cara del animal — el titular va arriba, en el "
-    "espacio libre reservado para eso, nunca encima de la cabeza o cara "
-    "del animal."
-)
-
-
-def build_chatgpt_prompt(title_text: str) -> str:
-    """Arma el prompt de texto para pegar a mano en ChatGPT/DALL-E y generar la miniatura ahí."""
-    headline = _shorten_hook(title_text).upper()
-    return CHATGPT_PROMPT_TEMPLATE.format(headline=headline)
-
-_FACE_CASCADE = None
-
 
 def _face_cascade():
     """Carga el detector de rostros de OpenCV una sola vez (perezoso)."""
@@ -119,7 +49,7 @@ def _detect_face_box(img: Image.Image):
 def _fit_with_blurred_pad(img: Image.Image, size: tuple) -> Image.Image:
     """
     Encaja `img` completa dentro de `size` SIN recortar nada (a diferencia de
-    `_smart_crop`) -- la imagen generada por Qwen casi nunca viene ya en la
+    `_smart_crop`) -- la imagen de escena casi nunca viene ya en la
     proporción pedida, y recortarla a la fuerza corta patas/cuerpo del sujeto.
     Se escala la imagen entera para que quepa dentro del lienzo (letterbox) y
     el espacio sobrante se rellena con una versión de la misma imagen
@@ -226,80 +156,6 @@ def _target_thumbnail_size(scene_image_path: str) -> tuple:
     return THUMBNAIL_SIZE_VERTICAL if h > w else THUMBNAIL_SIZE_HORIZONTAL
 
 
-AI_BACKGROUND_MAX_ATTEMPTS = 3
-_TOP_STRIP_RATIO = 0.35  # coincide aprox. con el bloque de titular (_draw_headline)
-_TOP_STRIP_BUSY_THRESHOLD = 18.0  # heuristico: por debajo, la franja se considera "libre"
-
-
-def _top_strip_busyness(img: Image.Image) -> float:
-    """Heurística barata (densidad de bordes) de qué tan 'ocupado' está el
-    tercio superior de la imagen ya recortada -- sirve para detectar cuando
-    Qwen ignoró el pedido de dejar esa franja libre para el titular (más
-    alto = más ocupado, ej. pelaje/cuernos/orejas metidos ahí)."""
-    W, H = img.size
-    strip = img.crop((0, 0, W, int(H * _TOP_STRIP_RATIO))).convert("L")
-    edges = strip.filter(ImageFilter.FIND_EDGES)
-    return ImageStat.Stat(edges).mean[0]
-
-
-def _generate_ai_background(size: tuple, title_text: str) -> Image.Image:
-    """
-    Genera el fondo vía chat.qwen.ai (modo "Create Image"), reusando la misma
-    sesión persistente que ya usa la generación de clips (QWEN_SESSION) --
-    sin login ni servidor local aparte. El prompt incluye el título/gancho de
-    la historia para que el sujeto de la imagen coincida con la historia real
-    (sin esto, Qwen inventa cualquier animal). Lanza una excepción si Qwen no
-    responde o la generación falla en TODOS los intentos; el llamador debe
-    capturarla y usar un respaldo (frame de escena).
-
-    Qwen no siempre respeta el pedido de dejar libre la franja superior (para
-    el titular) al primer intento -- se reintenta hasta `AI_BACKGROUND_MAX_ATTEMPTS`
-    veces y se usa el resultado con la franja superior menos "ocupada"
-    (`_top_strip_busyness`), cortando apenas se logra uno suficientemente libre.
-    """
-    is_vertical = size[1] > size[0]
-    ratio_label = "9:16 vertical (formato Reels/Shorts)" if is_vertical else "16:9 horizontal"
-    ratio_code = "9:16" if is_vertical else "16:9"
-    prompt = AI_BACKGROUND_PROMPT_TEMPLATE.format(
-        hook=_shorten_hook(title_text, max_words=40), ratio_label=ratio_label
-    )
-
-    best_img = None
-    best_score = None
-    last_error = None
-    for attempt in range(AI_BACKGROUND_MAX_ATTEMPTS):
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir) / f"qwen_bg_{uuid.uuid4().hex}.png"
-                auto_pipeline.generate_qwen_image(
-                    prompt, tmp_path, unattended=True, image_ratio=ratio_code
-                )
-                raw = Image.open(tmp_path).convert("RGB")
-        except Exception as e:
-            last_error = e
-            continue
-        # encajar completa (sin recortar cuerpo/patas) por si Qwen no respeta el formato pedido exacto
-        fitted = _fit_with_blurred_pad(raw, size)
-        score = _top_strip_busyness(fitted)
-        if best_score is None or score < best_score:
-            best_img, best_score = fitted, score
-        if score <= _TOP_STRIP_BUSY_THRESHOLD:
-            break
-
-    if best_img is None:
-        raise last_error or auto_pipeline.PipelineError("Qwen no generó ninguna imagen de fondo.")
-    return best_img
-
-
-def is_ai_backend_available() -> bool:
-    """Chequeo rápido (sin generar nada) de si la sesión de Qwen está lista para usarse."""
-    try:
-        status = auto_pipeline.check_session_status(auto_pipeline.QWEN_SESSION, force_reload=False)
-        return status.get("state") == "ok"
-    except Exception:
-        return False
-
-
 def _load_headline_font(size: int):
     if ANTON_FONT_PATH.exists():
         try:
@@ -371,30 +227,6 @@ def _draw_tracked(draw, xy, text, font, fill, tracking_ratio, stroke_width, stro
 
 def _tracked_line_width(draw, text, font, tracking_ratio):
     return sum(_tracked_char_advance(draw, ch, font, tracking_ratio) for ch in text)
-
-
-HEADLINE_PROMPT_TEMPLATE = (
-    "Escribí SOLO un titular corto y viral en español para la miniatura de un "
-    "video de YouTube Shorts, basado en esta historia recreada: \"{hook}\". "
-    "Que genere curiosidad y emoción sin exagerar (no inventes nada que no esté "
-    "en la historia, nunca digas que es real ni uses palabras de shock como "
-    "IMPACTANTE/BRUTAL/SANGRE/AGONIZANDO): 3 a 6 palabras, todo en MAYÚSCULAS, "
-    "sin comillas, sin emojis, sin punto final. Respondé ÚNICAMENTE el "
-    "titular y nada más."
-)
-
-
-def _generate_viral_headline(title_text: str) -> str:
-    """Le pide a Qwen (mismo chat/sesión que ya generó el fondo) un titular
-    corto y viral acorde a la historia recreada -- reemplaza el truncado mecánico
-    de _shorten_hook cuando Qwen está disponible."""
-    prompt = HEADLINE_PROMPT_TEMPLATE.format(hook=_shorten_hook(title_text, max_words=25))
-    reply = auto_pipeline.generate_qwen_text(prompt, unattended=True)
-    headline = reply.strip().strip('"').strip("'").upper()
-    words = headline.split()
-    if not headline or len(words) > 8:
-        raise ValueError(f"Titular de Qwen vacío o demasiado largo: {headline!r}")
-    return headline
 
 
 def _draw_headline(img: Image.Image, hook: str) -> Image.Image:
@@ -472,10 +304,9 @@ def _draw_headline(img: Image.Image, hook: str) -> Image.Image:
 
 def generate_thumbnail(scene_image_path: str, title_text: str, out_path: str) -> str:
     """
-    Genera una miniatura de YouTube: fondo fotorrealista vía Qwen (chat.qwen.ai)
-    y, si la sesión no está disponible, un frame de la escena del video
-    recortado de forma inteligente como respaldo. Encima superpone un
-    titular corto estilo Anton (headline viral).
+    Genera una miniatura de YouTube: un frame de la escena del video recortado
+    de forma inteligente, con un titular corto estilo Anton (headline viral)
+    superpuesto.
 
     Args:
         scene_image_path: ruta a la imagen de escena a usar de respaldo.
@@ -486,33 +317,16 @@ def generate_thumbnail(scene_image_path: str, title_text: str, out_path: str) ->
         La ruta del archivo generado (out_path).
     """
     size = _target_thumbnail_size(scene_image_path)
-    ai_background_ok = False
-    if title_text.strip():
-        try:
-            img = _generate_ai_background(size, title_text)
-            ai_background_ok = True
-        except Exception as e:
-            auto_pipeline.logger.warning(
-                "thumbnail: fondo IA (Qwen) fallo, usando frame de escena de respaldo: %s", e
-            )
-    if not ai_background_ok:
-        img = _open_scene_image(scene_image_path)
-        try:
-            face_box = _detect_face_box(img)
-        except Exception:
-            face_box = None
-        img = _smart_crop(img, size, face_box)
-        img = ImageEnhance.Contrast(img).enhance(1.12)
-        img = ImageEnhance.Color(img).enhance(1.15)
+    img = _open_scene_image(scene_image_path)
+    try:
+        face_box = _detect_face_box(img)
+    except Exception:
+        face_box = None
+    img = _smart_crop(img, size, face_box)
+    img = ImageEnhance.Contrast(img).enhance(1.12)
+    img = ImageEnhance.Color(img).enhance(1.15)
 
-    headline = None
-    if ai_background_ok:
-        try:
-            headline = _generate_viral_headline(title_text)
-        except Exception:
-            headline = None
-    if headline is None:
-        headline = _shorten_hook(title_text).upper()
+    headline = _shorten_hook(title_text).upper()
 
     img = _draw_headline(img, headline)
 

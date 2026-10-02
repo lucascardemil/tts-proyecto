@@ -32,7 +32,6 @@ from typing import Optional
 import threading
 import time
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 LOG_DIR = Path(__file__).parent / "logs"
@@ -81,7 +80,11 @@ IMAGE_CONTENT_REFUSAL_MARKERS = (
 # imagen" / "no pude generar esa toma extrema del cuello..." / etc) -- las
 # listas de arriba son frases exactas y no cubren toda la variacion. Este
 # regex generaliza el patron comun a todas: "no pud(e|o) generar".
-IMAGE_REFUSAL_RE = re.compile(r"no pud[eo] generar", re.IGNORECASE)
+IMAGE_REFUSAL_RE = re.compile(r"no (?:se )?pud[eo] generar", re.IGNORECASE)
+# Falla del sistema de Meta AI (no del contenido): "No se pudo generar la
+# Imagen 1 ... El sistema de generacion fallo ... dime 'intentar de nuevo'".
+# El mismo prompt suele salir bien al reenviarlo, asi que no se suaviza.
+IMAGE_TRANSIENT_MARKERS = ("intentar de nuevo", "sistema de generación falló", "sistema de generacion fallo")
 IMAGE_RETRY_ATTEMPTS = 3
 
 # Vocabulario grafico que Meta AI rechaza seguido en el PRIMER intento (no solo
@@ -102,6 +105,18 @@ GRAPHIC_TERM_REPLACEMENTS = (
 )
 
 
+_ASPECT_RATIO_RE = re.compile(r"\b\d{1,2}\s*:\s*\d{1,2}\b")
+
+
+def _ensure_vertical(prompt: str) -> str:
+    """El generador de imagenes (Meta AI) solo respeta el formato si el prompt lo
+    nombra; sin eso entrega 3:2 y el video vertical recorta las escenas. Si el modelo
+    de texto no puso ninguna proporcion ("9:16", "16:9"...), se antepone la vertical."""
+    if _ASPECT_RATIO_RE.search(prompt):
+        return prompt
+    return "Vertical 9:16 aspect ratio, portrait orientation. " + prompt
+
+
 def _soften_prompt(prompt: str) -> str:
     """Reemplaza vocabulario grafico (quemaduras, hollin, heridas, sangre) por
     equivalentes mas suaves que Meta AI no rechaza, sin cambiar el sujeto ni
@@ -118,18 +133,19 @@ def _soften_prompt(prompt: str) -> str:
 _PHOTOREALISTIC_RE = re.compile(r"\bphotorealistic\b", re.IGNORECASE)
 VISUAL_STYLE_PROMPTS = {
     "pixar3d": (
-        "cinematic Pixar-style 3D animation, dramatic and emotionally mature tone, "
-        "realistic proportions and lighting, not cute, not whimsical, not childish"
+        "3D animated style, Pixar-inspired but semi-realistic adult characters, "
+        "soft cinematic lighting, highly expressive faces, detailed skin texture, "
+        "emotional storytelling, 8k, Unreal Engine 5 render"
     ),
 }
 
 
 def apply_visual_style(prompt: str, style: str) -> str:
     """Reemplaza el estilo visual del prompt de imagen (por defecto
-    "photorealistic", fijo en la instruccion del Project de Qwen) por el
+    "photorealistic", fijo en el system prompt del generador de texto) por el
     estilo elegido en el lote. Si el prompt no trae la palabra "photorealistic"
-    (Qwen cambia la redaccion), antepone el estilo igual, para no depender
-    del texto exacto que devuelva Qwen."""
+    (el modelo cambia la redaccion), antepone el estilo igual, para no depender
+    del texto exacto que devuelva el modelo."""
     style_text = VISUAL_STYLE_PROMPTS.get(style)
     if not style_text:
         return prompt
@@ -157,25 +173,11 @@ AGENT_BROWSER_STATE_DIR = Path.home() / ".agent-browser"
 AGENT_BROWSER_BROWSERS_DIR = AGENT_BROWSER_STATE_DIR / "browsers"
 _SINGLETON_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 
-QWEN_SESSION = "qwen"
-QWEN_URL = "https://chat.qwen.ai/"
-
-# Sesion separada para el modulo de "Generacion en lote": evita que la
-# automatizacion desatendida (corre sola, sin confirmar cada paso) se
-# entrelace con el uso manual del pipeline normal sobre QWEN_SESSION. Requiere
-# loguearse una vez a mano en esta sesion tambien (--restore es por nombre de
-# sesion, no comparte cookies con "qwen").
-QWEN_BATCH_SESSION = "qwen_batch"
-
-PROVIDERS = ("whatsapp", "qwen", "mixed")
+PROVIDERS = ("whatsapp",)
 
 POLL_INTERVAL_SECONDS = 4
 IMAGE_TIMEOUT_SECONDS = 600
 CLIP_TIMEOUT_SECONDS = 600
-QWEN_CLIP_TIMEOUT_SECONDS = 1200
-QWEN_IMAGE_TIMEOUT_SECONDS = 180  # generar una sola imagen es mucho mas rapido que un video
-QWEN_TEXT_TIMEOUT_SECONDS = 60  # una respuesta de texto corta (ej. un titular) es casi instantanea
-QWEN_STORY_TIMEOUT_SECONDS = 300  # tope pedido por el usuario: es solo texto (idea/hook/prompt/caption), 5 min max
 
 
 class PipelineError(Exception):
@@ -289,7 +291,7 @@ def _base_cmd(session: str) -> list:
     """Argumentos base de agent-browser para direccionar y persistir una sesion.
     WhatsApp usa --profile (directorio de Chrome persistente, incluye IndexedDB)
     en vez de --restore (solo cookies+localStorage, insuficiente para su login).
-    Qwen sigue con --restore, que le alcanza."""
+    las demas sesiones siguen con --restore, que les alcanza."""
     cmd = [AGENT_BROWSER_CMD, "--session", session]
     if session == WHATSAPP_SESSION:
         cmd += ["--profile", WHATSAPP_PROFILE_DIR, "--user-agent", WHATSAPP_USER_AGENT]
@@ -344,10 +346,11 @@ def _pid_is_agent_browser(pid: int) -> bool:
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
-    return "agent-browser" in result.stdout.lower()
+    return "agent-browser" in (result.stdout or "").lower()
 
 
 def _hard_kill_daemon(session: str) -> bool:
@@ -466,13 +469,6 @@ def check_session_status(session: str, force_reload: bool = True) -> dict:
         if "Meta AI" in snap:
             return {"state": "ok", "message": "Sesion de WhatsApp Web activa."}
         return {"state": "needs_login", "message": "WhatsApp Web no esta logueado (falta escanear QR)."}
-    elif session in (QWEN_SESSION, QWEN_BATCH_SESSION):
-        # El textbox "Ask Qwen" esta presente tanto logueado como deslogueado
-        # (chat.qwen.ai permite escribir sin cuenta) -- la señal real de sesion
-        # activa es que NO aparezcan los botones "Log in"/"Sign up".
-        if re.search(r"textbox", snap) and 'button "Log in"' not in snap:
-            return {"state": "ok", "message": "Sesion de Qwen activa."}
-        return {"state": "needs_login", "message": "Qwen no esta logueado (falta iniciar sesion)."}
     return {"state": "unreachable", "message": f"Sesion desconocida: {session}"}
 
 
@@ -530,7 +526,7 @@ def _save_failure_diagnostics(session: str, label: str) -> None:
 
 
 def screenshot_qr(session: str) -> Path:
-    """Captura solo el <canvas> del QR (WhatsApp/Qwen lo renderizan como canvas),
+    """Captura solo el <canvas> del QR (WhatsApp lo renderiza como canvas),
     con fallback a la página completa si no encuentra el elemento."""
     return screenshot_session(session, selector="canvas")
 
@@ -539,7 +535,7 @@ def open_login_page(session: str) -> None:
     """Abre la pagina de login del proveedor en la sesion dada (para reconexion).
     Reintenta una vez si el daemon anterior todavia estaba terminando de cerrarse
     (error os 10061, "conexion denegada" justo tras un hard_reset_browser_session)."""
-    url = "https://web.whatsapp.com/" if session == WHATSAPP_SESSION else QWEN_URL
+    url = "https://web.whatsapp.com/"
     try:
         _run_agent_browser(["open", url], session)
     except PipelineError as e:
@@ -550,8 +546,7 @@ def open_login_page(session: str) -> None:
 
 
 def get_remote_devtools_url(session: str) -> str:
-    """Qwen no muestra un QR (canvas) para loguearse -- a diferencia de WhatsApp,
-    la sesion headless de agent-browser no tiene forma de escanear nada. Esta
+    """La sesion headless de agent-browser no tiene forma de escanear un QR. Esta
     funcion expone la sesion via Chrome DevTools remoto (CDP) para que el usuario
     pueda abrir esa pagina en vivo desde su propio Chrome y loguearse a mano
     (email/Google/lo que sea) directo en el navegador automatizado."""
@@ -596,6 +591,73 @@ _TRAILING_SECTION_RE = re.compile(
     r"\n[ \t]*#{0,3}[ \t]*(?:CAPTION|PERFORMANCE GOAL|SERIE POTENCIAL)\b",
     re.IGNORECASE,
 )
+# Heading de seccion "IMAGENES"/"IMÁGENES" (sola en su linea) que separa guion y prompts.
+_IMAGES_HEADING_RE = re.compile(r"\n[ \t]*#{0,3}[ \t]*IM[ÁA]GENES[ \t]*:?[ \t]*(?:\n|$)", re.IGNORECASE)
+
+# Ficha de personajes que el generador de texto escribe una sola vez antes del
+# guion ("PERSONAJES:" + una linea "[LUNA]: descripcion detallada" por
+# personaje). En cada prompt de imagen el modelo escribe solo la etiqueta [LUNA] y
+# _parse_story la expande con la descripcion completa, textual: asi el
+# personaje se repite identico en las 8-10 imagenes sin depender de que el modelo
+# lo copie fielmente cada vez.
+_CHARACTERS_HEADER_RE = re.compile(r"^[ \t]*#{0,3}[ \t]*PERSONAJES[ \t]*:?[ \t]*$", re.IGNORECASE | re.MULTILINE)
+_CHARACTER_LINE_RE = re.compile(r"^[ \t]*-?[ \t]*\[([^\]\n]+)\][ \t]*:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_CHARACTER_TAG_RE = re.compile(r"\[([^\]\n]+)\]")
+
+
+# (Los personajes recurrentes con ficha fija en codigo se eliminaron: el
+# rescatista rota en cada historia y su ficha la escribe el modelo en
+# PERSONAJES, respetando la descripcion detallada que pide
+# CHARACTER_SHEET_REQUEST.)
+
+
+def _extract_characters(head: str) -> dict:
+    """{ETIQUETA_EN_MAYUSCULAS: descripcion} de las lineas "[NOMBRE]: ..." del
+    texto que precede a "Imagen 1". Vacio si no las trae."""
+    return {
+        m.group(1).strip().upper(): " ".join(m.group(2).split()).rstrip(".")
+        for m in _CHARACTER_LINE_RE.finditer(head)
+    }
+
+
+def _strip_characters_block(text: str) -> str:
+    """Saca el encabezado "PERSONAJES:" y las lineas "[NOMBRE]: ..." (no son
+    narracion del guion)."""
+    return _CHARACTER_LINE_RE.sub("", _CHARACTERS_HEADER_RE.sub("", text))
+
+
+def _expand_characters(prompt: str, characters: dict) -> str:
+    """Reemplaza cada etiqueta [NOMBRE] del prompt por su descripcion completa.
+    La descripcion va entre parentesis, precedida del nombre, para que quede
+    delimitada de la accion. Una etiqueta sin ficha se deja sin corchetes
+    (queda el nombre suelto)."""
+    if not characters:
+        return prompt
+
+    def _sub(m):
+        name = m.group(1).strip()
+        desc = characters.get(name.upper())
+        if not desc:
+            return m.group(1)
+        return f"{name.title()} ({desc.rstrip(' .')})"
+
+    return _CHARACTER_TAG_RE.sub(_sub, prompt)
+
+
+_HEADING_END = r"(?=[ \t]*(?:$|/))"
+_IMAGE_HEADING = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*(\d+)" + _HEADING_END
+_IMAGE_HEADING_NOCAP = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*\d+" + _HEADING_END
+_IMAGE_BLOCK_RE = re.compile(
+    _IMAGE_HEADING + r".*?Frase(?: del guion)?:\s*[«\"](.+?)[»\"].*?Prompt:\s*(.+?)(?=" + _IMAGE_HEADING_NOCAP + r"|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def has_image_blocks(text: str) -> bool:
+    """True si el texto trae al menos un bloque "Imagen N / Frase / Prompt"
+    real. Un modelo de razonamiento que vuelca su pensamiento ("Then Imagen 1,
+    Imagen 2...") o una respuesta cortada por max_tokens no lo cumplen."""
+    return bool(_IMAGE_BLOCK_RE.search(text.replace("**", "")))
 
 
 def _parse_story(text: str, story_id: str = None) -> dict:
@@ -615,7 +677,7 @@ def _parse_story(text: str, story_id: str = None) -> dict:
     # el heading empiece la linea (a veces queda pegado al final del guion,
     # p. ej. "...oportunidad? Imagen 1"), solo que no venga pegado a otra
     # palabra.
-    # Qwen suele resaltar las etiquetas "Frase"/"Prompt" en negrita markdown
+    # El modelo suele resaltar las etiquetas "Frase"/"Prompt" en negrita markdown
     # (p. ej. "**Frase:** \"...\""), formato que usa literalmente el archivo
     # workflow_maestro_reels_9x16.md (Project CONTENIDO DIARIO DE MAGRAME).
     # El "**" entre "Frase:"/"Prompt:" y el valor rompe el regex de abajo, que
@@ -624,34 +686,31 @@ def _parse_story(text: str, story_id: str = None) -> dict:
     text = text.replace("**", "")
 
     # El numero de imagen puede venir solo al final de su linea ("Imagen 5\n")
-    # o, cuando Qwen comprime el bloque en una sola linea con "/" como
+    # o, cuando el modelo comprime el bloque en una sola linea con "/" como
     # separador ("Imagen 5 / Frase del guion: ... / Prompt: ..."), seguido
     # de espacios y una "/". Antes solo se aceptaba fin de linea (\Z/$) y
     # ese segundo formato (confirmado en vivo, alterna con el primero para
-    # el mismo Project de Qwen) hacia fallar el regex entero -> "No se
+    # otra corrida del lote) hacia fallar el regex entero -> "No se
     # encontraron prompts de imagen" aunque la respuesta viniera completa.
-    _HEADING_END = r"(?=[ \t]*(?:$|/))"
-    HEADING = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*(\d+)" + _HEADING_END
-    HEADING_NOCAP = r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*\d+" + _HEADING_END
-
     starts = [m.start() for m in re.finditer(r"(?<!\w)#{0,3}[ \t]*Imagen[ \t]*1" + _HEADING_END, text, re.MULTILINE)]
+    sheet = _extract_characters(text[: starts[-1]]) if starts else {}
+    characters = sheet
     if starts:
         text = text[starts[-1]:]
 
     prompts = []
-    for match in re.finditer(
-        HEADING + r".*?Frase(?: del guion)?:\s*[«\"](.+?)[»\"].*?Prompt:\s*(.+?)(?=" + HEADING_NOCAP + r"|\Z)",
-        text,
-        re.DOTALL | re.MULTILINE,
-    ):
+    for match in _IMAGE_BLOCK_RE.finditer(text):
         idx, frase, prompt = match.groups()
-        # El ultimo bloque absorbe todo lo que Qwen agregue despues (caption,
+        # El ultimo bloque absorbe todo lo que el modelo agregue despues (caption,
         # performance goal, serie potencial de los manuales v2): no es prompt.
         prompt = _TRAILING_SECTION_RE.split(prompt)[0]
+        prompt = " ".join(prompt.split()).strip()
+        if sheet and not _CHARACTER_TAG_RE.search(prompt):
+            logger.warning("prompt de Imagen %s sin etiqueta de personaje: no se repite la descripcion", idx)
         prompts.append({
             "index": int(idx),
             "frase": frase.strip(),
-            "prompt": _soften_prompt(" ".join(prompt.split()).strip()),
+            "prompt": _ensure_vertical(_soften_prompt(_expand_characters(prompt, characters))),
         })
 
     if not prompts:
@@ -686,7 +745,11 @@ def extract_script(raw_text: str) -> str:
     documento (guion + prompts de imagen mezclados) como si fuera la narracion.
     """
     starts = [m.start() for m in re.finditer(r"#{0,3}\s*Imagen\s*1\b", raw_text)]
-    head = raw_text[: starts[0]] if starts else raw_text
+    head = _strip_characters_block(raw_text[: starts[0]] if starts else raw_text)
+    # Los manuales v2 (macrame) separan secciones con headings sin numerar
+    # ("GUION" / "IMAGENES"): el ultimo queda pegado al final de la narracion y
+    # el TTS lo leia en voz alta ("...Comenta EBOOK. Imagenes").
+    head = _IMAGES_HEADING_RE.split(head)[0]
 
     match = re.search(
         r"#{0,3}\s*\d*\.?\s*Guion\b.*?(?:\n|$)(.*?)(?=\n\s*#{0,3}\s*\d+\.|\Z)",
@@ -707,6 +770,24 @@ def extract_script(raw_text: str) -> str:
 
 
 SPANISH_WORDS_PER_MINUTE = 170  # calibrado contra .subs.json reales generados con Chatterbox (158-189 wpm observado)
+
+
+MIN_SCRIPT_WORDS = 30  # ~10s de narracion; por debajo no es una historia
+
+
+def validate_script(script: str) -> None:
+    """Rechaza un guion que es una plantilla o un texto demasiado corto.
+
+    El modelo a veces devuelve bajo "Guion" un marcador entre corchetes (ej. "[Narracion
+    lista para locucion: hook fuerte, ...]") en vez de la narracion. Sin este
+    chequeo el TTS lo lee tal cual, el video sale de ~7s y se publica con ese
+    texto como titulo y descripcion en las 3 redes."""
+    text = script.strip()
+    if re.fullmatch(r"\[[^\]]*\]", text) or len(text.split()) < MIN_SCRIPT_WORDS:
+        raise PipelineError(
+            f"Guion invalido ({len(text.split())} palabras, minimo {MIN_SCRIPT_WORDS}): "
+            f"{text[:100]!r}"
+        )
 
 
 def cap_script_to_duration(script: str, duration_seconds: Optional[int]) -> str:
@@ -730,26 +811,93 @@ def cap_script_to_duration(script: str, duration_seconds: Optional[int]) -> str:
     return " ".join(kept)
 
 
-def build_qwen_trigger_message(base_message: str, duration_seconds: Optional[int]) -> str:
-    """Si hay una duracion objetivo, le agrega al mensaje disparador un pedido
-    de longitud aproximada en palabras, para que Qwen genere directamente un
+# Pedido de ficha de personajes + prompts largos. Va en el mensaje y no en la
+# system prompt del generador de texto: no conviene depender solo de el
+# alcanza para pedir descripciones detalladas (el modelo las acortaba a ~8 palabras
+# y la de los humanos ni aparecia). _parse_story expande las etiquetas [NOMBRE].
+CHARACTER_SHEET_REQUEST = (
+    "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT (si lo hay) y antes de "
+    "\"Guion\", escribi un bloque \"PERSONAJES:\" con una linea por cada personaje que "
+    "aparezca en las imagenes (el animal y cada humano; si no hay personajes, la pieza u "
+    "objeto principal), con este formato: [NOMBRE]: descripcion en ingles de 40 a 60 "
+    "palabras con especie o raza, edad, tamano, color y patron exacto del pelaje o pelo, "
+    "ojos, rasgos distintivos y ropa o accesorios. La ficha lleva SOLO rasgos "
+    "permanentes; el estado de cada momento (apagado, sucio, feliz, dormido) va en la "
+    "accion de cada escena. En cada \"Prompt:\" escribi entre 70 y 100 palabras en ingles "
+    "(plano, angulo de camara, accion, expresion, escenario con detalles concretos, luz "
+    "y atmosfera) y nombra a cada personaje SOLO con su etiqueta, por ejemplo [LUNA], sin "
+    "redescribirlo: el sistema pega la ficha completa en cada prompt."
+)
+
+
+# Variante para macrame: la "ficha" es la pieza que se teje (mas las manos y la
+# escena), y los prompts muestran la MISMA pieza avanzando etapa por etapa.
+MACRAME_SHEET_REQUEST = (
+    "\n\nFORMATO DE IMAGENES (obligatorio): despues de IDEA y antes de \"Guion\", escribi un "
+    "bloque \"PERSONAJES:\" con exactamente tres lineas: [PIEZA] (50 a 70 palabras en ingles: "
+    "tipo de pieza, tamano en cm, cuerda con grosor, color con hex y textura, nudos y diseno "
+    "distintivos, flecos/borlas, accesorios y un rasgo unico reconocible), [MANOS] (15 a 25 "
+    "palabras) y [ESCENA] (30 a 45 palabras: superficie, fondo, luz, camara, objetos fijos). "
+    "Solo rasgos permanentes. En cada \"Prompt:\" escribi entre 60 y 90 palabras en ingles, "
+    "SIN corchetes envolventes, que indiquen la etapa (Stage N of M, % de avance), la accion "
+    "exacta de [MANOS] y las herramientas, el estado visible de [PIEZA] (lo que ya existe + "
+    "el unico cambio nuevo) y el encuadre, nombrando [PIEZA], [MANOS] y [ESCENA] solo con su "
+    "etiqueta: el sistema pega la ficha completa en cada prompt. Todas las imagenes muestran "
+    "la MISMA pieza (mismo color, grosor, tamano y diseno) en avance logico; la Imagen 1 es "
+    "el resultado final."
+)
+
+
+def build_trigger_message(base_message: str, duration_seconds: Optional[int], kind: Optional[str] = None) -> str:
+    """Arma el mensaje disparador de un Project de historias: agrega el pedido
+    de ficha de personajes y, si hay una duracion objetivo, un pedido de
+    longitud aproximada en palabras, para que el modelo genere directamente un
     guion cercano al objetivo en vez de depender solo del recorte posterior
     de cap_script_to_duration (que nunca puede alargar una historia corta,
     solo acortarla si se pasa)."""
-    if not duration_seconds:
-        return base_message
-    word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
-    return f"{base_message} (el guion de narracion debe tener aproximadamente {word_target} palabras)"
+    message = base_message
+    if duration_seconds:
+        word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
+        message += f" (el guion de narracion debe tener aproximadamente {word_target} palabras)"
+    return message + (MACRAME_SHEET_REQUEST if kind == "macrame" else CHARACTER_SHEET_REQUEST)
+
+
+MACRAME_MIN_PROMPT_WORDS = 70
+_MACRAME_SHEET_TAGS = ("Pieza", "Manos", "Escena")
+
+
+def validate_macrame_story(story: dict) -> None:
+    """Rechaza una historia de macrame cuyos prompts no traen la ficha fija de
+    la pieza (sin ella no hay continuidad visual entre imagenes) o son
+    demasiado cortos/genericos. El mensaje lleva el marcador sanable
+    "no se encontraron prompts de imagen" para que el lote regenere."""
+    problems = []
+    prompts = sorted(story.get("prompts", []), key=lambda p: p["index"])
+    for pos, p in enumerate(prompts):
+        text = p["prompt"]
+        # [PIEZA] describe la pieza TERMINADA: solo es obligatoria en la primera
+        # imagen y en la ultima. En las de proceso el modelo describe el avance
+        # de esa etapa (pegar la pieza final ahi la contradice).
+        required = _MACRAME_SHEET_TAGS if pos in (0, len(prompts) - 1) else _MACRAME_SHEET_TAGS[1:]
+        missing = [t for t in required if f"{t} (" not in text]
+        if missing:
+            problems.append(f"Imagen {p['index']}: sin ficha de {', '.join(missing)}")
+        elif len(text.split()) < MACRAME_MIN_PROMPT_WORDS:
+            problems.append(f"Imagen {p['index']}: prompt de {len(text.split())} palabras (minimo {MACRAME_MIN_PROMPT_WORDS})")
+    if problems:
+        raise PipelineError(
+            "No se encontraron prompts de imagen validos de macrame (ficha de pieza incompleta): "
+            + "; ".join(problems[:4])
+        )
 
 
 def resume_index(download_dir: Path) -> int:
     """Primer indice de scene_*.mp4 que falta en download_dir, para saber desde
     donde retomar generate_clips() sin repetir prompts ya generados.
 
-    No alcanza con contar archivos: la generacion paralela de clips (Qwen, N
-    sesiones a la vez) puede terminar con huecos en el medio si una sesion
-    falla mientras las otras siguen -- hay que buscar el primer hueco real,
-    no asumir que lo ya generado es un prefijo contiguo."""
+    No alcanza con contar archivos: si alguna corrida anterior fallo a la
+    mitad, puede haber huecos en el medio -- hay que buscar el primer hueco
+    real, no asumir que lo ya generado es un prefijo contiguo."""
     if not download_dir.exists():
         return 0
     existing = set()
@@ -769,22 +917,6 @@ def resume_index(download_dir: Path) -> int:
 def _find_ref(snapshot_text: str, pattern: str) -> str:
     match = re.search(pattern, snapshot_text)
     return match.group(1) if match else None
-
-
-def _find_select_mode_ref(snapshot_text: str) -> str:
-    """Ref clickeable para abrir el menu de modos de Qwen ('Select Mode').
-
-    El boton en si a veces queda con area de click nula (a criterio del propio
-    render de Qwen, visto en vivo en la sesion 'qwen2'); el hit-target real que
-    siempre funciona es su generic padre con [onclick]. Se intenta ese primero
-    y se cae al ref del boton si por algun motivo no aparece envuelto."""
-    wrapper_ref = _find_ref(
-        snapshot_text,
-        r'generic \[ref=(\w+)\] clickable \[onclick\]\s*\n\s*- button "Select Mode"',
-    )
-    if wrapper_ref:
-        return wrapper_ref
-    return _find_ref(snapshot_text, r'button "Select Mode" \[ref=(\w+)\]')
 
 
 def _open_meta_ai(unattended: bool) -> None:
@@ -821,22 +953,6 @@ def _open_meta_ai(unattended: bool) -> None:
     _run_agent_browser(["click", f"@{meta_ai_ref}"], WHATSAPP_SESSION)
 
 
-def _open_qwen(unattended: bool, session: str = QWEN_SESSION) -> None:
-    _run_agent_browser(["open", QWEN_URL], session)
-
-    snap = ""
-    for _ in range(6):
-        time.sleep(3)
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        if re.search(r"textbox", snap):
-            break
-    else:
-        raise PipelineError(
-            f"No encontre el textbox del chat en chat.qwen.ai (sesion '{session}'). "
-            "Puede que la sesion no este logueada (iniciar sesion una vez a mano)."
-        )
-
-
 def _last_row_block(snap: str) -> str:
     """Devuelve el ultimo '- row' del snapshot (la burbuja mas nueva/al fondo del chat).
 
@@ -861,7 +977,7 @@ def _send_chat_message(session: str, text: str, textbox_pattern: str = r'textbox
     Si `text` tiene mas de una linea (ej. trigger_message con bloque de
     historial pegado), NO se puede mandar todo de una con `fill`: confirmado
     en vivo que el `\\n` embebido dispara el mismo submit-on-Enter que tiene
-    bindeado el chat (Qwen, WhatsApp) y trunca el resto del mensaje en
+    bindeado el chat (WhatsApp) y trunca el resto del mensaje en
     silencio -- ni se manda como texto ni aparece nada, se pierde. Por eso
     despues de la primera linea se inserta cada linea siguiente a mano con
     Shift+Enter (salto de linea real, sin submit) + `keyboard inserttext`,
@@ -871,10 +987,14 @@ def _send_chat_message(session: str, text: str, textbox_pattern: str = r'textbox
     if not textbox_ref:
         raise PipelineError(f"No encontre el textbox del chat ({session}).")
     lines = text.split("\n")
+    # Tomar snapshot fresco antes de cada fill porque WhatsApp puede
+    # actualizar el DOM entre llamadas y invalidar la referencia anterior.
     _run_agent_browser(["fill", f"@{textbox_ref}", lines[0]], session)
     for line in lines[1:]:
         _run_agent_browser(["press", "Shift+Enter"], session)
         if line:
+            # Snapshot fresco para cada linea adicional
+            _run_agent_browser(["snapshot", "-i"], session)
             _run_agent_browser(["keyboard", "inserttext", line], session)
     _run_agent_browser(["press", "Enter"], session)
 
@@ -1040,7 +1160,8 @@ def _generate_one_clip_whatsapp(item: dict, scene_path: Path, unattended: bool, 
         except MetaAIFailure as e:
             lowered = str(e).lower()
             next_action = "soften" if (
-                IMAGE_REFUSAL_RE.search(lowered) or any(m in lowered for m in IMAGE_CONTENT_REFUSAL_MARKERS)
+                (IMAGE_REFUSAL_RE.search(lowered) or any(m in lowered for m in IMAGE_CONTENT_REFUSAL_MARKERS))
+                and not any(m in lowered for m in IMAGE_TRANSIENT_MARKERS)
             ) else "fresh"
             if attempt == IMAGE_RETRY_ATTEMPTS:
                 raise PipelineError(
@@ -1108,548 +1229,6 @@ def _generate_clips_whatsapp(story: dict, download_dir: Path, unattended: bool, 
     return generated
 
 
-def _select_qwen_video_mode(session: str) -> None:
-    """Abre el menu de modos y activa 'Create Video' (necesario antes de cada prompt:
-    el modo se desactiva solo despues de enviar un mensaje)."""
-    mode_btn_ref = None
-    for attempt in range(5):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        mode_btn_ref = _find_select_mode_ref(snap)
-        if mode_btn_ref:
-            break
-        # Justo tras abrir/recargar la pagina, el boton puede tardar un
-        # instante en hidratarse -- reintentar antes de asumir que no esta.
-        time.sleep(1.5)
-    if not mode_btn_ref:
-        raise PipelineError("No encontre el boton 'Select Mode' en chat.qwen.ai.")
-    _run_agent_browser(["click", f"@{mode_btn_ref}"], session)
-
-    video_mode_ref = None
-    for attempt in range(5):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        video_mode_ref = _find_ref(snap, r'menuitem "Create Video" \[ref=(\w+)\]')
-        if video_mode_ref:
-            break
-        time.sleep(1.5)
-    if not video_mode_ref:
-        raise PipelineError(
-            "No encontre (habilitado) 'Create Video' en el menu de Qwen. "
-            "Puede requerir estar logueado o haber cambiado el nombre del modo."
-        )
-    _run_agent_browser(["click", f"@{video_mode_ref}"], session)
-
-
-def _get_qwen_video_srcs(session: str) -> list:
-    """Devuelve las URLs (no-blob, directas a cdn.qwenlm.ai) de los <video> ya
-    renderizados en la pagina, sin duplicados."""
-    js = "JSON.stringify([...new Set([...document.querySelectorAll('video')].map(v => v.currentSrc).filter(Boolean))])"
-    result = subprocess.run(
-        _base_cmd(session) + ["eval", js],
-        capture_output=True, text=True, timeout=60, shell=(sys.platform == "win32"),
-        encoding="utf-8", errors="replace",
-    )
-    if result.returncode != 0:
-        raise PipelineError(f"No pude leer los videos de la pagina: {result.stderr.strip()}")
-    raw = result.stdout.strip().strip('"').replace('\\"', '"')
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-
-
-def _wait_for_qwen_video(session: str, baseline_srcs: list, timeout_seconds: int) -> str:
-    deadline = time.time() + timeout_seconds
-    last_report = time.time()
-    while time.time() < deadline:
-        time.sleep(POLL_INTERVAL_SECONDS)
-        current = _get_qwen_video_srcs(session)
-        new_srcs = [s for s in current if s not in baseline_srcs]
-        if new_srcs:
-            return new_srcs[-1]
-        if time.time() - last_report > 30:
-            print("  ...esperando video nuevo en Qwen (sigo vivo, aun no aparece)")
-            last_report = time.time()
-    raise PipelineError("Timeout esperando el video nuevo en Qwen.")
-
-
-def _download_url(url: str, dest_path: Path) -> None:
-    import urllib.request
-    with urllib.request.urlopen(url, timeout=120) as resp:
-        dest_path.write_bytes(resp.read())
-
-
-def _select_qwen_image_mode(session: str) -> None:
-    """Abre el menu de modos y activa 'Create Image' (mismo patron que
-    _select_qwen_video_mode, pero este modo no requiere login)."""
-    snap = _run_agent_browser(["snapshot", "-i"], session)
-    mode_btn_ref = _find_select_mode_ref(snap)
-    if not mode_btn_ref:
-        raise PipelineError("No encontre el boton 'Select Mode' en chat.qwen.ai.")
-    _run_agent_browser(["click", f"@{mode_btn_ref}"], session)
-
-    snap = _run_agent_browser(["snapshot", "-i"], session)
-    image_mode_ref = _find_ref(snap, r'menuitem "Create Image" \[ref=(\w+)\]')
-    if not image_mode_ref:
-        raise PipelineError(
-            "No encontre (habilitado) 'Create Image' en el menu de Qwen. "
-            "Puede haber cambiado el nombre del modo."
-        )
-    _run_agent_browser(["click", f"@{image_mode_ref}"], session)
-
-
-def _select_qwen_image_ratio(session: str, ratio: str) -> None:
-    """Clickea el selector real de proporcion de imagen (boton con la
-    proporcion actual, ej. '16:9', visible solo en modo 'Create Image') y
-    elige `ratio` (ej. '9:16') del menu desplegable. Solo confiar en texto
-    de prompt para el aspect ratio no funciona -- Qwen lo ignora seguido;
-    este control si lo respeta."""
-    ratio_btn_ref = None
-    for attempt in range(5):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        ratio_btn_ref = _find_ref(snap, r'generic "\d+:\d+" \[ref=(\w+)\] clickable \[onclick\]')
-        if ratio_btn_ref:
-            break
-        time.sleep(1.5)
-    if not ratio_btn_ref:
-        raise PipelineError("No encontre el selector de proporcion en chat.qwen.ai.")
-    _run_agent_browser(["click", f"@{ratio_btn_ref}"], session)
-
-    ratio_opt_ref = None
-    for attempt in range(5):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        ratio_opt_ref = _find_ref(snap, rf'menuitem "{re.escape(ratio)}" \[ref=(\w+)\]')
-        if ratio_opt_ref:
-            break
-        time.sleep(1.5)
-    if not ratio_opt_ref:
-        raise PipelineError(
-            f"No encontre la opcion de proporcion '{ratio}' en el menu de Qwen."
-        )
-    _run_agent_browser(["click", f"@{ratio_opt_ref}"], session)
-
-
-def _get_qwen_image_srcs(session: str) -> list:
-    """Devuelve las URLs (cdn.qwenlm.ai, no iconos/avatares de otros dominios)
-    de las imagenes ya renderizadas en la pagina, sin duplicados."""
-    js = (
-        "JSON.stringify([...new Set([...document.images]"
-        ".map(i => i.currentSrc || i.src)"
-        ".filter(s => s.includes('cdn.qwenlm.ai')))])"
-    )
-    result = subprocess.run(
-        _base_cmd(session) + ["eval", js],
-        capture_output=True, text=True, timeout=60, shell=(sys.platform == "win32"),
-        encoding="utf-8", errors="replace",
-    )
-    if result.returncode != 0:
-        raise PipelineError(f"No pude leer las imagenes de la pagina: {result.stderr.strip()}")
-    raw = result.stdout.strip().strip('"').replace('\\"', '"')
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-
-
-def _wait_for_qwen_image(session: str, baseline_srcs: list, timeout_seconds: int) -> str:
-    deadline = time.time() + timeout_seconds
-    last_report = time.time()
-    while time.time() < deadline:
-        time.sleep(POLL_INTERVAL_SECONDS)
-        current = _get_qwen_image_srcs(session)
-        new_srcs = [s for s in current if s not in baseline_srcs]
-        if new_srcs:
-            return new_srcs[-1]
-        if time.time() - last_report > 30:
-            print("  ...esperando imagen nueva en Qwen (sigo vivo, aun no aparece)")
-            last_report = time.time()
-    raise PipelineError("Timeout esperando la imagen nueva en Qwen.")
-
-
-def generate_qwen_image(
-    prompt: str, dest_path: Path, unattended: bool = True, image_ratio: str = None
-) -> str:
-    """Genera una imagen vía chat.qwen.ai (modo 'Create Image') y la descarga a
-    dest_path. Reusa la misma sesion/daemon persistente que generate_clips usa
-    para video (QWEN_SESSION) -- pensada para usos puntuales (ej. fondo de
-    miniatura de YouTube), no para el batch de escenas.
-
-    image_ratio (opcional, ej. '9:16', '16:9'): si se pasa, clickea el selector
-    real de proporcion de Qwen en vez de confiar solo en texto del prompt --
-    el texto solo no garantiza que Qwen respete el formato pedido."""
-    _confirm(f"Voy a generar una imagen en Qwen: {prompt[:60]}... Confirmas?", unattended)
-    _open_qwen(unattended)
-    with _get_session_lock(QWEN_SESSION):
-        baseline_srcs = _get_qwen_image_srcs(QWEN_SESSION)
-        _select_qwen_image_mode(QWEN_SESSION)
-        if image_ratio:
-            _select_qwen_image_ratio(QWEN_SESSION, image_ratio)
-        _send_chat_message(QWEN_SESSION, prompt, textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-        image_url = _wait_for_qwen_image(QWEN_SESSION, baseline_srcs, QWEN_IMAGE_TIMEOUT_SECONDS)
-    _download_url(image_url, dest_path)
-    return str(dest_path)
-
-
-def generate_qwen_image_in_session(
-    session: str, prompt: str, dest_path: Path, image_ratio: str = None
-) -> str:
-    """Genera una imagen en la sesion YA ABIERTA de Qwen (mismo chat en curso,
-    p.ej. el de un Project que recien devolvio un IMAGE_PROMPT) -- variante de
-    generate_qwen_image que no abre sesion nueva ni asume QWEN_SESSION, para
-    no perder el contexto del chat/Project actual."""
-    with _get_session_lock(session):
-        baseline_srcs = _get_qwen_image_srcs(session)
-        _select_qwen_image_mode(session)
-        if image_ratio:
-            _select_qwen_image_ratio(session, image_ratio)
-        _send_chat_message(session, prompt, textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-        image_url = _wait_for_qwen_image(session, baseline_srcs, QWEN_IMAGE_TIMEOUT_SECONDS)
-    _download_url(image_url, dest_path)
-    return str(dest_path)
-
-
-_QWEN_MODE_CHIP_NAMES = ("Create Image", "Create Video", "Web search", "Deep Research", "Web Dev", "Slides")
-
-
-def _deselect_qwen_mode(session: str) -> None:
-    """Si quedo un modo especial (ej. 'Create Image') seleccionado de un uso
-    anterior, lo saca haciendo click en su 'x' -- si no se saca, el proximo
-    mensaje de texto plano dispara otra generacion de imagen/video en vez de
-    devolver una respuesta de texto."""
-    snap = _run_agent_browser(["snapshot", "-i"], session)
-    for name in _QWEN_MODE_CHIP_NAMES:
-        m = re.search(
-            rf'generic "{re.escape(name)}" \[ref=\w+\][^\n]*\n\s*-\s*image \[ref=(\w+)\]', snap
-        )
-        if m:
-            _run_agent_browser(["click", f"@{m.group(1)}"], session)
-            return
-
-
-_QWEN_TEXT_REPLY_NOISE = {
-    "Thinking completed", "Copy", "Good Response", "Bad Response", "Regenerate",
-    "I prefer this response", "Response 1", "Response 2",
-    "Which response do you prefer? Select one to continue.",
-    "This feedback will help us evaluate and improve Qwen Studio's performance.",
-    "AI-generated content may not be accurate.", "Auto", "Voice Input",
-}
-
-
-def _get_last_ai_text_reply(session: str, skip_text: "str | None" = None) -> "str | None":
-    """Devuelve el texto de la ultima respuesta de Qwen (chat de texto plano),
-    o None si todavia no hay respuesta nueva o esta generandose.
-
-    El markdown de la respuesta se renderiza como VARIOS StaticText separados
-    (uno por parrafo/bloque), no uno solo -- hay que concatenar todos los que
-    vienen despues del mensaje recien mandado (`skip_text`), no quedarse con
-    el ultimo nomas (eso solo devolvia el ultimo parrafo, ej. el ultimo
-    "Imagen N", y rompia el parseo de historias largas). Si `skip_text` no
-    esta en el snapshot todavia (el mensaje ni se mando o no se termino de
-    renderizar el echo), se considera que no hay respuesta nueva.
-
-    A veces Qwen ofrece elegir entre dos respuestas ("Which response do you
-    prefer? Select one to continue.") en vez de contestar directo -- ahi se
-    elige siempre la primera (clickear su "I prefer this response") para
-    colapsarlo a una respuesta normal y seguir con el mismo caso de abajo.
-
-    `skip_text` (el mensaje que mandamos nosotros) NO se puede anclar buscando
-    su texto completo como un nodo `StaticText "..."`: confirmado en vivo que
-    (a) el snapshot escapa los saltos de linea embebidos como el string
-    literal `\n` (dos caracteres, backslash+n), no como newline real, asi que
-    comparar contra el texto original (con newlines reales) nunca matchea; y
-    (b) el mensaje del usuario se renderiza como UN solo nodo combinado con
-    todo el texto adentro, pero la UI de Qwen despues lo colapsa a mostrar
-    solo su primera linea (se confirmo que se queda asi incluso ya con la
-    respuesta completa) -- exigir que el anchor sea un nodo entero (con
-    comillas de cierre justo despues) tampoco funciona en ninguno de los dos
-    estados. Por eso se ancla con la PRIMERA linea no vacia de skip_text como
-    substring suelto (sin exigir limite de nodo): matchea tanto si el mensaje
-    quedo colapsado a esa sola linea como si todavia esta completo en un nodo
-    combinado (en ese caso el regex de abajo simplemente no vuelve a matchear
-    el resto del propio texto del usuario, porque no arranca con el prefijo
-    literal `StaticText "`, y sigue de largo hasta el proximo nodo real)."""
-    snap = _run_agent_browser(["snapshot"], session)
-
-    if "Which response do you prefer" in snap:
-        prefer_ref = _find_ref(snap, r'button "I prefer this response"\s*\[ref=(\w+)\]')
-        if not prefer_ref:
-            return None
-        _run_agent_browser(["click", f"@{prefer_ref}"], session)
-        time.sleep(1.5)
-        snap = _run_agent_browser(["snapshot"], session)
-
-    if skip_text:
-        first_line = next(
-            (line for line in skip_text.strip().splitlines() if line.strip()), skip_text.strip()
-        )
-        anchor = first_line.replace("\\", "\\\\").replace('"', '\\"')
-        idx = snap.rfind(anchor)
-        if idx == -1:
-            return None
-        region = snap[idx + len(anchor):]
-    else:
-        main_match = re.search(r"\n\s*-\s*main\b", snap)
-        region = snap[main_match.start():] if main_match else snap
-
-    if 'button "Copy"' not in region and 'button "I prefer this response"' not in region:
-        return None
-
-    texts = [
-        _unescape_snapshot_text(m.group(1))
-        for m in re.finditer(r'StaticText "((?:[^"\\]|\\.)*)"', region)
-    ]
-    texts = [t for t in texts if t.strip() not in _QWEN_TEXT_REPLY_NOISE]
-    return "\n\n".join(texts) if texts else None
-
-
-def _unescape_snapshot_text(raw: str) -> str:
-    """El snapshot escapa el texto como si fuera un string de codigo (comillas,
-    saltos de linea, tabs) -- si no se desescapan los `\\n`/`\\t` quedan como
-    backslash+letra literal en vez de whitespace real, y las heading regexes
-    de `_parse_story` (que anclan con `$` de fin de linea) dejan de matchear."""
-    return (
-        raw.replace('\\"', '"')
-        .replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\\\", "\\")
-    )
-
-
-def _wait_for_qwen_text_reply(
-    session: str, baseline: "str | None", timeout_seconds: int, skip_text: "str | None" = None
-) -> str:
-    deadline = time.time() + timeout_seconds
-    last_report = time.time()
-    while time.time() < deadline:
-        time.sleep(POLL_INTERVAL_SECONDS)
-        reply = _get_last_ai_text_reply(session, skip_text=skip_text)
-        if reply is not None and reply != baseline:
-            return reply
-        if time.time() - last_report > 30:
-            print("  ...esperando respuesta de texto de Qwen (sigo vivo, aun no aparece)")
-            last_report = time.time()
-    _save_failure_diagnostics(session, "qwen_text_timeout")
-    raise PipelineError("Timeout esperando la respuesta de texto de Qwen.")
-
-
-def generate_qwen_text(prompt: str, unattended: bool = True) -> str:
-    """Pide una respuesta de texto corta a Qwen (chat plano, sin modo
-    especial) -- ej. para armar un titular viral acorde a la imagen. Reusa la
-    misma sesion persistente que usan las imagenes/videos (QWEN_SESSION)."""
-    _confirm(f"Voy a pedirle un texto a Qwen: {prompt[:60]}... Confirmas?", unattended)
-    _open_qwen(unattended)
-    with _get_session_lock(QWEN_SESSION):
-        _deselect_qwen_mode(QWEN_SESSION)
-        baseline = _get_last_ai_text_reply(QWEN_SESSION, skip_text=prompt)
-        _send_chat_message(QWEN_SESSION, prompt, textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-        reply = _wait_for_qwen_text_reply(QWEN_SESSION, baseline, QWEN_TEXT_TIMEOUT_SECONDS, skip_text=prompt)
-    return reply.strip()
-
-
-def _open_qwen_project(session: str, project_name: str) -> None:
-    """Entra a un Project de chat.qwen.ai por nombre (sidebar de Projects) y
-    arranca un chat nuevo adentro, para que 'dame una historia' no continue
-    una conversacion vieja de una corrida anterior del lote.
-
-    Sin precedente en el codigo (el pipeline manual solo usa el chat raiz) --
-    el rol accesible exacto del link del proyecto en el snapshot no esta
-    confirmado; si el regex no lo encuentra en la primera corrida real, ajustar
-    el patron de abajo (mismo tipo de ajuste que ya necesitaron en su momento
-    _find_select_mode_ref / _select_qwen_image_mode)."""
-    project_ref = None
-    for attempt in range(5):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        project_ref = _find_ref(
-            snap, rf'(?:link|button|treeitem|listitem|generic) "{re.escape(project_name)}"\s*\[ref=(\w+)\]'
-        )
-        if project_ref:
-            break
-        time.sleep(1.5)
-    if not project_ref:
-        raise PipelineError(
-            f"No encontre el proyecto '{project_name}' en el sidebar de Qwen "
-            "(revisar el nombre exacto o si el sidebar de Projects esta colapsado)."
-        )
-    _run_agent_browser(["click", f"@{project_ref}"], session)
-
-    # No clickear "New Chat": ese boton es el global del sidebar y navega
-    # afuera del proyecto (chat.qwen.ai/p/<id> -> chat.qwen.ai/), perdiendo
-    # las Instructions/Files del proyecto. La pagina de aterrizaje del
-    # proyecto ya trae su propio textbox, que arranca un chat nuevo scoped
-    # al proyecto en cuanto se manda el primer mensaje -- alcanza con
-    # esperarlo.
-    for _ in range(6):
-        snap = _run_agent_browser(["snapshot", "-i"], session)
-        if re.search(r'textbox "Ask Qwen"', snap):
-            return
-        time.sleep(2)
-    raise PipelineError(
-        f"Entre al proyecto '{project_name}' pero no encontre el textbox del chat despues."
-    )
-
-
-def generate_story_from_qwen_project(
-    project_name: str, unattended: bool = True, trigger_message: str = "dame una historia"
-) -> str:
-    """Pide una historia completa (guion + prompts de imagen) al Project de
-    Qwen indicado, mandando trigger_message en un chat nuevo de ese
-    proyecto. Devuelve el texto crudo para pasar tal cual a
-    load_story_from_text/extract_script -- el formato esperado (heading
-    'Guion...' + bloques 'Imagen N'/'Frase:'/'Prompt:') lo define el propio
-    system prompt del proyecto en Qwen, no esta funcion. trigger_message
-    tiene que ser el mensaje que ese Project puntual espera para responder
-    con el formato estructurado -- no todos los Projects usan la misma
-    frase disparadora."""
-    _confirm(f"Voy a pedir una historia al proyecto de Qwen '{project_name}'. Confirmas?", unattended)
-    _open_qwen(unattended, session=QWEN_BATCH_SESSION)
-    with _get_session_lock(QWEN_BATCH_SESSION):
-        _open_qwen_project(QWEN_BATCH_SESSION, project_name)
-        _deselect_qwen_mode(QWEN_BATCH_SESSION)
-        baseline = _get_last_ai_text_reply(QWEN_BATCH_SESSION, skip_text=trigger_message)
-        _send_chat_message(QWEN_BATCH_SESSION, trigger_message,
-                            textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-        reply = _wait_for_qwen_text_reply(
-            QWEN_BATCH_SESSION, baseline, QWEN_STORY_TIMEOUT_SECONDS, skip_text=trigger_message
-        )
-    return reply.strip()
-
-
-def _generate_one_clip_qwen(session: str, item: dict, scene_path: Path) -> None:
-    """Genera UN video directamente desde el prompt en la sesion Qwen ya abierta
-    (sin paso previo de imagen) y lo descarga en scene_path. Cuerpo por-item de
-    _generate_clips_qwen, reusado tambien por _generate_clips_mixed."""
-    baseline_srcs = _get_qwen_video_srcs(session)
-    _select_qwen_video_mode(session)
-    _send_chat_message(session, item["prompt"], textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-    video_url = _wait_for_qwen_video(session, baseline_srcs, QWEN_CLIP_TIMEOUT_SECONDS)
-    _download_url(video_url, scene_path)
-
-
-def _generate_one_clip_qwen_image(session: str, item: dict, scene_path: Path) -> None:
-    """Genera UNA imagen (modo 'Create Image') desde el prompt en la sesion Qwen
-    ya abierta y la descarga en scene_path. Equivalente a _generate_one_clip_qwen
-    pero sin animar -- misma base que generate_qwen_image."""
-    baseline_srcs = _get_qwen_image_srcs(session)
-    _select_qwen_image_mode(session)
-    _send_chat_message(session, item["prompt"], textbox_pattern=r'textbox "Ask Qwen" \[ref=(\w+)\]')
-    image_url = _wait_for_qwen_image(session, baseline_srcs, QWEN_IMAGE_TIMEOUT_SECONDS)
-    _download_url(image_url, scene_path)
-
-
-def _generate_clips_qwen(story: dict, download_dir: Path, unattended: bool, start_index: int,
-                          report, generate_video: bool = True) -> list:
-    """Qwen genera el video directamente desde el prompt (sin paso previo de imagen).
-
-    Secuencial, una sola sesion: la cuenta de Qwen solo permite 1 generacion de
-    video concurrente (confirmado en vivo -- abrir varias sesiones/pestanas con
-    la misma cuenta NO paraleliza, todas menos la primera se bloquean con
-    'Create Video' deshabilitado hasta que la que esta generando termina). Para
-    paralelizar de verdad usar provider='mixed' (Qwen + WhatsApp a la vez, que
-    si son cuentas/servicios independientes sin ese limite compartido)."""
-    _confirm("Voy a abrir chat.qwen.ai. Confirmas?", unattended)
-    _open_qwen(unattended)
-
-    ext = "mp4" if generate_video else "jpg"
-    generated = []
-    for i, item in enumerate(story["prompts"]):
-        if i < start_index:
-            continue
-        scene_path = download_dir / f"scene_{i:03d}.{ext}"
-        label = "Video" if generate_video else "Imagen"
-        report(f"[{i + 1}/{len(story['prompts'])}] {label} {item['index']}: {item['frase'][:60]}...")
-
-        if generate_video:
-            _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
-        else:
-            _generate_one_clip_qwen_image(QWEN_SESSION, item, scene_path)
-        generated.append(str(scene_path))
-        report(f"  -> guardado en {scene_path}")
-
-    return generated
-
-
-def _generate_clips_mixed(story: dict, download_dir: Path, unattended: bool, start_index: int,
-                           report, generate_video: bool = True) -> list:
-    """Paraleliza de verdad repartiendo los prompts pendientes entre WhatsApp/Meta
-    IA y Qwen a la vez (round-robin) -- son cuentas/servicios independientes, sin
-    el limite de 1-concurrente-por-cuenta que tiene Qwen entre sesiones propias."""
-    pending = [(i, item) for i, item in enumerate(story["prompts"]) if i >= start_index]
-    if not pending:
-        return []
-
-    _confirm("Voy a abrir WhatsApp Web y Qwen en paralelo. Confirmas?", unattended)
-
-    report_lock = threading.Lock()
-
-    def report_safe(msg: str) -> None:
-        with report_lock:
-            report(msg)
-
-    ext = "mp4" if generate_video else "jpg"
-
-    def worker_whatsapp(items: list) -> list:
-        if not items:
-            return []
-        _open_meta_ai(unattended)
-        generated_local = []
-        for n, (i, item) in enumerate(items):
-            scene_path = download_dir / f"scene_{i:03d}.{ext}"
-            if scene_path.exists() or scene_path.with_suffix(".jpg").exists():
-                continue  # ya generado por una corrida anterior (reintento parcial)
-            report_safe(f"[whatsapp] [{i + 1}/{len(story['prompts'])}] Imagen {item['index']}: {item['frase'][:60]}...")
-            saved_path = _generate_one_clip_whatsapp(item, scene_path, unattended, is_first=(n == 0),
-                                                     generate_video=generate_video)
-            generated_local.append(str(saved_path))
-            report_safe(f"  [whatsapp] -> guardado en {saved_path}")
-        return generated_local
-
-    def worker_qwen(items: list) -> list:
-        if not items:
-            return []
-        _open_qwen(unattended)
-        generated_local = []
-        for i, item in items:
-            scene_path = download_dir / f"scene_{i:03d}.{ext}"
-            if scene_path.exists():
-                continue
-            label = "Video" if generate_video else "Imagen"
-            report_safe(f"[qwen] [{i + 1}/{len(story['prompts'])}] {label} {item['index']}: {item['frase'][:60]}...")
-            if generate_video:
-                _generate_one_clip_qwen(QWEN_SESSION, item, scene_path)
-            else:
-                _generate_one_clip_qwen_image(QWEN_SESSION, item, scene_path)
-            generated_local.append(str(scene_path))
-            report_safe(f"  [qwen] -> guardado en {scene_path}")
-        return generated_local
-
-    whatsapp_items = [pair for n, pair in enumerate(pending) if n % 2 == 0]
-    qwen_items = [pair for n, pair in enumerate(pending) if n % 2 == 1]
-
-    generated = []
-    errors = []
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(worker_whatsapp, whatsapp_items): "whatsapp",
-            executor.submit(worker_qwen, qwen_items): "qwen",
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                generated.extend(future.result())
-            except Exception as e:
-                errors.append((name, e))
-                report_safe(f"[{name}] fallo: {e}")
-
-    generated.sort(key=lambda p: int(Path(p).stem.split("_")[1]))
-
-    if errors:
-        raise PipelineError(
-            "Algun proveedor fallo generando clips (" + str(len(generated)) +
-            " se generaron OK igual): " + "; ".join(f"{s}: {e}" for s, e in errors)
-        )
-
-    return generated
-
-
 def generate_clips(story: dict, download_dir: Path, unattended: bool, start_index: int = 0,
                     on_progress=None, provider: str = "whatsapp", generate_video: bool = True) -> list:
     if provider not in PROVIDERS:
@@ -1667,15 +1246,8 @@ def generate_clips(story: dict, download_dir: Path, unattended: bool, start_inde
     logger.info("generate_clips: provider=%s start_index=%d prompts=%d dir=%s generate_video=%s",
                 provider, start_index, n_prompts, download_dir, generate_video)
     try:
-        if provider == "qwen":
-            clips = _generate_clips_qwen(story, download_dir, unattended, start_index, report,
+        clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report,
                                           generate_video=generate_video)
-        elif provider == "mixed":
-            clips = _generate_clips_mixed(story, download_dir, unattended, start_index, report,
-                                           generate_video=generate_video)
-        else:
-            clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report,
-                                              generate_video=generate_video)
         logger.info("generate_clips: listo, %d clips generados en %s", len(clips), download_dir)
         return clips
     except Exception:

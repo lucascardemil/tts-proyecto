@@ -56,24 +56,90 @@ const buildStrokeShadow = (color: string, width: number): string =>
     `-${width}px ${width}px 0 ${color}`,
   ].join(", ");
 
-const WORDS_PER_LINE = 5;
+const WORDS_PER_LINE = 5; // fallback si el canvas de medición no está disponible
+
+// Canvas 2D reusado solo para medir texto (measureText), nunca se dibuja ni
+// se monta en el DOM — Remotion renderiza en Chrome real (headless), así
+// que esta API existe siempre durante el render, no solo en el navegador
+// del usuario. Un solo canvas a nivel de módulo evita crear uno nuevo por
+// frame.
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+const getMeasureCtx = (): CanvasRenderingContext2D | null => {
+  if (measureCtx !== undefined) return measureCtx;
+  measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  return measureCtx;
+};
+
+// Separación horizontal entre palabras (debe coincidir con `gap: "0 12px"`
+// del contenedor flex de abajo) y padding lateral cuando hay fondo (debe
+// coincidir con `padding: "12px 28px"`).
+const WORD_GAP_PX = 12;
+const BACKGROUND_PADDING_X_PX = 28;
 
 export const Subtitles: React.FC<{ words: SubtitleWord[]; style: SubtitleStyle }> = ({
   words,
   style,
 }) => {
   const frame = useCurrentFrame();
-  const { fps, height } = useVideoConfig();
+  const { fps, height, width } = useVideoConfig();
   const t = frame / fps;
   const bottomMargin = (BOTTOM_MARGIN_PX_AT_REFERENCE * height) / BOTTOM_MARGIN_REFERENCE_HEIGHT;
 
+  // Agrupa palabras en líneas por ANCHO REAL renderizado (canvas measureText
+  // con la misma fuente/tamaño/letterSpacing/uppercase que se usa para
+  // pintar), no por conteo fijo de palabras — evita que una línea de 5
+  // palabras largas desborde el maxWidth del contenedor (86% del ancho de
+  // video) mientras una de 5 palabras cortas deja espacio de sobra.
   const lines: SubtitleWord[][] = useMemo(() => {
-    const result: SubtitleWord[][] = [];
-    for (let i = 0; i < words.length; i += WORDS_PER_LINE) {
-      result.push(words.slice(i, i + WORDS_PER_LINE));
+    const ctx = getMeasureCtx();
+    const fontFamily = fontMap[style.fontFamily];
+    const maxTextWidth =
+      width * 0.86 - (style.background ? BACKGROUND_PADDING_X_PX * 2 : 0) - 4; // -4px de margen de seguridad
+
+    if (!ctx) {
+      // No debería pasar durante un render real (Chrome headless siempre
+      // tiene Canvas2D) — solo como red de seguridad.
+      const result: SubtitleWord[][] = [];
+      for (let i = 0; i < words.length; i += WORDS_PER_LINE) {
+        result.push(words.slice(i, i + WORDS_PER_LINE));
+      }
+      return result;
     }
+
+    ctx.font = `${style.italic ? "italic " : ""}400 ${style.fontSize}px ${fontFamily}`;
+    const measure = (word: string): number => {
+      const text = style.uppercase ? word.toUpperCase() : word;
+      const extraLetterSpacing = Math.max(text.length - 1, 0) * style.letterSpacing;
+      return ctx.measureText(text).width + extraLetterSpacing;
+    };
+
+    const result: SubtitleWord[][] = [];
+    let current: SubtitleWord[] = [];
+    let currentWidth = 0;
+    for (const w of words) {
+      const wordWidth = measure(w.word);
+      const widthIfAdded = current.length === 0 ? wordWidth : currentWidth + WORD_GAP_PX + wordWidth;
+      if (current.length > 0 && widthIfAdded > maxTextWidth) {
+        result.push(current);
+        current = [w];
+        currentWidth = wordWidth;
+      } else {
+        current.push(w);
+        currentWidth = widthIfAdded;
+      }
+    }
+    if (current.length > 0) result.push(current);
     return result;
-  }, [words]);
+  }, [
+    words,
+    width,
+    style.fontFamily,
+    style.fontSize,
+    style.italic,
+    style.uppercase,
+    style.letterSpacing,
+    style.background,
+  ]);
 
   if (words.length === 0) return null;
 
