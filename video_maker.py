@@ -186,6 +186,31 @@ SUBTITLE_PRESETS = {
 }
 DEFAULT_SUBTITLE_PRESET = "clasico"
 
+# Tema "bebe_heroe" (pagina Bebé Héroe, plantilla de Remotion de rescate): subtitulos Luckiest Guy
+# amarillos con contorno rojo oscuro, a 250 px del borde inferior; zoom propio por escena (de
+# zoomFrom a zoomTo sobre `origin`) y musica/fuente copiadas desde assets/bebe_heroe/.
+BEBE_HEROE_THEME = "bebe_heroe"
+BEBE_HEROE_ASSETS = BASE_DIR / "assets" / "bebe_heroe"
+BEBE_HEROE_SUBTITLE_STYLE = {
+    "fontFamily": "luckiest",
+    "fontSize": 84,
+    "position": "bottom",
+    "positionX": 50,
+    "positionY": 82,
+    "textColor": "#FFD54F",
+    "highlightColor": "#FFD54F",
+    "background": False,
+    "strokeColor": "#7A0A0A",
+    "strokeWidth": 6,
+    "uppercase": True,
+    "italic": False,
+    "letterSpacing": 2,
+    "animationType": "scale",
+}
+BEBE_HEROE_ZOOMS = [  # (zoomFrom, zoomTo, origin) por escena: problema, empatia (ojos), accion, final
+    (1.0, 1.22, "65% 62%"), (1.0, 1.55, "50% 40%"), (1.0, 1.10, "45% 45%"), (1.10, 1.0, "55% 55%"),
+]
+
 
 def get_subtitle_preset_style(preset_id: str) -> dict:
     """Devuelve el subtitle_style de un preset (sin la 'label', que es solo
@@ -523,6 +548,7 @@ def _build_timeline(
     animate_images: bool = True,
     ai_label: Optional[str] = None,
     mood: str = "warm_night",
+    theme: Optional[str] = None,
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -633,6 +659,9 @@ def _build_timeline(
                 clip["playbackRate"] = native / slot_duration
         else:
             clip["kenBurns"] = directions[i] if animate_images else "none"
+            if theme == BEBE_HEROE_THEME:
+                zoom_from, zoom_to, origin = BEBE_HEROE_ZOOMS[min(i, len(BEBE_HEROE_ZOOMS) - 1)]
+                clip.update(zoomFrom=zoom_from, zoomTo=zoom_to, origin=origin)
         clips.append(clip)
 
     timeline = {
@@ -646,6 +675,8 @@ def _build_timeline(
     timeline["subtitleStyle"] = {**SUBTITLE_STYLE_DEFAULTS, **(subtitle_style or {})}
     if ai_label:
         timeline["aiLabel"] = ai_label
+    if theme == BEBE_HEROE_THEME:
+        timeline.update(theme=theme, musicSrc="bebe_heroe_music.wav", fontSrc="bebe_heroe_luckiest.woff2")
     return timeline
 
 
@@ -745,6 +776,7 @@ def build_props(
     mood: str = "warm_night",
     on_progress=None,
     script_text: Optional[str] = None,
+    theme: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Arma la edición: copia los assets al proyecto de Remotion, transcribe el
@@ -820,6 +852,10 @@ def build_props(
     if n_video_clips:
         report(f"  🎞️  {n_video_clips} clip(s) de video detectado(s) entre las escenas.")
 
+    if theme == BEBE_HEROE_THEME:
+        shutil.copy(BEBE_HEROE_ASSETS / "music.wav", VIDEO_PUBLIC_DIR / "bebe_heroe_music.wav")
+        shutil.copy(BEBE_HEROE_ASSETS / "luckiest.woff2", VIDEO_PUBLIC_DIR / "bebe_heroe_luckiest.woff2")
+
     # Normalizado a WAV siempre (48kHz + loudness) — así el sample rate y el
     # loudness de entrega no dependen del formato con que llegó el audio.
     # Si ffmpeg no está disponible, se cae a copiar el original tal cual
@@ -855,7 +891,7 @@ def build_props(
     timeline = _build_timeline(
         scenes, audio_name, duration, words, title, subtitle_style,
         frases=frases, animate_images=animate_images, ai_label=ai_label,
-        mood=mood,
+        mood=mood, theme=theme,
     )
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")

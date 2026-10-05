@@ -6,7 +6,7 @@ CLIP = {"id": "abc123", "title": "x", "author": "Pepe", "page_url": "https://med
 
 def _seo(game_key="valorant", clip=CLIP):
     game = gaming_clip.GAMES[game_key]
-    return gaming_clip.build_youtube_seo(clip, game, "MIRÁ ESTA JUGADA!"), game
+    return gaming_clip.build_youtube_seo(clip, game), game
 
 
 def test_seo_limits_and_keywords():
@@ -14,7 +14,7 @@ def test_seo_limits_and_keywords():
     assert len(seo["title"]) <= gaming_clip.YT_TITLE_MAX
     assert game["label"] in seo["title"]
     assert "#Shorts" in seo["title"]
-    assert "MIRÁ" not in seo["title"]
+    assert "MIRÁ" not in seo["title"] and "Mejores" not in seo["title"]
     hashtags = [w for w in seo["description"].split() if w.startswith("#")]
     assert 3 <= len(hashtags) <= gaming_clip.YT_MAX_HASHTAGS
     assert hashtags[0] == "#Shorts"
@@ -34,7 +34,7 @@ def test_seo_deterministic_and_differs_from_social_caption():
 
 def test_seo_long_game_name_still_fits():
     game = {"label": "X" * 70, "slug": "x", "short": "X", "kills": False, "tags": []}
-    seo = gaming_clip.build_youtube_seo(CLIP, game, "HOOK LARGO " * 5)
+    seo = gaming_clip.build_youtube_seo(CLIP, game)
     assert len(seo["title"]) <= gaming_clip.YT_TITLE_MAX
 
 
@@ -49,3 +49,11 @@ def test_medal_network_and_remotion_errors_are_healable():
     assert batch_pipeline._is_healable_error("No se pudo leer Medal (https://medal.tv/x): NameResolutionError")
     assert batch_pipeline._is_healable_error("Remotion falló al renderizar el clip: trimBefore must be greater")
     assert not batch_pipeline._is_healable_error("No encontre el proyecto 'abc'")
+
+
+def test_seo_is_english():
+    seo, _ = _seo()
+    text = seo["title"] + seo["description"] + " ".join(seo["tags"])
+    for spanish in ("Mejores", "Suscríbete", "jugadas", "Palabras clave", "videojuegos"):
+        assert spanish not in text
+    assert "Subscribe" in seo["description"] and "Best" in seo["description"]

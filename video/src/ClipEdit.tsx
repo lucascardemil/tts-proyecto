@@ -47,11 +47,11 @@ export type ClipEditProps = {
 
 export const clipEditDefaultProps: ClipEditProps = {
   src: "clips/cs2_ace_inferno.mp4",
-  hook: "5 KILLS A TRAVÉS DEL HUMO",
+  hook: "5 KILLS THROUGH THE SMOKE",
   hookHighlight: [0, 5],
-  tag: "CS2 · ACE EN INFERNO",
+  tag: "CS2 · ACE ON INFERNO",
   credit: "clip: @eymz (Medal)",
-  cta: "¿ACE O SUERTE? 👇",
+  cta: "ACE OR LUCK? 👇",
   kills: [1.0, 4.4, 8.0, 9.75, 13.1],
   clipSeconds: 14.8,
   focusX: 60,

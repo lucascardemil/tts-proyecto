@@ -20,6 +20,7 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,7 +41,7 @@ def _text_system_prompt(kind: str) -> str:
     return (_PROMPTS_DIR / f"{kind}_system.md").read_text(encoding="utf-8")
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
-STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo"}  # los demas (posts) no traen bloques Imagen
+STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
 
 # Alimento protagonista de cada historia/post de niño selectivo. Sin esto el modelo
 # se ancla a los ejemplos del prompt (brocoli) y todo gira alrededor de lo mismo; se
@@ -49,6 +50,37 @@ NINIO_FOODS = (
     "brócoli", "zanahoria", "calabacín", "espinaca", "zapallo (calabaza)", "tomate", "palta (aguacate)",
     "arroz", "pollo", "pan", "huevo", "fideos", "lentejas", "plátano", "papa", "manzana",
 )
+# ── Pagina "Bebé Héroe" ────────────────────────────────────────────────────
+# Reels de 18 s (4 escenas) de un bebé bombero que rescata animales o ayuda a su familia (workflow
+# del cliente). Ideas del banco: (idea, hashtag del animal/tema); se sortea una por video evitando
+# las recientes. Voz: la voz clonada "Voz de Bebé" (tts_engine.add_custom_voice); musica y fuente
+# en assets/bebe_heroe/; subtitulos Luckiest Guy y zoom por escena (video_maker.BEBE_HEROE_*).
+BEBE_HEROE_KIND = "bebe_heroe"
+BEBE_HEROE_VOICE_LABEL = "Voz de Bebé"
+BEBE_HEROE_SLOT_HOURS = [20, 10]  # Chile: la noche rinde mas; segundo bloque a media mañana
+BEBE_HEROE_SCENES = 4
+BEBE_HEROE_MIN_WORDS = 12  # 4 frases de 4-9 palabras
+BEBE_HEROE_HISTORY_LIMIT = 8
+BEBE_HEROE_DEFAULT_QUESTION = "¿Crees que hice bien?"
+BEBE_HEROE_IDEAS = (
+    ("un gatito atrapado en un árbol", "gatito"),
+    ("un perrito empapado bajo la lluvia al que cubre con su paraguas", "perrito"),
+    ("un nido caído con 3 pajaritos que devuelve a su árbol", "pajaritos"),
+    ("un pollito perdido que busca a su mamá gallina", "pollito"),
+    ("una tortuga que quiere cruzar la calle", "tortuga"),
+    ("un conejo atrapado en una cerca", "conejo"),
+    ("un patito con la patita lastimada", "patito"),
+    ("la bicicleta rota de papá que quiere arreglar", "familia"),
+    ("las bolsas pesadas de mamá que ayuda a cargar", "familia"),
+    ("una carta del abuelo que se le cayó y le entrega", "abuelo"),
+    ("un columpio que construye para su hermanito", "familia"),
+    ("la cocina que limpia para sorprender a mamá", "familia"),
+    ("un osito de peluche olvidado en la basura", "peluche"),
+    ("una muñeca rota que lleva a la ambulancia de juguete", "juguetes"),
+    ("el carrito de juguete roto de su hermanito que arregla con cinta", "familia"),
+    ("un parque lleno de basura que decide limpiar", "ecologia"),
+)
+
 _NINIO_KINDS = {"ninio_selectivo", "ninio_post"}
 _last_ninio_food: Optional[str] = None
 
@@ -197,6 +229,15 @@ NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N1", "N4"), ("N3", "N4
 # Tipos de lote de la pagina gaming: mismos horarios. YouTube solo para los
 # clips (video 9:16 -> Short), nunca para la imagen.
 GAMING_TYPES = {"gaming_image", "gaming_clip"}
+# Lotes mixtos: alternan un video y un post de imagen del mismo nicho (video, post, video, post...);
+# el reparto sale solo del total (10 -> 5 y 5; 11 -> 6 videos y 5 posts). Cada item guarda su
+# `item_type` y se genera/publica como ese tipo; los horarios son los del post de imagen del nicho.
+MIXED_TYPES = {"mix_ninio": ("video", "ninio_image"), "mix_gaming": ("gaming_clip", "gaming_image")}
+
+
+def item_type(project: dict, video: dict) -> str:
+    """Tipo con que se genera y publica un item: el propio en un lote mixto, el del lote si no."""
+    return video.get("item_type") or project.get("type", "video")
 # Canal de YouTube de videojuegos (clave de youtube_publisher.list_channels():
 # YT_CHANNEL_<N>_*; su token es youtube_token_<N>.json). Separado del canal de
 # historias para no mezclar contenido.
@@ -579,7 +620,64 @@ def _text_kind_for_page(page_name: str) -> str:
         return "macrame"
     if "SELECTIVO" in name:
         return "ninio_selectivo"
+    if is_bebe_heroe_page(page_name):
+        return BEBE_HEROE_KIND
     return "historias"
+
+
+def is_bebe_heroe_page(page_name: str) -> bool:
+    """Pagina "Bebé Héroe" (con o sin acentos/mayusculas)."""
+    name = unicodedata.normalize("NFD", page_name or "").encode("ascii", "ignore").decode().upper()
+    return "BEBE" in name and "HEROE" in name
+
+
+def _recent_bebe_ideas(projects: dict) -> list:
+    """Ideas (texto) de los ultimos videos de Bebé Héroe, de mas viejo a mas nuevo."""
+    seen = []
+    for project in projects.values():
+        if _text_kind_for_page(_project_page_name(project)) != BEBE_HEROE_KIND:
+            continue
+        seen += [(v.get("scheduled_at", ""), v["bebe_idea"]) for v in project.get("videos", []) if v.get("bebe_idea")]
+    return [idea for _, idea in sorted(seen)][-BEBE_HEROE_HISTORY_LIMIT:]
+
+
+def _pick_bebe_idea(projects: dict) -> tuple:
+    """(idea, hashtag): una del banco que no este entre las recientes."""
+    recent = _recent_bebe_ideas(projects)
+    fresh = [i for i in BEBE_HEROE_IDEAS if i[0] not in recent] or list(BEBE_HEROE_IDEAS)
+    return random.choice(fresh)
+
+
+def _bebe_heroe_voice(voice: Optional[str]) -> str:
+    """Voz de la pagina: la elegida si es clonada; si no, la voz clonada "Voz de Bebé"; si esa no
+    existe todavia, la voz por defecto de la app."""
+    from tts_engine import CUSTOM_VOICE_PREFIX, list_custom_voices
+    if voice and voice.startswith(CUSTOM_VOICE_PREFIX):
+        return voice
+    for slug, meta in list_custom_voices().items():
+        if meta.get("label") == BEBE_HEROE_VOICE_LABEL:
+            return CUSTOM_VOICE_PREFIX + slug
+    return voice or get_default_voice()
+
+
+_NL = chr(10)
+
+
+def _bebe_heroe_copy(video: dict) -> dict:
+    """Titulo y descripcion de Bebé Héroe (plantilla viral del workflow): pregunta final de la
+    historia, resumen de una linea, llamada a comentar y hashtags de la pagina + el del tema."""
+    summary = (video.get("story_summary") or "").strip()
+    script = (video.get("script_text") or "").strip()
+    question = next((s for s in reversed(re.split(r"(?<=[.!?])\s+", script)) if s.endswith("?")), BEBE_HEROE_DEFAULT_QUESTION)
+    tag = "#" + re.sub(r"[^A-Za-z0-9]", "", (video.get("bebe_tag") or "bebe"))
+    body = (
+        f"{question} 🥺❤️{_NL}{_NL}{summary}{_NL}{_NL}"
+        "Si tú también lo hubieras ayudado, deja un ❤️ en los comentarios y comparte "
+        "para que más bebés héroes se animen."
+        f"{_NL}{_NL}#BebéHéroe #HistoriasQueInspiran #Rescate {tag}"
+    )
+    title = (summary or question)[:100]
+    return {"title": title, "description": body}
 
 
 def _next_project_name(projects: dict, page_name: str) -> str:
@@ -610,7 +708,8 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     _generate_batch_clip) -- YouTube solo para el clip (canal de gaming)."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
-    if content_type == "gaming_clip" and not gaming_clip.gaming_vision.is_configured():
+    mixed = MIXED_TYPES.get(content_type)
+    if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
     best_hour = _best_hour_for_networks(networks)
     video_settings = dict(video_settings or {})
@@ -628,9 +727,13 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     )
     if rescue:
         video_settings["copy_profile"] = RESCUE_PROFILE
-    profile = IMAGE_POST_PROFILES.get(content_type)
-    clip_post = content_type == "gaming_clip"
-    fixed_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None
+    profile = IMAGE_POST_PROFILES.get(mixed[1] if mixed else content_type)
+    clip_post = (mixed[0] if mixed else content_type) == "gaming_clip"
+    bebe = content_type == "video" and is_bebe_heroe_page(page_name)
+    fixed_hours = (
+        profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post
+        else BEBE_HEROE_SLOT_HOURS if bebe else None
+    )
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
     skip_days = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
@@ -669,6 +772,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
                 "gen_attempts": 0,
                 "publish_attempts": 0,
                 "last_publish_auth_error": False,
+                **({"item_type": mixed[i % 2]} if mixed else {}),
             }
             for i in range(total_videos)
         ],
@@ -916,12 +1020,22 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     story_id = f"batch_{project_id}_{index:03d}"
     trigger_message = auto_pipeline.build_trigger_message(
         project.get("trigger_message", "dame una historia"),
-        vs.get("duration_seconds"),
+        None if is_bebe_heroe_page(_project_page_name(project)) else vs.get("duration_seconds"),  # el reel ya mide 18 s
         kind=_text_kind_for_page(_project_page_name(project)),
     )
     rescue = _is_rescue_project(project)
+    bebe = _text_kind_for_page(_project_page_name(project)) == BEBE_HEROE_KIND
+    bebe_idea = bebe_tag = None
     if rescue:
         trigger_message += rescue_story_block(pattern) + _rescue_history_block()
+    elif bebe:
+        with _lock:
+            projects = _load()
+            bebe_idea, bebe_tag = _pick_bebe_idea(projects)
+            recent = _recent_bebe_ideas(projects)
+        trigger_message += f"{_NL}{_NL}Idea de esta pieza: {bebe_idea}."
+        if recent:
+            trigger_message += f"{_NL}Evita repetir: " + "; ".join(recent) + "."
     text_provider_pref = vs.get("text_provider", "auto")
     _provider_attempts: list = []
     try:
@@ -940,9 +1054,14 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             stage_label="guion",
         )
         hook_text = ""
-        if rescue:
+        if rescue or bebe:
             hook_text, story_text = _split_hook_text(story_text)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
+        if bebe and len(story["prompts"]) != BEBE_HEROE_SCENES:
+            raise RuntimeError(
+                f"no se encontraron prompts de imagen: Bebé Héroe necesita {BEBE_HEROE_SCENES} escenas "
+                f"y llegaron {len(story['prompts'])}"
+            )
         if _text_kind_for_page(_project_page_name(project)) == "macrame":
             auto_pipeline.validate_macrame_story(story)
         visual_style = vs.get("visual_style")
@@ -967,8 +1086,9 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 "batch: guion vacio via extract_script, reconstruido desde %d frases de imagen (%d chars)",
                 len(story["prompts"]), len(script_text),
             )
-        auto_pipeline.validate_script(script_text)
-        script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
+        auto_pipeline.validate_script(script_text, min_words=BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
+        if not bebe:  # las 4 frases de Bebé Héroe ya son el reel completo (18 s): no se recorta
+            script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:
             forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
             if forbidden:
@@ -1014,7 +1134,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         audio_path, narration = _run_stage_with_retry(
             lambda: text_to_speech_verified(
                 script_text,
-                voice=vs.get("voice") or get_default_voice(),
+                voice=_bebe_heroe_voice(vs.get("voice")) if bebe else vs.get("voice") or get_default_voice(),
                 exaggeration=BEDTIME_PRESET["exaggeration"],
                 cfg_weight=BEDTIME_PRESET["cfg_weight"],
             ),
@@ -1034,20 +1154,23 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 f"Los clips no coinciden con la historia: {len(clip_paths)} clips "
                 f"para {len(frases)} escenas"
             )
-        subtitle_style = video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
+        subtitle_style = (
+            video_maker.BEBE_HEROE_SUBTITLE_STYLE if bebe
+            else video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
+        )
         # Ambientación (luciérnagas + viñeta): configurable por proyecto vía
         # video_settings["mood"] ("warm_night" default | "bright" | "none").
         # Sin definir, se mantiene "warm_night" (comportamiento igual al de
         # antes de este campo) para no cambiarle el look a ningún proyecto
         # ya corriendo sin que se elija explícitamente.
-        mood = vs.get("mood", "warm_night")
+        mood = "none" if bebe else vs.get("mood", "warm_night")
 
         def _do_render():
             with app._video_render_lock:
                 timeline = video_maker.build_props(
                     image_paths=clip_paths,
                     audio_path=audio_path,
-                    title=hook_text,
+                    title="" if bebe else hook_text,  # sin texto grande: solo subtitulos
                     subtitles_enabled=vs.get("subtitles_enabled", True),
                     subtitle_style=subtitle_style,
                     frases=frases,
@@ -1055,6 +1178,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                     ai_label=RESCUE_AI_LABEL if rescue else None,
                     mood=mood,
                     script_text=script_text,
+                    theme=video_maker.BEBE_HEROE_THEME if bebe else None,
                 )
                 if not timeline:
                     return None
@@ -1092,6 +1216,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             "attempt": narration.get("attempt"), "skipped": narration.get("skipped", False),
         }
         v["script_text"] = script_text
+        if bebe:
+            v.update(bebe_idea=bebe_idea, bebe_tag=bebe_tag, story_summary=hook_text)
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -1248,7 +1374,7 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         _save(projects)
 
     story_id = f"batch_img_{project_id}_{index:03d}"
-    profile_key = project.get("type", "gaming_image")
+    profile_key = item_type(project, project["videos"][index])
     profile = IMAGE_POST_PROFILES[profile_key]
     template = _image_post_template(profile_key, project["videos"][index].get("scheduled_at"))
     dest_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
@@ -1257,7 +1383,8 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
     try:
         post = generate_gaming_post(
             _project_page_name(project),
-            project.get("trigger_message", profile["default_trigger"]),
+            profile["default_trigger"] if project.get("type") in MIXED_TYPES
+            else project.get("trigger_message", profile["default_trigger"]),
             "whatsapp",
             dest_dir,
             template,
@@ -1704,7 +1831,7 @@ def reschedule_published_video(project_id: str, index: int, new_slot: datetime) 
     with _lock:
         projects = _load()
         video = projects[project_id]["videos"][index]
-        gaming_clip_project = projects[project_id].get("type") == "gaming_clip"
+        gaming_clip_project = item_type(projects[project_id], video) == "gaming_clip"
         # El canal de gaming no sigue la regla de 1 video/dia del de historias
         # (y _youtube_slot consultaria el canal equivocado).
         yt_slot = new_slot if gaming_clip_project else _youtube_slot(projects, (project_id, index), new_slot.isoformat())
@@ -1742,6 +1869,12 @@ def _publish_batch_video(project_id: str, index: int) -> None:
     project = get_project(project_id)
     video = project["videos"][index]
     content = _build_publish_content(video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project))
+    if _text_kind_for_page(_project_page_name(project)) == BEBE_HEROE_KIND:
+        copy = _bebe_heroe_copy(video)
+        content.update(
+            title=copy["title"], facebook_description=copy["description"],
+            instagram_description=copy["description"], yt_description=copy["description"] + " #Shorts",
+        )
     title = content["title"]
 
     def _yt(v, page_id):
@@ -1788,7 +1921,7 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
     project = get_project(project_id)
     video = project["videos"][index]
     caption = video.get("caption", "")
-    max_tags = IMAGE_POST_PROFILES[project.get("type", "gaming_image")]["max_hashtags"]
+    max_tags = IMAGE_POST_PROFILES[item_type(project, video)]["max_hashtags"]
 
     def _fb(v, page_id):
         result = facebook_publisher.publish_photo(
@@ -1938,7 +2071,7 @@ def _batch_scheduler_tick() -> None:
             if next_pending is not None:
                 threading.Thread(
                     target=_generate_batch_item,
-                    args=(project["id"], next_pending["index"], project.get("type", "video")),
+                    args=(project["id"], next_pending["index"], item_type(project, next_pending)),
                     daemon=True,
                 ).start()
                 break
@@ -1979,7 +2112,7 @@ def run_publish_tick(running: Optional[list] = None) -> list:
             if _claim_for_publish(project_id, v["index"]):
                 t = threading.Thread(
                     target=_publish_batch_item,
-                    args=(project_id, v["index"], project.get("type", "video")),
+                    args=(project_id, v["index"], item_type(project, v)),
                     daemon=True,
                 )
                 t.start()

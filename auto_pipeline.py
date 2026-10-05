@@ -775,7 +775,7 @@ SPANISH_WORDS_PER_MINUTE = 170  # calibrado contra .subs.json reales generados c
 MIN_SCRIPT_WORDS = 30  # ~10s de narracion; por debajo no es una historia
 
 
-def validate_script(script: str) -> None:
+def validate_script(script: str, min_words: int = MIN_SCRIPT_WORDS) -> None:
     """Rechaza un guion que es una plantilla o un texto demasiado corto.
 
     El modelo a veces devuelve bajo "Guion" un marcador entre corchetes (ej. "[Narracion
@@ -783,9 +783,9 @@ def validate_script(script: str) -> None:
     chequeo el TTS lo lee tal cual, el video sale de ~7s y se publica con ese
     texto como titulo y descripcion en las 3 redes."""
     text = script.strip()
-    if re.fullmatch(r"\[[^\]]*\]", text) or len(text.split()) < MIN_SCRIPT_WORDS:
+    if re.fullmatch(r"\[[^\]]*\]", text) or len(text.split()) < min_words:
         raise PipelineError(
-            f"Guion invalido ({len(text.split())} palabras, minimo {MIN_SCRIPT_WORDS}): "
+            f"Guion invalido ({len(text.split())} palabras, minimo {min_words}): "
             f"{text[:100]!r}"
         )
 

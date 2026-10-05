@@ -16,7 +16,11 @@ const MAX_PAN_PERCENT = 4;
 export const KenBurnsImage: React.FC<{
   src: string;
   direction: KenBurnsDirection;
-}> = ({ src, direction }) => {
+  // Zoom propio (reemplaza a `direction`): de zoomFrom a zoomTo sobre el punto `origin`.
+  zoomFrom?: number;
+  zoomTo?: number;
+  origin?: string;
+}> = ({ src, direction, zoomFrom, zoomTo, origin }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -33,7 +37,9 @@ export const KenBurnsImage: React.FC<{
   let scale = 1;
   let translateX = 0;
 
-  switch (direction) {
+  if (zoomFrom !== undefined && zoomTo !== undefined) {
+    scale = interpolate(progress, [0, 1], [zoomFrom, zoomTo]);
+  } else switch (direction) {
     case "zoomIn":
       scale = interpolate(progress, [0, 1], [1, MAX_ZOOM]);
       break;
@@ -63,6 +69,7 @@ export const KenBurnsImage: React.FC<{
           height: "100%",
           objectFit: "cover",
           transform: `scale(${scale}) translateX(${translateX}%)`,
+          transformOrigin: origin,
           filter: "brightness(0.86) saturate(1.05) contrast(1.03)",
         }}
       />

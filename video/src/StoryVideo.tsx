@@ -1,5 +1,16 @@
 import React from "react";
-import { AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig } from "remotion";
+import {
+  AbsoluteFill,
+  Audio,
+  Sequence,
+  cancelRender,
+  continueRender,
+  delayRender,
+  interpolate,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
 import { TransitionSeries, linearTiming } from "@remotion/transitions";
 import type { TransitionPresentation } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
@@ -11,7 +22,7 @@ import { Vignette } from "./Vignette";
 import { Fireflies } from "./Fireflies";
 import { TitleCard } from "./TitleCard";
 import { Subtitles } from "./Subtitles";
-import type { StoryVideoProps } from "./schema";
+import type { SceneClip, StoryVideoProps, SubtitleWord } from "./schema";
 
 const TRANSITION_FRAMES = 20;
 
@@ -22,6 +33,64 @@ const TRANSITION_FRAMES = 20;
 const seeded = (seed: number) => {
   const x = Math.sin(seed * 9999) * 10000;
   return x - Math.floor(x);
+};
+
+// ── Tema "bebe_heroe" ──────────────────────────────────────────────────────
+// Fuente de los subtítulos: se carga solo cuando el tema la pide (el archivo vive en public/).
+const HeroFont: React.FC<{ src: string }> = ({ src }) => {
+  const [handle] = React.useState(() => delayRender("Cargando fuente del tema"));
+  React.useEffect(() => {
+    new FontFace("Luckiest Guy", `url(${staticFile(src)})`)
+      .load()
+      .then((f) => {
+        document.fonts.add(f);
+        continueRender(handle);
+      })
+      .catch((e) => cancelRender(e));
+  }, [src, handle]);
+  return null;
+};
+
+const HEART_PATH =
+  "M12 21s-7.5-4.6-9.6-9.3C.9 8.1 2.9 4.5 6.4 4.5c2 0 3.7 1.1 5.6 3.2 1.9-2.1 3.6-3.2 5.6-3.2 3.5 0 5.5 3.6 4 7.2C19.5 16.4 12 21 12 21z";
+
+// 14 corazones (SVG: el render no muestra emojis) que suben y se mecen en la escena final.
+const Hearts: React.FC = () => {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill>
+      {Array.from({ length: 14 }, (_, i) => {
+        const f = frame - i * 7;
+        if (f < 0) return null;
+        const size = 50 + ((i * 37) % 60);
+        const y = 1900 - f * (7 + (i % 4)) * 1.2;
+        const x = 80 + ((i * 197) % 880) + Math.sin(f / 10 + i) * (20 + (i % 5) * 8);
+        const opacity = interpolate(y, [150, 500, 1500, 1900], [0, 1, 1, 0], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+        if (opacity <= 0) return null;
+        return (
+          <div key={i} style={{ position: "absolute", left: x, top: y, opacity }}>
+            <svg width={size} height={size} viewBox="0 0 24 24">
+              <path fill={i % 2 ? "#ff3b5c" : "#ff7a95"} stroke="#fff" strokeWidth="0.8" d={HEART_PATH} />
+            </svg>
+          </div>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
+// Música más baja que la voz: 0.20 en las dos primeras escenas, 0.32 en la heroica y 0.28 en el cierre;
+// mientras habla la voz baja otro 40%.
+const heroMusicVolume = (frame: number, fps: number, scenes: SceneClip[], words: SubtitleWord[]): number => {
+  const idx = scenes.findIndex((s) => frame >= s.startFrame && frame < s.endFrame);
+  const sceneIdx = idx === -1 ? scenes.length - 1 : idx;
+  const base = sceneIdx <= 1 ? 0.2 : sceneIdx === 2 ? 0.32 : 0.28;
+  const t = frame / fps;
+  const speaking = words.some((w) => t >= w.start - 0.1 && t <= w.end + 0.1);
+  return base * (speaking ? 0.6 : 1);
 };
 
 const WIPE_DIRECTIONS = ["from-left", "from-right", "from-top", "from-bottom"] as const;
@@ -37,7 +106,8 @@ const SLIDE_DIRECTIONS = ["from-left", "from-right", "from-top", "from-bottom"] 
 // solo tipo de PresentationProps en todo el árbol. En runtime Remotion no
 // tiene problema mezclando presentaciones frame a frame; es solo TS siendo
 // estricto sobre una unión que la librería no modela.
-const pickTransition = (i: number): TransitionPresentation<any> => {
+const pickTransition = (i: number, simple = false): TransitionPresentation<any> => {
+  if (simple) return fade();
   const roll = seeded(i * 3.77 + 1);
   if (roll < 0.65) return fade();
   if (roll < 0.85) {
@@ -56,8 +126,13 @@ export const StoryVideo: React.FC<StoryVideoProps> = ({
   subtitleStyle,
   aiLabel,
   mood,
+  theme,
+  musicSrc,
+  fontSrc,
 }) => {
   const { fps } = useVideoConfig();
+  const frame = useCurrentFrame();
+  const hero = theme === "bebe_heroe";
   const titleDurationInFrames = Math.round(fps * 3.5);
 
   return (
@@ -76,18 +151,31 @@ export const StoryVideo: React.FC<StoryVideoProps> = ({
                   playbackRate={scene.playbackRate}
                 />
               ) : (
-                <KenBurnsImage src={scene.src} direction={scene.kenBurns ?? "zoomIn"} />
+                <KenBurnsImage
+                  src={scene.src}
+                  direction={scene.kenBurns ?? "zoomIn"}
+                  zoomFrom={scene.zoomFrom}
+                  zoomTo={scene.zoomTo}
+                  origin={scene.origin}
+                />
               )}
             </TransitionSeries.Sequence>
             {i < scenes.length - 1 && (
               <TransitionSeries.Transition
                 timing={linearTiming({ durationInFrames: TRANSITION_FRAMES })}
-                presentation={pickTransition(i)}
+                presentation={pickTransition(i, hero)}
               />
             )}
           </React.Fragment>
         ))}
       </TransitionSeries>
+
+      {hero && fontSrc ? <HeroFont src={fontSrc} /> : null}
+      {hero && scenes.length > 0 ? (
+        <Sequence from={scenes[scenes.length - 1].startFrame}>
+          <Hearts />
+        </Sequence>
+      ) : null}
 
       {/* Look cinematográfico — solo en mood "warm_night" (default); en
           "bright"/"none" desentonan (macramé/gaming, luz de día) */}
@@ -125,6 +213,7 @@ export const StoryVideo: React.FC<StoryVideoProps> = ({
       <Subtitles words={subtitles} style={subtitleStyle} />
 
       {audioSrc ? <Audio src={staticFile(audioSrc)} /> : null}
+      {musicSrc ? <Audio src={staticFile(musicSrc)} volume={hero ? heroMusicVolume(frame, fps, scenes, subtitles) : 0.2} loop /> : null}
     </AbsoluteFill>
   );
 };

@@ -317,7 +317,7 @@ Devolveme SOLO un JSON (sin markdown, sin texto extra) con esta forma exacta:
   "confianza": 0.0-1.0,
   "timestamp_exacto": <numero, el segundo del clip original donde ocurre el pico del evento, de los timestamps dados>,
   "texto_leido": "<texto exacto del kill-feed/HUD si es legible, o vacio>",
-  "label_sugerido": "<ELIMINATED / DOWNED / VICTORY / texto corto en mayusculas para mostrar en pantalla, o vacio si no es evento>"
+  "label_sugerido": "<ELIMINATED / DOWNED / VICTORY / texto corto en INGLES y en mayusculas para mostrar en pantalla, o vacio si no es evento>"
 }}
 
 Si no ves ningun kill-feed, eliminacion, ni indicador de combate real (solo
@@ -426,7 +426,7 @@ def scan_for_missed_events(
         if data.get("hay_evento") and float(data.get("confianza", 0)) >= 0.55:
             found.append(VisualEvent(
                 time=round(t, 2), kind=data.get("tipo", "otro"),
-                confidence=float(data["confianza"]), label=data.get("tipo", "").upper() or "MOMENTO",
+                confidence=float(data["confianza"]), label=data.get("tipo", "").upper() or "MOMENT",
                 detail=data.get("texto_leido", ""), source="scan",
             ))
     return found

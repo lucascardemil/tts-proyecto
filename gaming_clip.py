@@ -191,8 +191,14 @@ HOOKS = [
     "JUGADA DE LOCOS", "NO PUEDE SER REAL", "MIRÁ HASTA EL FINAL", "ESTO ES ILEGAL",
     "NADIE LO VIO VENIR", "¿CÓMO LO HIZO?", "ESTO NO ES NORMAL", "ÉPICO O SUERTE?",
 ]
-CTAS = ["¿SUERTE O SKILL? 👇", "¿LA HARÍAS? 👇", "TU NOTA DEL 1 AL 10 👇", "¿QUÉ TAN BRUTAL? 👇"]
-BEAT_LABELS = ("🔥", "¡BRUTAL!")  # momentos intermedios / el ultimo, el grande
+# Textos EN PANTALLA del video (en ingles, misma posicion que HOOKS): el caption/titulo de
+# Facebook e Instagram siguen en español.
+HOOKS_EN = [
+    "INSANE PLAY", "THIS CAN'T BE REAL", "WATCH TILL THE END", "THIS IS ILLEGAL",
+    "NOBODY SAW IT COMING", "HOW DID HE DO THAT?", "THIS ISN'T NORMAL", "EPIC OR LUCKY?",
+]
+CTAS = ["LUCK OR SKILL? 👇", "COULD YOU DO IT? 👇", "RATE IT 1 TO 10 👇", "HOW INSANE WAS THAT? 👇"]
+BEAT_LABELS = ("🔥", "INSANE!")  # momentos intermedios / el ultimo, el grande
 
 SFX_NAMES = ("whoosh_in", "whoosh_out", "hit", "ace", "pop", "ding")
 
@@ -374,38 +380,42 @@ def detect_beats(path: Path, seconds: float, max_beats: int = MAX_BEATS) -> list
 def build_texts(clip: dict, game: dict) -> dict:
     rng = random.Random(clip["id"])  # mismo clip -> mismos textos
     hook = rng.choice(HOOKS)
+    screen_hook = HOOKS_EN[HOOKS.index(hook)]
     cta = rng.choice(CTAS)
     author = clip.get("author") or "su autor"
     caption = (
         f"{hook.capitalize()} 🔥\n\n¿Suerte o skill? Contame en los comentarios 👇\n\n"
         f"🎮 {game['label']}\n📹 Clip: @{author} (Medal)\n\n" + " ".join(game["tags"])
     )
-    words = hook.split(" ")
+    words = screen_hook.split(" ")
     return {
-        "hook": hook,
+        "hook": screen_hook,
         "hook_highlight": [len(words) - 1],
-        "tag": f"{game['short']} · JUGADA ÉPICA",
+        "tag": f"{game['short']} · EPIC PLAY",
         "cta": cta,
         "title": f"{hook.capitalize()} 🎮 {game['label']}"[:100],
         "caption": caption,
     }
 
 
-# ── YouTube: SEO agresivo ──────────────────────────────────────────────────
-# Facebook/Instagram llevan un caption corto, de gancho y con pocos hashtags; YouTube es un
-# buscador, asi que su titulo, descripcion y tags son otros, cargados de palabras clave (juego
-# + "mejores jugadas / best moments / clips epicos / highlights" en español e ingles + año).
-# Limites de YouTube: titulo 100 caracteres, descripcion 5000, tags 500 en total, y mas de 15
-# hashtags en la descripcion hace que YouTube los ignore todos.
+# ── YouTube: SEO agresivo, en ingles ───────────────────────────────────────
+# Facebook/Instagram llevan un caption corto y de gancho; YouTube es un buscador, asi que su
+# titulo, descripcion y tags son otros, cargados de palabras clave (juego + "best moments /
+# epic plays / highlights" + año), y SIEMPRE en ingles (audiencia global del canal).
+# Limites de YouTube: titulo 100 caracteres, descripcion 5000, tags 500 en total (los que llevan
+# espacios cuentan 2 mas por las comillas), y mas de 15 hashtags en la descripcion hace que
+# YouTube los ignore todos.
 YT_TITLE_MAX = 100
 YT_DESCRIPTION_MAX = 4800
 YT_TAGS_MAX_CHARS = 450
 YT_MAX_HASHTAGS = 15
+YT_LANGUAGE = "en"
+_YT_HOOKS = ("INSANE PLAY", "NO WAY HE DID THAT", "WATCH TILL THE END", "LUCK OR SKILL?", "THIS IS CRAZY", "WAIT FOR IT")
 _YT_TITLE_TEMPLATES = (
-    "{hook} 😱 {game} | Mejores Jugadas y Clips Épicos {year} #Shorts",
-    "{game} Clip INCREÍBLE 🔥 {hook} | Best Moments {year} #Shorts",
-    "¿Suerte o Skill? {game} 🎮 {hook} | Jugadas Épicas {year} #Shorts",
-    "{game}: {hook} 🤯 Best Plays & Epic Clips {year} #Shorts",
+    "{hook} 😱 {game} Best Moments & Epic Plays {year} #Shorts",
+    "{game} Epic Clip 🔥 {hook} | Best Plays {year} #Shorts",
+    "{hook} 🤯 {game} Gameplay Highlights {year} #Shorts",
+    "{game}: {hook} 🎮 Funniest & Craziest Clips {year} #Shorts",
 )
 
 
@@ -413,52 +423,65 @@ def _yt_hashtag(text: str) -> str:
     return "#" + re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def build_youtube_seo(clip: dict, game: dict, hook: str) -> dict:
-    """Titulo, descripcion y tags de YouTube para el clip: distintos de Facebook/Instagram y
-    pensados para posicionar. Deterministas por clip (misma variante de titulo si se reintenta)."""
+def build_youtube_seo(clip: dict, game: dict, hook: Optional[str] = None, summary: Optional[str] = None,
+                      title: Optional[str] = None) -> dict:
+    """Titulo, descripcion y tags de YouTube (en ingles) para el clip: distintos de
+    Facebook/Instagram y pensados para posicionar. Deterministas por clip (misma variante
+    si se reintenta). `hook`/`summary`/`title` (en ingles) reemplazan al gancho aleatorio, a la frase
+    de apertura y al titulo de plantilla: sirven para reescribir videos que ya estan publicados."""
     rng = random.Random(clip["id"])
     year = datetime.now().year
     name = game["label"]
     tag = _yt_hashtag(name)
-    hook_text = hook.replace("MIRÁ", "MIRA").strip(" ?!¿¡").upper()
+    hook = hook or rng.choice(_YT_HOOKS)
 
+    custom_title = title
     template = rng.choice(_YT_TITLE_TEMPLATES)
-    title = template.format(hook=hook_text, game=name, year=year)
+    title = template.format(hook=hook, game=name, year=year)
     if len(title) > YT_TITLE_MAX:  # nombres de juego largos: se saca el gancho antes que el juego o #Shorts
         title = template.replace("{hook} ", "").replace(" {hook}", "").replace("{hook}", "").format(game=name, year=year)
+    if custom_title:
+        room = YT_TITLE_MAX - len(" #Shorts")
+        cut = custom_title if len(custom_title) <= room else custom_title[:room].rsplit(" ", 1)[0]
+        title = f"{cut} #Shorts"
     title = title[:YT_TITLE_MAX].rstrip()
 
     hashtags = list(dict.fromkeys([
-        "#Shorts", tag, f"{tag}clips", f"{tag}highlights", "#mejoresjugadas", "#jugadasepicas", "#gaming",
-        "#videojuegos", "#gamer", "#gameplay", "#clipsepicos", "#bestmoments", "#viral", "#epicmoments", "#fyp",
+        "#Shorts", tag, f"{tag}clips", f"{tag}highlights", "#gamingshorts", "#epicplays", "#gaming",
+        "#videogames", "#gamer", "#gameplay", "#gamingclips", "#bestmoments", "#viral", "#epicmoments", "#fyp",
     ]))[:YT_MAX_HASHTAGS]
 
     keywords = [
-        f"{name} clips", f"{name} best moments", f"{name} highlights", f"mejores jugadas de {name}",
-        f"jugadas épicas {name}", f"{name} gameplay en español", f"{name} {year}", f"{name} momentos épicos",
+        f"{name} clips", f"{name} best moments", f"{name} highlights", f"best {name} plays",
+        f"{name} epic moments", f"{name} gameplay", f"{name} {year}", f"{name} funny moments",
     ]
     author = clip.get("author") or ""
-    credit = "📹 Clip original en Medal" + (f": @{author}" if author else "") + (f" — {clip['page_url']}" if clip.get("page_url") else "")
+    credit = ""
+    if clip.get("page_url"):
+        credit = "📹 Original clip on Medal" + (f": @{author}" if author else "") + f" — {clip['page_url']}\n"
+    opening = summary + "\n\n" if summary else (
+        f"{hook} 🔥 Watch this epic {name} play: one of the best clips and moments of {name} {year}. "
+        f"Luck or skill? Let me know in the comments! 👇\n\n"
+    )
     description = (
-        f"{hook_text} 🔥 Mira esta jugada épica de {name}: uno de los mejores clips y momentos de {name} {year}. "
-        f"¿Suerte o skill? ¡Déjame tu opinión en los comentarios! 👇\n\n"
-        f"🎮 Juego: {name}\n{credit}\n"
-        f"🔔 Suscríbete a JugadasEpicasVideojuegos para ver las mejores jugadas, clips virales y momentos épicos "
-        f"de videojuegos todos los días.\n\n"
-        f"🔎 En este canal encuentras:\n"
-        f"• Mejores jugadas de {name} {year}\n"
-        f"• Clips épicos y momentos virales de {name}\n"
-        f"• Highlights, jugadas increíbles y clutch de videojuegos\n"
-        f"• Best gaming moments, epic plays and viral gaming clips\n\n"
-        f"🔑 Palabras clave: {', '.join(keywords)}, jugadas épicas, clips de videojuegos, gaming shorts, best gaming moments.\n\n"
+        opening +
+        f"🎮 Game: {name}\n{credit}"
+        f"🔔 Subscribe to JugadasEpicasVideojuegos for the best gaming plays, viral clips and epic moments "
+        f"every day.\n\n"
+        f"🔎 On this channel you'll find:\n"
+        f"• Best {name} plays and highlights {year}\n"
+        f"• Epic clips and viral moments from {name}\n"
+        f"• Insane plays, clutches and funny gaming moments\n"
+        f"• New gaming shorts every day\n\n"
+        f"🔑 Keywords: {', '.join(keywords)}, epic plays, video game clips, gaming shorts, best gaming moments.\n\n"
         + " ".join(hashtags)
     )[:YT_DESCRIPTION_MAX]
 
     tags, total = [], 0
     for t in dict.fromkeys(keywords + [
-        name, "jugadas épicas", "clips épicos", "videojuegos", "gaming", "gamer", "shorts", "gaming shorts",
-        "clips virales", "best gaming moments", "epic gaming moments", "gameplay en español",
-        "jugadas increíbles", "mejores jugadas de videojuegos", "highlights gaming", "clutch", "momentos épicos",
+        name, "epic plays", "epic clips", "video games", "gaming", "gamer", "shorts", "gaming shorts",
+        "viral clips", "best gaming moments", "epic gaming moments", "gameplay",
+        "insane plays", "best video game plays", "gaming highlights", "clutch", "funny moments",
     ]):
         cost = len(t) + 1 + (2 if " " in t else 0)  # YouTube cuenta entre comillas los tags con espacios
         if total + cost > YT_TAGS_MAX_CHARS:
@@ -655,7 +678,7 @@ def _generate_gaming_clip(
     return {
         "video_path": str(output_path), "title": texts["title"], "caption": texts["caption"],
         "hook": texts["hook"], "clip": clip,
-        "youtube": build_youtube_seo(clip, game, texts["hook"]),
+        "youtube": build_youtube_seo(clip, game),
         "verified_events": [
             {"time": e.time, "kind": e.kind, "confidence": e.confidence, "label": e.label, "source": e.source}
             for e in events

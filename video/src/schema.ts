@@ -25,6 +25,11 @@ export const sceneClipSchema = z.object({
   // estirar el clip completo, sin loop, cuando el slot asignado es más
   // largo que la duración real del clip.
   playbackRate: z.number().optional(),
+  // Solo aplica a imágenes: zoom propio de la escena (reemplaza al Ken Burns genérico)
+  // y punto de enfoque del zoom (CSS transform-origin, p. ej. "50% 40%").
+  zoomFrom: z.number().optional(),
+  zoomTo: z.number().optional(),
+  origin: z.string().optional(),
 });
 
 export const subtitleWordSchema = z.object({
@@ -34,7 +39,7 @@ export const subtitleWordSchema = z.object({
 });
 
 export const subtitleFontId = z.enum([
-  "cinzel", "playfair", "poppins", "montserrat", "bebas", "anton", "bangers",
+  "cinzel", "playfair", "poppins", "montserrat", "bebas", "anton", "bangers", "luckiest",
 ]);
 export const subtitlePosition = z.enum(["top", "center", "bottom"]);
 export const subtitleAnimationType = z.enum(["highlight", "scale", "bounce"]);
@@ -68,6 +73,10 @@ export const subtitleStyleSchema = z.object({
 // con props.json ya generados antes de este campo).
 export const videoMood = z.enum(["warm_night", "bright", "none"]);
 
+// Tema visual completo. "bebe_heroe": zoom por escena, corazones flotando en la última,
+// fundidos simples y música de fondo que baja cuando habla la voz.
+export const videoTheme = z.enum(["bebe_heroe"]);
+
 export const storyVideoSchema = z.object({
   title: z.string(),
   audioSrc: z.string(),
@@ -78,6 +87,10 @@ export const storyVideoSchema = z.object({
   // Rótulo fijo durante todo el video (p. ej. "Historia recreada con IA").
   // Sin definir = no se muestra.
   aiLabel: z.string().optional(),
+  theme: videoTheme.optional(),
+  // Música de fondo (archivo en public/) y fuente de los subtítulos del tema (woff2 en public/).
+  musicSrc: z.string().optional(),
+  fontSrc: z.string().optional(),
   subtitleStyle: subtitleStyleSchema.default({
     fontFamily: "cinzel",
     fontSize: 44,
@@ -102,3 +115,4 @@ export type SubtitleFontId = z.infer<typeof subtitleFontId>;
 export type SubtitlePosition = z.infer<typeof subtitlePosition>;
 export type KenBurnsDirection = z.infer<typeof kenBurnsDirection>;
 export type VideoMood = z.infer<typeof videoMood>;
+export type VideoTheme = z.infer<typeof videoTheme>;

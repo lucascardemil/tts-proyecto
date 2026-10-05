@@ -986,7 +986,10 @@ HTML = r"""<!DOCTYPE html>
         <option value="gaming_image">Post de imagen — Gaming viral (4:5, Facebook + Instagram)</option>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
+        <option value="mix_ninio">Mixto — Niño selectivo (1 video, 1 post, 1 video, 1 post…)</option>
+        <option value="mix_gaming">Mixto — Gaming (1 clip, 1 post, 1 clip, 1 post…)</option>
       </select>
+      <p class="card-desc" id="lote-mixed-hint" style="display:none">El total se reparte solo, alternando video y post (10 = 5 y 5; si es impar, el video lleva uno más). Usa los horarios del post de imagen del nicho.</p>
 
       <div id="lote-gaming-only-fields" style="display:none">
         <div class="field-label-row" style="margin-top:14px">
@@ -1529,7 +1532,9 @@ const isImagePostType = (type) => type === "gaming_image" || type === "ninio_ima
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
   ninio_image: "dame el próximo post de niño selectivo",
+  mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming",
 };
+const isMixedType = (type) => type === "mix_ninio" || type === "mix_gaming";
 function updatePipelineTypeVisibility() {
   const type = $("pipeline-type").value;
   const isGaming = isPostType(type);
@@ -2362,9 +2367,10 @@ updateDurationOptions("lote-orientation", "lote-duration");
 function updateLoteTypeVisibility() {
   const type = $("lote-type").value;
   const isGaming = isPostType(type);
-  $("lote-video-only-fields").style.display = isGaming ? "none" : "";
-  $("lote-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
-  $("lote-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
+  $("lote-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
+  $("lote-gaming-only-fields").style.display = (isImagePostType(type) || isMixedType(type)) ? "" : "none";
+  $("lote-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
+  $("lote-mixed-hint").style.display = isMixedType(type) ? "" : "none";
   // YouTube: videos normales y clips gaming (canal de gaming); no imagen.
   const noYoutube = isImagePostType(type);
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
@@ -2408,7 +2414,9 @@ $("lote-create-btn").addEventListener("click", async () => {
     per_day: parseInt($("lote-per-day").value, 10) || 1,
     networks,
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
+      : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
       : isGaming ? { image_provider: $("lote-image-provider").value } : {
+      ...(contentType === "mix_ninio" ? { image_provider: $("lote-image-provider").value } : {}),
       voice: $("lote-voice").value,
       subtitle_preset: $("lote-subtitle-preset").value,
       orientation: $("lote-orientation").value,
@@ -5407,7 +5415,7 @@ def api_batch_create():
     voice_error = _voice_error(video_settings.get("voice"))
     if voice_error:
         return jsonify({"ok": False, "error": voice_error})
-    if content_type == "gaming_clip" and video_settings.get("gaming_game", "mix") not in {"mix", *gaming_clip.GAMES}:
+    if content_type in ("gaming_clip", "mix_gaming") and video_settings.get("gaming_game", "mix") not in {"mix", *gaming_clip.GAMES}:
         return jsonify({"ok": False, "error": "Juego inválido."})
     try:
         project = batch_pipeline.create_project(

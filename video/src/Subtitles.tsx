@@ -29,6 +29,8 @@ const fontMap: Record<SubtitleFontId, string> = {
   bebas: bebasNeueFontFamily,
   anton: antonFontFamily,
   bangers: bangersFontFamily,
+  // Luckiest Guy no viene en @remotion/google-fonts: la carga StoryVideo (FontFace desde public/).
+  luckiest: "'Luckiest Guy', 'Liberation Sans', Arial, sans-serif",
 };
 
 const positionMap: Record<SubtitlePosition, React.CSSProperties> = {
