@@ -47,18 +47,47 @@ def test_voice_prefers_chosen_clone_then_baby_voice(monkeypatch):
     assert bp._bebe_heroe_voice("alejo_calm") == "alejo_calm"
 
 
-def test_timeline_has_theme_zoom_and_assets():
-    scenes = [{"name": f"scene_{i:03d}.jpg", "type": "image", "native_duration": None} for i in range(4)]
-    words = [{"word": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("uno dos tres cuatro".split())]
-    tl = video_maker._build_timeline(
-        scenes, "narracion.wav", 18.0, words, "", video_maker.BEBE_HEROE_SUBTITLE_STYLE,
-        mood="none", theme=video_maker.BEBE_HEROE_THEME,
-    )
-    assert tl["theme"] == "bebe_heroe" and tl["musicSrc"] and tl["fontSrc"]
+def _tone(path, seconds):
+    import subprocess
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=300:duration={seconds}", str(path)], check=True)
+
+
+def test_audio_is_assembled_in_fixed_slots_of_18_seconds(tmp_path):
+    paths = []
+    for i, seconds in enumerate((2.0, 6.0, 2.0, 1.2)):  # la 2.ª no cabe en su hueco (3.2 -> 7.3): se acelera
+        p = tmp_path / f"p{i}.wav"
+        _tone(p, seconds)
+        paths.append(p)
+    texts = ["uno", "dos", "tres", "cuatro"]
+    dest = tmp_path / "mix.wav"
+    timings = video_maker.assemble_bebe_heroe_audio(paths, texts, dest)
+    assert [t["start"] for t in timings] == [0.3, 3.2, 7.3, 13.3]
+    assert [t["text"] for t in timings] == texts
+    assert timings[1]["dur"] < 6.0 and timings[1]["dur"] >= 6.0 / video_maker.BEBE_HEROE_MAX_SPEEDUP - 0.1
+    assert abs(video_maker.get_audio_duration(str(dest)) - 18.0) < 0.1
+
+
+def test_props_use_fixed_scene_cuts_zoom_music_and_sfx(tmp_path, monkeypatch):
+    public = tmp_path / "public"
+    public.mkdir()
+    monkeypatch.setattr(video_maker, "VIDEO_PUBLIC_DIR", public)
+    monkeypatch.setattr(video_maker, "VIDEO_DIR", tmp_path)
+    images = []
+    for i in range(4):
+        img = tmp_path / f"i{i}.jpg"
+        img.write_bytes(b"x")
+        images.append(str(img))
+    audio = tmp_path / "a.wav"
+    _tone(audio, 18)
+    timings = [{"text": t, "start": s, "dur": 2.0} for t, s in zip("abcd", video_maker.BEBE_HEROE_VOICE_STARTS)]
+    tl = video_maker.build_bebe_heroe_props(images, str(audio), timings, sfx_tag="gatito")
+    assert tl["totalDurationSeconds"] == 18.0 and tl["theme"] == "bebe_heroe" and tl["phrases"] == timings
+    assert [(s["startFrame"], s["endFrame"]) for s in tl["scenes"]] == [(0, 90), (90, 210), (210, 390), (390, 540)]
     assert (tl["scenes"][1]["zoomFrom"], tl["scenes"][1]["zoomTo"]) == (1.0, 1.55)
-    assert tl["subtitleStyle"]["fontFamily"] == "luckiest"
-    assert (video_maker.BEBE_HEROE_ASSETS / "music.wav").exists()
-    assert (video_maker.BEBE_HEROE_ASSETS / "luckiest.woff2").exists()
+    assert tl["sfx"] == [{"src": "bebe_heroe_sfx_gatito.wav", "at": 0.5, "volume": 0.7}]
+    assert all((public / f).exists() for f in ("bebe_heroe_music.wav", "bebe_heroe_luckiest.woff2", "narracion.wav", "bebe_heroe_sfx_gatito.wav"))
+    assert "sfx" not in video_maker.build_bebe_heroe_props(images, str(audio), timings, sfx_tag="sin_sonido")
+    assert video_maker.build_bebe_heroe_props(images[:3], str(audio), timings) is None
 
 
 # ── Lotes mixtos (video / post alternados) ──────────────────────────────────
@@ -90,3 +119,53 @@ def test_mixed_gaming_uses_clip_and_gaming_post(monkeypatch, tmp_path):
 def test_plain_batches_keep_their_type():
     assert bp.item_type({"type": "gaming_clip"}, {}) == "gaming_clip"
     assert bp.item_type({}, {}) == "video"
+
+
+def test_script_is_rebuilt_from_the_four_scene_phrases():
+    story = {"prompts": [
+        {"index": 2, "frase": "Pero escuché un llanto."}, {"index": 1, "frase": "Mamá me dijo que no saliera."},
+        {"index": 4, "frase": "¿Crees que hice bien?"}, {"index": 3, "frase": "Así que subí yo."},
+    ]}
+    script = bp.bebe_script_from_story(story)
+    assert script == "Mamá me dijo que no saliera. Pero escuché un llanto. Así que subí yo. ¿Crees que hice bien?"
+    assert len(script.split()) >= bp.BEBE_HEROE_MIN_WORDS
+
+
+# ── Voz por frase con verificacion tolerante ─────────────────────────────────
+
+def _phrases_env(monkeypatch, tmp_path, reports):
+    import tts_engine
+    calls = {"n": 0, "unload": 0}
+
+    def fake_tts(text, **kwargs):
+        calls["n"] += 1
+        p = tmp_path / f"a{calls['n']}.wav"
+        p.write_bytes(b"x")
+        return str(p)
+
+    monkeypatch.setattr(tts_engine, "text_to_speech_long", fake_tts)
+    monkeypatch.setattr(tts_engine, "verify_narration", lambda text, path: dict(reports.pop(0)))
+    monkeypatch.setattr(tts_engine, "unload_omnivoice", lambda: calls.__setitem__("unload", calls["unload"] + 1))
+    return tts_engine, calls
+
+
+def test_phrases_keep_the_best_attempt_and_unload_once(monkeypatch, tmp_path):
+    reports = [
+        {"ok": False, "similarity": 0.6, "added": [], "changed": [("a", "b")]},   # frase 1, intento 1
+        {"ok": False, "similarity": 0.85, "added": [], "changed": [("a", "c")]},  # intento 2 (mejor)
+        {"ok": False, "similarity": 0.7, "added": [], "changed": []},             # intento 3
+        {"ok": True, "similarity": 1.0, "added": []},                             # frase 2
+    ]
+    tts, calls = _phrases_env(monkeypatch, tmp_path, reports)
+    paths = tts.text_to_speech_phrases(["uno dos", "tres"], max_attempts=3)
+    assert len(paths) == 2 and calls["unload"] == 1
+    assert paths[0].endswith("a2.wav")  # se queda el intento de similitud 0.85
+
+
+def test_phrases_fail_when_nothing_is_close_enough(monkeypatch, tmp_path):
+    import pytest
+    reports = [{"ok": False, "similarity": 0.4, "added": [], "changed": [("a", "b")]}] * 2
+    tts, calls = _phrases_env(monkeypatch, tmp_path, reports)
+    with pytest.raises(tts.NarrationMismatchError, match="no coincide con el guion"):
+        tts.text_to_speech_phrases(["uno"], max_attempts=2)
+    assert calls["unload"] == 1

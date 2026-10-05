@@ -1132,6 +1132,51 @@ def _text_to_speech_verified(text: str, max_attempts: int, **kwargs) -> tuple:
     )
 
 
+def text_to_speech_phrases(
+    texts: list, max_attempts: int = 4, min_similarity: float = 0.7, **kwargs,
+) -> list:
+    """Una voz por frase (frases cortas: reels con tiempos fijos), cada una validada contra su texto.
+    Una voz clonada de niño suele errar alguna palabra de una frase corta, y exigir cero cambios haria
+    fallar casi siempre: se regenera hasta `max_attempts` veces y, si ninguna sale perfecta, se queda
+    con la mas parecida siempre que no tenga palabras agregadas y su similitud llegue a
+    `min_similarity`; si no, lanza NarrationMismatchError. Devuelve las rutas de audio, en orden."""
+    import json
+
+    paths: list = []
+    try:
+        for text in texts:
+            best_path, best_report, best_score = None, {}, -1.0
+            for attempt in range(1, max_attempts + 1):
+                path = text_to_speech_long(text, **kwargs)
+                if not path:
+                    raise RuntimeError("Error al generar el audio.")
+                report = verify_narration(text, path)
+                report["attempt"] = attempt
+                score = 2.0 if report["ok"] else (-1.0 if report.get("added") else report["similarity"])
+                if score > best_score:
+                    if best_path:
+                        Path(best_path).unlink(missing_ok=True)
+                    best_path, best_report, best_score = path, report, score
+                else:
+                    Path(path).unlink(missing_ok=True)
+                if report["ok"]:
+                    break
+                print(f"⚠️  Frase «{text}» no coincide (intento {attempt}/{max_attempts}): {describe_narration_diff(report)}")
+            if best_score < min_similarity:
+                raise NarrationMismatchError(
+                    f"el audio no coincide con el guion tras {max_attempts} intentos: «{text}» -> "
+                    f"{describe_narration_diff(best_report)}",
+                    best_report,
+                )
+            Path(best_path + NARRATION_CHECK_SUFFIX).write_text(
+                json.dumps(best_report, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+            paths.append(best_path)
+        return paths
+    finally:
+        unload_omnivoice()  # una sola vez al terminar las frases (no una carga del modelo por frase)
+
+
 # ─────────────────────────────────────────────
 # OmniVoice (k2-fsa) — motor TTS rápido (default en viral-clone-studio)
 # ─────────────────────────────────────────────

@@ -77,6 +77,12 @@ export const videoMood = z.enum(["warm_night", "bright", "none"]);
 // fundidos simples y música de fondo que baja cuando habla la voz.
 export const videoTheme = z.enum(["bebe_heroe"]);
 
+// Efecto de sonido suelto (archivo en public/): suena a los `at` segundos con ese volumen.
+export const sfxSchema = z.object({ src: z.string(), at: z.number(), volume: z.number().default(0.7) });
+
+// Frase de la voz con sus tiempos (segundos): se muestra como subtítulo completo mientras suena.
+export const phraseSchema = z.object({ text: z.string(), start: z.number(), dur: z.number() });
+
 export const storyVideoSchema = z.object({
   title: z.string(),
   audioSrc: z.string(),
@@ -90,6 +96,8 @@ export const storyVideoSchema = z.object({
   theme: videoTheme.optional(),
   // Música de fondo (archivo en public/) y fuente de los subtítulos del tema (woff2 en public/).
   musicSrc: z.string().optional(),
+  sfx: z.array(sfxSchema).optional(),
+  phrases: z.array(phraseSchema).optional(),
   fontSrc: z.string().optional(),
   subtitleStyle: subtitleStyleSchema.default({
     fontFamily: "cinzel",

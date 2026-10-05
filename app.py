@@ -1319,7 +1319,7 @@ async function loadHistorialVideos() {
       const item = document.createElement("div");
       item.className = "hist-item";
       item.innerHTML = `
-        <video src="/video/${filename}" muted preload="metadata"></video>
+        <video src="/video/${filename}#t=0.5" muted preload="metadata"></video>
         <div class="hist-item-body">
           <p class="hist-item-name">${filename}</p>
           <div style="display:flex;gap:6px">
@@ -3629,6 +3629,13 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                        trigger_message: Optional[str] = None, visual_style: Optional[str] = None,
                        duration_seconds: Optional[int] = None,
                        text_provider_pref: str = ""):
+    bebe = bool(page_name) and batch_pipeline._text_kind_for_page(page_name) == batch_pipeline.BEBE_HEROE_KIND
+    bebe_tag = None  # hashtag del tema sorteado: elige el efecto de sonido (assets/bebe_heroe/sfx)
+    bebe_timings: list = []  # [{text, start, dur}] de las 4 frases (los llena run_tts)
+    if bebe:  # Bebé Héroe: voz clonada, subtitulos del tema, sin titulo en pantalla ni recorte por duracion
+        tts_kwargs = {**tts_kwargs, "voice": batch_pipeline._bebe_heroe_voice(tts_kwargs.get("voice"))}
+        duration_seconds = None
+        generate_video_clips = False  # la composicion usa imagenes
     if page_name and not story_text:
         _pipeline_sub_update(job_id, "text", status="running",
                               message=f"Generando historia (proveedor de texto: {text_provider_pref or 'auto'})...")
@@ -3637,6 +3644,9 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             trigger_text = auto_pipeline.build_trigger_message(
                 trigger_message or "dame una historia", duration_seconds, kind=text_kind,
             )
+            if bebe:
+                _, bebe_tag, extra = batch_pipeline.bebe_trigger_block()
+                trigger_text += extra
             if page_name.strip().upper() == batch_pipeline.RESCUE_PAGE_NAME:
                 pattern = batch_pipeline._pick_story_pattern(
                     batch_pipeline._recent_story_patterns(batch_pipeline._load()))
@@ -3653,6 +3663,11 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             )
             if text_kind == "macrame":
                 auto_pipeline.validate_macrame_story(auto_pipeline.load_story_from_text(story_text, story_id))
+            if bebe:
+                _, story_text = batch_pipeline._split_hook_text(story_text)
+                n_scenes = len(auto_pipeline.load_story_from_text(story_text, story_id)["prompts"])
+                if n_scenes != batch_pipeline.BEBE_HEROE_SCENES:
+                    raise RuntimeError(f"Bebé Héroe necesita {batch_pipeline.BEBE_HEROE_SCENES} escenas y llegaron {n_scenes}.")
         except Exception as e:
             logger.exception("pipeline job %s: fallo al generar la historia", job_id)
             _pipeline_sub_update(job_id, "text", status="error", error=str(e))
@@ -3680,8 +3695,11 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             script_text = " ".join(
                 p["frase"] for p in sorted(story_for_script["prompts"], key=lambda p: p["index"])
             )
+        if bebe:  # las 4 frases de las imagenes son el guion completo
+            script_text = batch_pipeline.bebe_script_from_story(auto_pipeline.load_story_from_text(story_text, story_id))
         try:
-            auto_pipeline.validate_script(script_text)
+            auto_pipeline.validate_script(
+                script_text, min_words=batch_pipeline.BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
         except auto_pipeline.PipelineError as e:
             logger.error("pipeline job %s: %s", job_id, e)
             _pipeline_sub_update(job_id, "text", status="error", error=str(e))
@@ -3707,7 +3725,15 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             _pipeline_sub_update(job_id, "tts", percent=pct, message=msg)
 
         try:
-            output_path, narration = text_to_speech_verified(script_text, on_progress=on_progress, **tts_kwargs)
+            if bebe:  # una voz por frase, cada una en su hueco fijo del reel de 18 s
+                frases = [p["frase"] for p in sorted(
+                    auto_pipeline.load_story_from_text(story_text, story_id)["prompts"], key=lambda p: p["index"])]
+                output_path, bebe_timings[:] = batch_pipeline.generate_bebe_heroe_voice(
+                    frases, tts_kwargs.get("voice"),
+                    on_progress=lambda i, n: on_progress(int(100 * (i - 1) / n), f"Voz de la frase {i} de {n}..."))
+                narration = {"ok": True, "skipped": True}
+            else:
+                output_path, narration = text_to_speech_verified(script_text, on_progress=on_progress, **tts_kwargs)
         except Exception as e:
             logger.exception("pipeline job %s: tts fallo", job_id)
             _pipeline_sub_update(job_id, "tts", status="error", error=str(e), percent=100)
@@ -3716,7 +3742,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             logger.info("pipeline job %s: tts listo (%s)", job_id, output_path)
             check = "narración validada" if narration.get("ok") and not narration.get("skipped") else "Listo"
             _pipeline_sub_update(job_id, "tts", status="done", percent=100, message=check,
-                                  filename=Path(output_path).name)
+                                  filename=Path(output_path).name,
+                                  **({"phrases": list(bebe_timings), "bebe_tag": bebe_tag} if bebe else {}))
         else:
             logger.error("pipeline job %s: tts fallo sin excepcion", job_id)
             _pipeline_sub_update(job_id, "tts", status="error", percent=100,
@@ -3805,6 +3832,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
         tts_ok = _pipeline_jobs[job_id]["story"]["tts"]["status"] == "done"
         clipgen_ok = _pipeline_jobs[job_id]["story"]["clipgen"]["status"] == "done"
         audio_filename = _pipeline_jobs[job_id]["story"]["tts"].get("filename")
+        tts_state = dict(_pipeline_jobs[job_id]["story"]["tts"])
 
     if not (tts_ok and clipgen_ok):
         with _pipeline_jobs_lock:
@@ -3832,22 +3860,27 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
         story = auto_pipeline.load_story_from_text(story_text, story_id)
         frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
         with _video_render_lock:
-            timeline = video_maker.build_props(
-                image_paths=clips,
-                audio_path=audio_path,
-                title=title,
-                subtitles_enabled=subtitles_enabled,
-                subtitle_style=subtitle_style,
-                frases=frases,
-                animate_images=animate_images,
-                on_progress=on_progress,
-                script_text=script_text,
-            )
+            if bebe:
+                timeline = video_maker.build_bebe_heroe_props(
+                    clips, audio_path, bebe_timings or tts_state.get("phrases") or [],
+                    sfx_tag=bebe_tag or tts_state.get("bebe_tag"), on_progress=on_progress)
+            else:
+                timeline = video_maker.build_props(
+                    image_paths=clips,
+                    audio_path=audio_path,
+                    title=title,
+                    subtitles_enabled=subtitles_enabled,
+                    subtitle_style=subtitle_style,
+                    frases=frases,
+                    animate_images=animate_images,
+                    on_progress=on_progress,
+                    script_text=script_text,
+                )
             video_path = None
             if timeline:
                 video_path = video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
-                    orientation=orientation,
+                    orientation="vertical" if bebe else orientation,
                     on_progress=on_progress,
                 )
     except Exception as e:
@@ -4027,7 +4060,8 @@ def api_pipeline_retry(job_id):
             "story": {
                 "tts": (
                     {"status": "done", "percent": 100, "message": "Reutilizado de un intento anterior",
-                     "error": None, "filename": audio_filename}
+                     "error": None, "filename": audio_filename,
+                     "phrases": old_tts.get("phrases"), "bebe_tag": old_tts.get("bebe_tag")}
                     if skip_tts else
                     {"status": "pending", "percent": 0,
                      "message": "Esperando el audio del intento anterior..." if wait_tts_from else "",

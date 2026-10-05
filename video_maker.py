@@ -186,30 +186,123 @@ SUBTITLE_PRESETS = {
 }
 DEFAULT_SUBTITLE_PRESET = "clasico"
 
-# Tema "bebe_heroe" (pagina Bebé Héroe, plantilla de Remotion de rescate): subtitulos Luckiest Guy
-# amarillos con contorno rojo oscuro, a 250 px del borde inferior; zoom propio por escena (de
-# zoomFrom a zoomTo sobre `origin`) y musica/fuente copiadas desde assets/bebe_heroe/.
+# Tema "bebe_heroe" (pagina Bebé Héroe, plantilla de Remotion del cliente): reel de 18 s con tiempos
+# FIJOS -- escenas con corte seco a los 3 / 7 / 13 s y cada frase de la voz entrando a los 0.3 / 3.2 /
+# 7.3 / 13.3 s --, asi que no sigue la duracion del audio: se genera una voz por frase y se coloca en su
+# hueco (assemble_bebe_heroe_audio). Musica, fuente y efectos de sonido salen de assets/bebe_heroe/.
 BEBE_HEROE_THEME = "bebe_heroe"
 BEBE_HEROE_ASSETS = BASE_DIR / "assets" / "bebe_heroe"
-BEBE_HEROE_SUBTITLE_STYLE = {
-    "fontFamily": "luckiest",
-    "fontSize": 84,
-    "position": "bottom",
-    "positionX": 50,
-    "positionY": 82,
-    "textColor": "#FFD54F",
-    "highlightColor": "#FFD54F",
-    "background": False,
-    "strokeColor": "#7A0A0A",
-    "strokeWidth": 6,
-    "uppercase": True,
-    "italic": False,
-    "letterSpacing": 2,
-    "animationType": "scale",
-}
+BEBE_HEROE_TOTAL_SECONDS = 18.0
+BEBE_HEROE_SCENE_BOUNDS = (0.0, 3.0, 7.0, 13.0, 18.0)
+BEBE_HEROE_VOICE_STARTS = (0.3, 3.2, 7.3, 13.3)
+BEBE_HEROE_VOICE_GAP = 0.15  # silencio minimo entre el fin de una frase y el inicio de la siguiente
+BEBE_HEROE_MAX_SPEEDUP = 1.3  # una frase mas larga que su hueco se acelera hasta este factor
+# Efecto de sonido del tema (maullido, ladrido...): assets/bebe_heroe/sfx/<hashtag del tema>.wav, p. ej.
+# gatito.wav. Si no hay archivo para el tema, el video sale solo con voz y musica.
+BEBE_HEROE_SFX_DIR = BEBE_HEROE_ASSETS / "sfx"
+BEBE_HEROE_SFX_AT = 0.5  # segundos
+BEBE_HEROE_SFX_VOLUME = 0.7
 BEBE_HEROE_ZOOMS = [  # (zoomFrom, zoomTo, origin) por escena: problema, empatia (ojos), accion, final
     (1.0, 1.22, "65% 62%"), (1.0, 1.55, "50% 40%"), (1.0, 1.10, "45% 45%"), (1.10, 1.0, "55% 55%"),
 ]
+
+
+def _run_ffmpeg(args: list) -> None:
+    # Sin shell: los filtros llevan "|" y "[...]", que cmd.exe interpretaria como pipe.
+    result = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg fallo: {result.stderr[-500:]}")
+
+
+def _fit_phrase_audio(src: str, dest: Path, max_seconds: float) -> float:
+    """Recorta el silencio de los extremos de una frase y, si no cabe en `max_seconds`, la acelera (sin
+    cambiar el tono) hasta BEBE_HEROE_MAX_SPEEDUP. Devuelve su duracion final."""
+    _run_ffmpeg([
+        "-i", src, "-af",
+        "silenceremove=start_periods=1:start_threshold=-45dB:stop_periods=1:stop_threshold=-45dB:stop_duration=0.3",
+        str(dest),
+    ])
+    duration = get_audio_duration(str(dest))
+    if duration > max_seconds > 0:
+        tempo = min(duration / max_seconds, BEBE_HEROE_MAX_SPEEDUP)
+        sped = dest.with_name(dest.stem + "_fast.wav")
+        _run_ffmpeg(["-i", str(dest), "-af", f"atempo={tempo:.3f}", str(sped)])
+        sped.replace(dest)
+        duration = get_audio_duration(str(dest))
+    return duration
+
+
+def assemble_bebe_heroe_audio(phrase_paths: list, texts: list, dest: Path) -> list:
+    """Coloca la voz de cada frase en su hueco de los 18 s y escribe el audio completo en `dest` (WAV).
+    Devuelve [{text, start, dur}] (segundos) para los subtitulos."""
+    n = len(BEBE_HEROE_VOICE_STARTS)
+    if len(phrase_paths) != n or len(texts) != n:
+        raise ValueError(f"Bebé Héroe necesita {n} frases con su audio.")
+    timings, fitted = [], []
+    for i, (src, text) in enumerate(zip(phrase_paths, texts)):
+        start = BEBE_HEROE_VOICE_STARTS[i]
+        end = BEBE_HEROE_VOICE_STARTS[i + 1] if i + 1 < n else BEBE_HEROE_TOTAL_SECONDS
+        piece = dest.with_name(f"{dest.stem}_p{i}.wav")
+        duration = _fit_phrase_audio(str(src), piece, end - start - BEBE_HEROE_VOICE_GAP)
+        fitted.append(piece)
+        timings.append({"text": text, "start": start, "dur": round(duration, 2)})
+    delays = ";".join(f"[{i}]adelay={int(t['start'] * 1000)}|{int(t['start'] * 1000)}[a{i}]" for i, t in enumerate(timings))
+    mix = "".join(f"[a{i}]" for i in range(n))
+    _run_ffmpeg([
+        *sum((["-i", str(p)] for p in fitted), []),
+        "-filter_complex",
+        f"{delays};{mix}amix=inputs={n}:normalize=0,apad=whole_dur={BEBE_HEROE_TOTAL_SECONDS},atrim=0:{BEBE_HEROE_TOTAL_SECONDS}",
+        str(dest),
+    ])
+    for p in fitted:
+        p.unlink(missing_ok=True)
+    return timings
+
+
+def build_bebe_heroe_props(image_paths: list, audio_path: str, timings: list, sfx_tag: Optional[str] = None,
+                           on_progress=None) -> Optional[dict]:
+    """Props de Remotion del reel de Bebé Héroe (tiempos fijos, ver arriba) en video/props.json, sin
+    renderizar. `audio_path` es el audio completo de assemble_bebe_heroe_audio y `timings` sus frases."""
+    def report(msg: str):
+        print(msg)
+        if on_progress:
+            on_progress(msg)
+
+    if len(image_paths) != len(BEBE_HEROE_ZOOMS) or len(timings) != len(BEBE_HEROE_VOICE_STARTS):
+        report(f"[ERROR] Bebé Héroe necesita {len(BEBE_HEROE_ZOOMS)} imágenes y frases.")
+        return None
+    report("📁 Preparando imágenes, audio, música y efectos...")
+    for f in VIDEO_PUBLIC_DIR.glob("*"):
+        if f.is_file():
+            f.unlink()
+    scenes = []
+    for i, src in enumerate(image_paths):
+        name = f"scene_{i:03d}{Path(src).suffix.lower() or '.jpg'}"
+        shutil.copy(src, VIDEO_PUBLIC_DIR / name)
+        zoom_from, zoom_to, origin = BEBE_HEROE_ZOOMS[i]
+        scenes.append({
+            "src": name, "type": "image",
+            "startFrame": round(BEBE_HEROE_SCENE_BOUNDS[i] * FPS), "endFrame": round(BEBE_HEROE_SCENE_BOUNDS[i + 1] * FPS),
+            "zoomFrom": zoom_from, "zoomTo": zoom_to, "origin": origin,
+        })
+    audio_name = "narracion.wav"
+    if not normalize_audio(audio_path, VIDEO_PUBLIC_DIR / audio_name, report=report):
+        shutil.copy(audio_path, VIDEO_PUBLIC_DIR / audio_name)
+    shutil.copy(BEBE_HEROE_ASSETS / "music.wav", VIDEO_PUBLIC_DIR / "bebe_heroe_music.wav")
+    shutil.copy(BEBE_HEROE_ASSETS / "luckiest.woff2", VIDEO_PUBLIC_DIR / "bebe_heroe_luckiest.woff2")
+    timeline = {
+        "title": "", "audioSrc": audio_name, "totalDurationSeconds": BEBE_HEROE_TOTAL_SECONDS,
+        "scenes": scenes, "subtitles": [], "mood": "none", "subtitleStyle": dict(SUBTITLE_STYLE_DEFAULTS),
+        "theme": BEBE_HEROE_THEME, "musicSrc": "bebe_heroe_music.wav", "fontSrc": "bebe_heroe_luckiest.woff2",
+        "phrases": timings,
+    }
+    sfx_file = BEBE_HEROE_SFX_DIR / f"{sfx_tag}.wav" if sfx_tag else None
+    if sfx_file and sfx_file.exists():
+        shutil.copy(sfx_file, VIDEO_PUBLIC_DIR / f"bebe_heroe_sfx_{sfx_tag}.wav")
+        timeline["sfx"] = [{"src": f"bebe_heroe_sfx_{sfx_tag}.wav", "at": BEBE_HEROE_SFX_AT, "volume": BEBE_HEROE_SFX_VOLUME}]
+    (VIDEO_DIR / "props.json").write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+    report("✅ Edición lista.")
+    return timeline
 
 
 def get_subtitle_preset_style(preset_id: str) -> dict:
@@ -548,7 +641,6 @@ def _build_timeline(
     animate_images: bool = True,
     ai_label: Optional[str] = None,
     mood: str = "warm_night",
-    theme: Optional[str] = None,
 ) -> dict:
     """
     Arma el diccionario de props que consume la composición de Remotion.
@@ -659,9 +751,6 @@ def _build_timeline(
                 clip["playbackRate"] = native / slot_duration
         else:
             clip["kenBurns"] = directions[i] if animate_images else "none"
-            if theme == BEBE_HEROE_THEME:
-                zoom_from, zoom_to, origin = BEBE_HEROE_ZOOMS[min(i, len(BEBE_HEROE_ZOOMS) - 1)]
-                clip.update(zoomFrom=zoom_from, zoomTo=zoom_to, origin=origin)
         clips.append(clip)
 
     timeline = {
@@ -675,8 +764,6 @@ def _build_timeline(
     timeline["subtitleStyle"] = {**SUBTITLE_STYLE_DEFAULTS, **(subtitle_style or {})}
     if ai_label:
         timeline["aiLabel"] = ai_label
-    if theme == BEBE_HEROE_THEME:
-        timeline.update(theme=theme, musicSrc="bebe_heroe_music.wav", fontSrc="bebe_heroe_luckiest.woff2")
     return timeline
 
 
@@ -776,7 +863,6 @@ def build_props(
     mood: str = "warm_night",
     on_progress=None,
     script_text: Optional[str] = None,
-    theme: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Arma la edición: copia los assets al proyecto de Remotion, transcribe el
@@ -852,10 +938,6 @@ def build_props(
     if n_video_clips:
         report(f"  🎞️  {n_video_clips} clip(s) de video detectado(s) entre las escenas.")
 
-    if theme == BEBE_HEROE_THEME:
-        shutil.copy(BEBE_HEROE_ASSETS / "music.wav", VIDEO_PUBLIC_DIR / "bebe_heroe_music.wav")
-        shutil.copy(BEBE_HEROE_ASSETS / "luckiest.woff2", VIDEO_PUBLIC_DIR / "bebe_heroe_luckiest.woff2")
-
     # Normalizado a WAV siempre (48kHz + loudness) — así el sample rate y el
     # loudness de entrega no dependen del formato con que llegó el audio.
     # Si ffmpeg no está disponible, se cae a copiar el original tal cual
@@ -891,7 +973,7 @@ def build_props(
     timeline = _build_timeline(
         scenes, audio_name, duration, words, title, subtitle_style,
         frases=frases, animate_images=animate_images, ai_label=ai_label,
-        mood=mood, theme=theme,
+        mood=mood,
     )
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")

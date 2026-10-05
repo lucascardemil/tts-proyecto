@@ -166,7 +166,7 @@ import gaming_clip
 import job_store
 import meme_maker
 import seo_optimizer
-from tts_engine import text_to_speech_verified, get_default_voice, BEDTIME_PRESET, NARRATION_CHECK_SUFFIX
+from tts_engine import text_to_speech_verified, text_to_speech_phrases, get_default_voice, BEDTIME_PRESET, NARRATION_CHECK_SUFFIX
 
 # logging.getLogger(__name__) ("batch_pipeline") no tenia ningun handler propio
 # ni de un ancestro configurado (el logger "pipeline" de auto_pipeline.py es un
@@ -648,6 +648,38 @@ def _pick_bebe_idea(projects: dict) -> tuple:
     return random.choice(fresh)
 
 
+def bebe_trigger_block() -> tuple:
+    """(idea, hashtag, texto): la idea sorteada del banco (sin repetir las recientes) y el bloque que se
+    agrega al mensaje para el generador de texto."""
+    with _lock:
+        projects = _load()
+        idea, tag = _pick_bebe_idea(projects)
+        recent = _recent_bebe_ideas(projects)
+    text = f"{_NL}{_NL}Idea de esta pieza: {idea}."
+    if recent:
+        text += f"{_NL}Evita repetir: " + "; ".join(recent) + "."
+    return idea, tag, text
+
+
+def bebe_script_from_story(story: dict) -> str:
+    """Guion de Bebé Héroe: las 4 frases de las imagenes, en orden (el bloque "Guion" del modelo a veces
+    llega recortado; las frases son exactamente lo que se narra)."""
+    return " ".join(p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"]))
+
+
+def generate_bebe_heroe_voice(frases: list, voice: Optional[str], on_progress=None) -> tuple:
+    """Una voz por frase (cada una entra en su hueco fijo del reel de 18 s) y el audio completo ya armado.
+    Devuelve (ruta del audio, [{text, start, dur}] para los subtitulos)."""
+    if on_progress:
+        on_progress(1, len(frases))
+    paths = text_to_speech_phrases(
+        frases, voice=_bebe_heroe_voice(voice),
+        exaggeration=BEDTIME_PRESET["exaggeration"], cfg_weight=BEDTIME_PRESET["cfg_weight"],
+    )
+    mix = Path(paths[0]).with_name(f"{Path(paths[0]).stem}_bebe_heroe.wav")
+    return str(mix), video_maker.assemble_bebe_heroe_audio(paths, frases, mix)
+
+
 def _bebe_heroe_voice(voice: Optional[str]) -> str:
     """Voz de la pagina: la elegida si es clonada; si no, la voz clonada "Voz de Bebé"; si esa no
     existe todavia, la voz por defecto de la app."""
@@ -1029,13 +1061,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     if rescue:
         trigger_message += rescue_story_block(pattern) + _rescue_history_block()
     elif bebe:
-        with _lock:
-            projects = _load()
-            bebe_idea, bebe_tag = _pick_bebe_idea(projects)
-            recent = _recent_bebe_ideas(projects)
-        trigger_message += f"{_NL}{_NL}Idea de esta pieza: {bebe_idea}."
-        if recent:
-            trigger_message += f"{_NL}Evita repetir: " + "; ".join(recent) + "."
+        bebe_idea, bebe_tag, extra = bebe_trigger_block()
+        trigger_message += extra
     text_provider_pref = vs.get("text_provider", "auto")
     _provider_attempts: list = []
     try:
@@ -1069,6 +1096,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             for p in story["prompts"]:
                 p["prompt"] = auto_pipeline.apply_visual_style(p["prompt"], visual_style)
         script_text = auto_pipeline.extract_script(story_text)
+        if bebe:
+            script_text = bebe_script_from_story(story)
         if not script_text.strip():
             # Algunos generadores de texto (ej. el de macrame) no mandan un
             # bloque "Guion" separado antes de "Imagen 1" -- la respuesta
@@ -1113,7 +1142,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 return auto_pipeline.generate_clips(
                     story, clips_dir, unattended=True, start_index=start_index,
                     provider=provider,
-                    generate_video=vs.get("generate_video_clips", True),
+                    generate_video=vs.get("generate_video_clips", True) and not bebe,  # la composicion usa imagenes
                 )
 
         clips = _run_stage_with_retry(
@@ -1131,20 +1160,28 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         job_store.save("clip_folders", folders)
 
         _set_stage(project_id, index, "audio")
-        audio_path, narration = _run_stage_with_retry(
-            lambda: text_to_speech_verified(
-                script_text,
-                voice=_bebe_heroe_voice(vs.get("voice")) if bebe else vs.get("voice") or get_default_voice(),
-                exaggeration=BEDTIME_PRESET["exaggeration"],
-                cfg_weight=BEDTIME_PRESET["cfg_weight"],
-            ),
-            attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
-            stage_label="audio",
-        )
+        frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
+        bebe_timings = None
+        if bebe:
+            (audio_path, bebe_timings), narration = _run_stage_with_retry(
+                lambda: (generate_bebe_heroe_voice(frases, vs.get("voice")), {"ok": True, "skipped": True}),
+                attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
+                stage_label="audio",
+            )
+        else:
+            audio_path, narration = _run_stage_with_retry(
+                lambda: text_to_speech_verified(
+                    script_text,
+                    voice=vs.get("voice") or get_default_voice(),
+                    exaggeration=BEDTIME_PRESET["exaggeration"],
+                    cfg_weight=BEDTIME_PRESET["cfg_weight"],
+                ),
+                attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
+                stage_label="audio",
+            )
         if not audio_path:
             raise RuntimeError("Error al generar el audio.")
 
-        frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
         clip_paths = sorted(
             (str(p) for p in clips_dir.glob("scene_*.*") if p.suffix in (".mp4", ".jpg")),
             key=lambda s: int(Path(s).stem.split("_")[1]),
@@ -1154,37 +1191,36 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 f"Los clips no coinciden con la historia: {len(clip_paths)} clips "
                 f"para {len(frases)} escenas"
             )
-        subtitle_style = (
-            video_maker.BEBE_HEROE_SUBTITLE_STYLE if bebe
-            else video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
-        )
+        subtitle_style = video_maker.get_subtitle_preset_style(vs.get("subtitle_preset", ""))
         # Ambientación (luciérnagas + viñeta): configurable por proyecto vía
         # video_settings["mood"] ("warm_night" default | "bright" | "none").
         # Sin definir, se mantiene "warm_night" (comportamiento igual al de
         # antes de este campo) para no cambiarle el look a ningún proyecto
         # ya corriendo sin que se elija explícitamente.
-        mood = "none" if bebe else vs.get("mood", "warm_night")
+        mood = vs.get("mood", "warm_night")
 
         def _do_render():
             with app._video_render_lock:
-                timeline = video_maker.build_props(
-                    image_paths=clip_paths,
-                    audio_path=audio_path,
-                    title="" if bebe else hook_text,  # sin texto grande: solo subtitulos
-                    subtitles_enabled=vs.get("subtitles_enabled", True),
-                    subtitle_style=subtitle_style,
-                    frases=frases,
-                    animate_images=vs.get("animate_images", True),
-                    ai_label=RESCUE_AI_LABEL if rescue else None,
-                    mood=mood,
-                    script_text=script_text,
-                    theme=video_maker.BEBE_HEROE_THEME if bebe else None,
-                )
+                if bebe:  # reel de 18 s con tiempos fijos (ver video_maker.build_bebe_heroe_props)
+                    timeline = video_maker.build_bebe_heroe_props(clip_paths, audio_path, bebe_timings, sfx_tag=bebe_tag)
+                else:
+                    timeline = video_maker.build_props(
+                        image_paths=clip_paths,
+                        audio_path=audio_path,
+                        title=hook_text,
+                        subtitles_enabled=vs.get("subtitles_enabled", True),
+                        subtitle_style=subtitle_style,
+                        frases=frases,
+                        animate_images=vs.get("animate_images", True),
+                        ai_label=RESCUE_AI_LABEL if rescue else None,
+                        mood=mood,
+                        script_text=script_text,
+                    )
                 if not timeline:
                     return None
                 return video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
-                    orientation=vs.get("orientation", "vertical"),
+                    orientation="vertical" if bebe else vs.get("orientation", "vertical"),
                 )
 
         _set_stage(project_id, index, "render")
@@ -1217,7 +1253,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         }
         v["script_text"] = script_text
         if bebe:
-            v.update(bebe_idea=bebe_idea, bebe_tag=bebe_tag, story_summary=hook_text)
+            v.update(bebe_idea=bebe_idea, bebe_tag=bebe_tag, story_summary=hook_text, bebe_phrases=bebe_timings)
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
