@@ -60,7 +60,7 @@ BEBE_HEROE_VOICE_LABEL = "Voz de Bebé"
 BEBE_HEROE_SLOT_HOURS = [20, 10]  # Chile: la noche rinde mas; segundo bloque a media mañana
 BEBE_HEROE_SCENES = 4
 BEBE_HEROE_MIN_WORDS = 12  # 4 frases de 4-9 palabras
-BEBE_HEROE_HISTORY_LIMIT = 8
+BEBE_HEROE_HISTORY_LIMIT = 12
 BEBE_HEROE_DEFAULT_QUESTION = "¿Crees que hice bien?"
 BEBE_HEROE_IDEAS = (
     ("un gatito atrapado en un árbol", "gatito"),
@@ -79,6 +79,46 @@ BEBE_HEROE_IDEAS = (
     ("una muñeca rota que lleva a la ambulancia de juguete", "juguetes"),
     ("el carrito de juguete roto de su hermanito que arregla con cinta", "familia"),
     ("un parque lleno de basura que decide limpiar", "ecologia"),
+    ("una caja que se mueve bajo la lluvia y que abre: dentro hay 2 cachorritos, y termina con ellos bajo su paraguas", "cachorritos"),
+    ("un patito atrapado en un charco congelado al que libera rompiendo el hielo con un palito", "patito"),
+    ("las bolsas de manzanas que se le cayeron a una abuelita: las recoge una por una y ella le da una de premio", "abuelita"),
+    ("un bombero adulto que busca su casco por todas partes y el bebé aparece corriendo con él", "bombero"),
+    ("una manguera descontrolada disparando agua que el bebé doma, y termina empapado riendo", "manguera"),
+    ("5 pollitos con miedo a cruzar que el bebé guía como si dirigiera el tránsito con su casco rojo", "pollitos"),
+    ("un arbolito de Navidad caído al que intenta ponerle la estrella hasta que papá lo sube en hombros", "navidad"),
+    ("un gatito asustado frente a una lavadora (apagada) al que el bebé rescata", "gatito"),
+    ("la carta de una niña que se lleva el viento y que el bebé atrapa corriendo en el aire", "carta"),
+    ("un helado que se le cae a un niño y el bebé comparte el suyo: comen juntos", "helado"),
+    ("un zapatito de bebé flotando en una acequia que pesca con una rama", "zapatito"),
+    ("el globo rojo de una niña atrapado en un árbol que baja trepando con ayuda de un banquito", "globo"),
+    ("un huevo caído fuera del nido en el pasto que devuelve a su lugar con algodón", "nido"),
+    ("un perrito tiritando cuya mantita está en un tendedero muy alto y el bebé la baja", "perrito"),
+    ("las llaves de mamá caídas en una alcantarilla que rescata con un imán de juguete", "llaves"),
+    ("una cometa de colores atorada en unos cables que baja tirando del hilo junto a papá", "cometa"),
+    ("un pecesito en un balde sin agua al que el bebé corre a llenarlo con un vaso", "pecesito"),
+    ("una plantita seca que el bebé riega todos los días hasta que florece", "jardin"),
+    ("un abuelito en silla de ruedas atascado en el barro al que ayuda poniendo una tablita", "abuelito"),
+    ("su hermanita con miedo en un apagón a la que llega con una linterna de juguete para iluminarla", "linterna"),
+    ("el carrito de supermercado de mamá que se va cuesta abajo solo y el bebé corre a frenarlo con su cuerpo", "carrito"),
+    ("un gatito enredado en la lana de la abuela, hecho una bolita, que el bebé desenreda con paciencia", "gatito"),
+    ("un pajarito que se golpea contra una ventana y cae, y el bebé lo pone en una cajita con algodón", "pajarito"),
+    ("la cadena salida de la bici del hermano mayor que el bebé intenta poner con las manos llenas de grasa", "bicicleta"),
+    ("un cachorro que muerde el zapato de papá (papá enojado) y el bebé le da un hueso de juguete para cambiarlo", "cachorro"),
+    ("una tortuga patas arriba que no puede voltearse y el bebé le da la vuelta con un palito", "tortuga"),
+    ("un tren de juguete descarrilado que el bebé arregla, con su casco rojo de maquinista", "tren"),
+    ("una mariposa en el suelo (simulada) a la que el bebé le hace una casita con una hoja para protegerla del viento", "mariposa"),
+    ("un paquete pesado que deja el cartero y que el bebé arrastra hasta la puerta porque mamá no puede", "paquete"),
+    ("un balón de los niños en el techo de la casa que el bebé alcanza haciendo una torre de cajas", "balon"),
+    ("un perrito con cono de la vergüenza que no puede comer y al que el bebé da comida con una cucharita", "perrito"),
+    ("una regadera que gotea toda la noche y que el bebé cierra con fuerza hasta que el agua para", "regadera"),
+    ("un pollito caído en una piscina vacía al que ayuda a salir poniéndole una rampa de madera", "pollito"),
+    ("los lentes caídos y sucios del abuelito, que el bebé limpia con su polerita", "abuelito"),
+    ("una gatita que mueve a sus 4 gatitos uno por uno bajo la lluvia, y el bebé la ayuda con un paraguas", "gatita"),
+    ("un muñeco de nieve que se derrite al sol y al que el bebé le pone una sombrilla", "muneco"),
+    ("un autito de juguete sin rueda, cuya rueda el bebé busca bajo el sillón para arreglarlo", "autito"),
+    ("un perro que persigue una cometa y se enreda, y el bebé desenreda el hilo", "cometa"),
+    ("su hermanita que no puede con una mochila escolar gigante y a la que empuja por detrás para ayudarla", "mochila"),
+    ("el faro solar apagado del jardín que el bebé limpia hasta que vuelve a encenderse e ilumina el jardín", "faro"),
 )
 
 _NINIO_KINDS = {"ninio_selectivo", "ninio_post"}
@@ -191,10 +231,10 @@ TICK_SECONDS = 60
 # quedo mas cerca que esto, se reprograma en vez de publicar ya.
 BATCH_MIN_GAP_SECONDS = 3600
 # Rango horario permitido para publicaciones del lote -- nunca programar (ni
-# dejar programado) fuera de 9am-8pm, sin importar que tan "cerca" quede de
+# dejar programado) fuera de 9am-9pm, sin importar que tan "cerca" quede de
 # best_hour por la metrica circular de _compute_schedule.
 BATCH_HOUR_START = 9
-BATCH_HOUR_END = 20  # inclusive
+BATCH_HOUR_END = 21  # inclusive: las 21:00 en punto es el ultimo horario
 
 # Posts de imagen gaming (Workflow JugadasEpicasVideojuegos, sec. 4): Facebook
 # a las 13:00 y 20:00 (son el scheduled_at del video), Instagram una hora
@@ -506,7 +546,7 @@ def _into_publish_window(dt: datetime) -> datetime:
     -> hoy a la apertura; despues de cerrar -> manana a la apertura."""
     if dt.hour < BATCH_HOUR_START:
         return dt.replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
-    if dt.hour > BATCH_HOUR_END:
+    if dt.hour > BATCH_HOUR_END or (dt.hour == BATCH_HOUR_END and (dt.minute or dt.second)):
         return (dt + timedelta(days=1)).replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
     return dt
 
@@ -554,8 +594,58 @@ def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime
     return slot
 
 
+def _free_slot(desired: datetime, taken: list, rescue: bool = False) -> datetime:
+    """Primer horario libre a partir de `desired`, dentro de 9:00-21:00 y a no menos de
+    BATCH_MIN_GAP_SECONDS de cualquier publicacion ya hecha o programada (`taken`). Ese dia se prueba
+    primero la hora pedida y despues las demas horas del rango, de la mas cercana a la mas lejana; si no
+    queda ninguna, los dias siguientes. Nunca antes de ahora + el adelanto minimo de programacion."""
+    earliest = datetime.now() + NATIVE_SCHEDULE_MIN_LEAD
+    desired = max(desired, earliest.replace(minute=0, second=0, microsecond=0))
+    hours = sorted(range(BATCH_HOUR_START, BATCH_HOUR_END + 1), key=lambda h: (abs(h - desired.hour), h))
+    for day in range(90):
+        date = (desired + timedelta(days=day)).date()
+        if rescue and date.weekday() == 0:  # el perfil rescate no publica los lunes
+            continue
+        for hour in hours:
+            slot = datetime(date.year, date.month, date.day, hour)
+            if slot >= earliest and all(abs((slot - t).total_seconds()) >= BATCH_MIN_GAP_SECONDS for t in taken):
+                return slot
+    return desired
+
+
+def existing_slots(page_name: str, networks: dict, exclude_project: Optional[str] = None) -> list:
+    """Horarios ya ocupados de la pagina: los items de otros lotes de la misma pagina (todo lo que no
+    fallo) y lo que las redes ya tienen publicado o programado (Facebook de la pagina, YouTube del canal).
+    Una red que no responde se ignora: se sigue con lo que se sabe localmente."""
+    taken = []
+    for pid, project in _load().items():
+        if pid == exclude_project or _project_page_name(project) != page_name:
+            continue
+        for v in project.get("videos", []):
+            if v.get("status") == "error":
+                continue
+            try:
+                taken.append(datetime.fromisoformat(v["scheduled_at"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    fb = networks.get("facebook")
+    if fb:
+        try:
+            taken += facebook_publisher.list_post_times(fb.get("page_id")) or []
+        except Exception:
+            logger.warning("batch: no se pudo consultar lo programado en Facebook", exc_info=True)
+    if networks.get("youtube"):
+        try:
+            channel = GAMING_YT_CHANNEL if "gaming" in page_name.lower() or "jugadas" in page_name.lower() else None
+            taken += youtube_publisher.list_scheduled(channel) or []
+        except Exception:
+            logger.warning("batch: no se pudo consultar lo programado en YouTube", exc_info=True)
+    return taken
+
+
 def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False,
-                      fixed_hours: Optional[list] = None, skip_days: int = 0) -> list:
+                      fixed_hours: Optional[list] = None, skip_days: int = 0,
+                      taken: Optional[list] = None) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -569,6 +659,8 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     Con `fixed_hours` se usan esas horas tal cual, en ese orden (posts gaming).
     Con `skip_days` se agregan dias vacios entre fechas de publicacion
     (skip_days=1 = publicar cada 2 dias).
+    Con `taken` (horarios ya ocupados de la pagina, ver existing_slots) cada publicacion se corre al
+    primer horario libre del rango 9-21 h (ver _free_slot) para no pisar ni duplicar las existentes.
     Devuelve `total` timestamps ISO."""
     base_hours = [h for _, _, h in feedback_analyzer.DAYPARTS if BATCH_HOUR_START <= h <= BATCH_HOUR_END]
     if fixed_hours:
@@ -596,11 +688,22 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
             continue
         publish_days.append(day_date)
 
-    schedule = []
+    desired = []
     for i in range(total):
         day_date = publish_days[i // per_day]
         hour = hours_for_day[i % per_day] % 24
-        when = datetime(day_date.year, day_date.month, day_date.day, hour)
+        desired.append(datetime(day_date.year, day_date.month, day_date.day, hour))
+    if taken is None:
+        return [d.isoformat() for d in desired]
+    # Si el primer horario del lote ya paso, todo el lote se corre de a dias enteros (misma hora, mismo
+    # reparto por dia) en vez de apilar los del dia de hoy encima de los de manana.
+    earliest = datetime.now() + NATIVE_SCHEDULE_MIN_LEAD
+    while desired and min(desired) < earliest:
+        desired = [d + timedelta(days=1) for d in desired]
+    schedule = []
+    for when in desired:
+        when = _free_slot(when, taken, rescue=rescue)
+        taken.append(when)  # las siguientes del mismo lote tampoco pueden caer encima
         schedule.append(when.isoformat())
     return schedule
 
@@ -773,6 +876,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         total_videos, per_day, best_hour, rescue=rescue,
         fixed_hours=fixed_hours,
         skip_days=skip_days,
+        taken=existing_slots(page_name, networks),
     )
 
     project = {

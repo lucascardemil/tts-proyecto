@@ -376,6 +376,49 @@ def publish_photo(
     }
 
 
+def _graph_time(value: str) -> Optional[datetime]:
+    """Hora de la Graph API ("2026-10-08T16:00:00+0000") -> datetime local naive."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z").astimezone().replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return None
+
+
+def list_post_times(page_id: Optional[str] = None, days_back: int = 2) -> Optional[list]:
+    """Horarios (datetime local) de las publicaciones de la Pagina que ya salieron en los ultimos
+    `days_back` dias y de las programadas a futuro (posts y videos sin publicar todavia). Sirve para no
+    programar encima de ellas. None si no se pudo consultar (sin credenciales, sin red, token vencido):
+    el llamador sigue con lo que sabe localmente."""
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return None
+    base = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{page_id}"
+    since = int(time.time()) - days_back * 86400
+    queries = (
+        ("scheduled_posts", {"fields": "scheduled_publish_time"}, "scheduled_publish_time"),
+        ("published_posts", {"fields": "created_time", "since": since}, "created_time"),
+        ("videos", {"fields": "scheduled_publish_time,published"}, "scheduled_publish_time"),
+    )
+    times = []
+    try:
+        for edge, params, field in queries:
+            response = requests.get(
+                f"{base}/{edge}", params={**params, "limit": 100, "access_token": access_token}, timeout=30,
+            )
+            data, err = _parse_response(response)
+            if err:
+                return None
+            for item in (data or {}).get("data", []):
+                if edge == "videos" and item.get("published", True):
+                    continue  # un video ya publicado lo cubre published_posts
+                dt = _graph_time(item.get(field))
+                if dt:
+                    times.append(dt)
+    except requests.RequestException:
+        return None
+    return times
+
+
 def reschedule_video(video_id: str, scheduled_time: float, page_id: Optional[str] = None) -> dict:
     """
     Cambia el horario de un video que ya esta programado en Facebook

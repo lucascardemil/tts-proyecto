@@ -77,6 +77,7 @@ def test_create_project_ninio_image_uses_meal_slots_and_no_offsets(monkeypatch):
     monkeypatch.setattr(batch_pipeline, "_load", lambda: {})
     monkeypatch.setattr(batch_pipeline, "_save", lambda projects: None)
     monkeypatch.setattr(batch_pipeline, "_best_hour_for_networks", lambda networks: None)
+    monkeypatch.setattr(batch_pipeline, "existing_slots", lambda *a, **k: [])
     project = batch_pipeline.create_project(
         page_name="Niño Selectivo", total_videos=4, per_day=2,
         networks={"facebook": {"page_id": "1"}, "instagram": {"page_id": "1"}},

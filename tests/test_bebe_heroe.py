@@ -95,6 +95,7 @@ def test_props_use_fixed_scene_cuts_zoom_music_and_sfx(tmp_path, monkeypatch):
 def _create_mixed(monkeypatch, tmp_path, content_type, total):
     monkeypatch.setattr(bp, "_load", lambda: {})
     monkeypatch.setattr(bp, "_save", lambda projects: None)
+    monkeypatch.setattr(bp, "existing_slots", lambda *a, **k: [])
     monkeypatch.setattr(bp.gaming_clip.gaming_vision, "is_configured", lambda: True)
     return bp.create_project(
         "Niño Selectivo, Familia en Paz", total, 2, {"facebook": {"page_id": "1"}}, {}, content_type=content_type,
