@@ -37,8 +37,16 @@ TEXT_PROVIDER_CHOICES = ("auto",)
 def _text_system_prompt(kind: str) -> str:
     """System prompt autocontenido (prompts/historias_system.md o
     gaming_system.md): el formato de salida que exigen los parsers.
-    FileNotFoundError => el eslabon LLM se salta y la cadena falla clara."""
-    return (_PROMPTS_DIR / f"{kind}_system.md").read_text(encoding="utf-8")
+    FileNotFoundError => el eslabon LLM se salta y la cadena falla clara.
+    Los guiones largos (PILARES_KINDS) suman la tecnica de retencion de prompts/_pilares_de_valor.md."""
+    prompt = (_PROMPTS_DIR / f"{kind}_system.md").read_text(encoding="utf-8")
+    if kind in PILARES_KINDS:
+        prompt += "\n\n" + (_PROMPTS_DIR / "_pilares_de_valor.md").read_text(encoding="utf-8")
+    return prompt
+
+# Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas). Bebe Heroe
+# queda fuera: su formato de 4 frases / 18 s es fijo.
+PILARES_KINDS = {"historias", "macrame", "ninio_selectivo"}
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
 STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
@@ -203,6 +211,7 @@ import instagram_publisher
 import youtube_publisher
 import feedback_analyzer
 import gaming_clip
+import gaming_news
 import job_store
 import meme_maker
 import seo_optimizer
@@ -266,18 +275,57 @@ NINIO_TEMPLATES = {
     "N4": "Frase de paz",
 }
 NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N1", "N4"), ("N3", "N4"), ("N2", "N4"), ("N1", "N4")]
+# Posts de imagen de "MACRAME CREATIVO": uno al mediodia (13:00) y otro por la tarde (19:00), misma
+# hora en Facebook e Instagram. Plantillas M1-M4 y semana tipo (mediodia, tarde) por dia, lunes=0.
+# Posts de imagen de "HISTORIAS" (rescates de animales): uno a media mañana y otro a la tarde, igual en
+# Facebook e Instagram. Plantillas H1-H4 y semana tipo (mañana, tarde) por dia, lunes=0.
+HISTORIAS_SLOT_HOURS = [11, 18]
+HISTORIAS_TEMPLATES = {
+    "H1": "Mini historia en collage",
+    "H2": "El animal habla",
+    "H3": "El animal pide",
+    "H4": "Foto limpia con caption largo",
+}
+HISTORIAS_WEEK = [("H1", "H3"), ("H2", "H4"), ("H3", "H2"), ("H1", "H4"), ("H2", "H3"), ("H3", "H1"), ("H4", "H2")]
+MACRAME_SLOT_HOURS = [13, 19]
+MACRAME_TEMPLATES = {
+    "M1": "Pieza terminada del día",
+    "M2": "Tip de nudo",
+    "M3": "Error común y cómo evitarlo",
+    "M4": "Frase creativa",
+}
+MACRAME_WEEK = [("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4")]
 # Tipos de lote de la pagina gaming: mismos horarios. YouTube solo para los
 # clips (video 9:16 -> Short), nunca para la imagen.
 GAMING_TYPES = {"gaming_image", "gaming_clip"}
 # Lotes mixtos: alternan un video y un post de imagen del mismo nicho (video, post, video, post...);
 # el reparto sale solo del total (10 -> 5 y 5; 11 -> 6 videos y 5 posts). Cada item guarda su
 # `item_type` y se genera/publica como ese tipo; los horarios son los del post de imagen del nicho.
-MIXED_TYPES = {"mix_ninio": ("video", "ninio_image"), "mix_gaming": ("gaming_clip", "gaming_image")}
+MIXED_TYPES = {
+    "mix_ninio": ("video", "ninio_image"),
+    "mix_gaming": ("gaming_clip", "gaming_image"),
+    "mix_macrame": ("video", "macrame_image"),
+    "mix_historias": ("video", "historias_image"),
+}
 
 
 def item_type(project: dict, video: dict) -> str:
     """Tipo con que se genera y publica un item: el propio en un lote mixto, el del lote si no."""
     return video.get("item_type") or project.get("type", "video")
+
+
+def next_mixed_kind(mix_type: str, advance: bool = False) -> str:
+    """Tipo que toca generar ahora en "Generar video (automatico)" para un mixto: alterna video/post
+    como un lote (primero el video) con un contador por mixto que se guarda en disco. Sin `advance`
+    solo consulta; con `advance` registra que esa publicacion se va a generar y pasa a la siguiente."""
+    pair = MIXED_TYPES[mix_type]
+    with _lock:
+        store = job_store.load("mix_cursor")
+        n = int(store.get(mix_type, 0))
+        if advance:
+            store[mix_type] = n + 1
+            job_store.save("mix_cursor", store)
+    return pair[n % 2]
 # Canal de YouTube de videojuegos (clave de youtube_publisher.list_channels():
 # YT_CHANNEL_<N>_*; su token es youtube_token_<N>.json). Separado del canal de
 # historias para no mezclar contenido.
@@ -333,6 +381,10 @@ _HEALABLE_EXTRA_MARKERS = (
     "is covered by",  # overlay de carga (splash) tapando el clic en WhatsApp: pasa solo
     "no se encontraron prompts de imagen",  # el modelo a veces responde solo el guion: otra respuesta suele traerlos
     "no se pudo leer medal", "nameresolutionerror", "max retries exceeded",  # sin internet/DNS al buscar el clip
+    "flow no devolvió", "flow falló generando", "tardó más de",  # Google Flow lento o sin respuesta: se reintenta
+    "no están en inglés",  # el modelo escribio los prompts de imagen en español: otro modelo suele cumplir
+    "unknown ref",  # WhatsApp Web se redibujo entre el snapshot y el clic: pasa solo
+    "no hay noticias de videojuegos", "ningun medio de videojuegos",  # sin noticias nuevas / sin internet: se reintenta mas tarde
     "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
 )
 
@@ -365,23 +417,43 @@ def _split_hook_text(story_text: str) -> tuple:
 def _rescue_history_block() -> str:
     """Anti-fatiga (§9): lista los ganchos recientes de los proyectos de
     rescate para que el modelo no repita animal/conflicto/final consecutivos."""
-    hooks = []
+    hooks, scripts = [], []
     for project in _load().values():
-        if not _is_rescue_project(project):
+        if not _is_rescue_project(project) and _project_page_name(project).strip().upper() != RESCUE_PAGE_NAME:
             continue
         for v in project.get("videos", []):
-            sentences = seo_optimizer._sentences(v.get("script_text", ""))
+            script = v.get("script_text", "")
+            sentences = seo_optimizer._sentences(script)
             if sentences:
                 hooks.append((v.get("scheduled_at", ""), seo_optimizer._clip_at_word(sentences[0], 120)))
+                scripts.append((v.get("scheduled_at", ""), script))
     recent = [h for _, h in sorted(hooks)][-RESCUE_HISTORY_LIMIT:]
     if not recent:
         return ""
     lines = "\n".join(f"- {h}" for h in recent)
+    names = _used_names([t for _, t in sorted(scripts)][-RESCUE_HISTORY_LIMIT * 3:])
+    banned = (
+        "\n\nNombres y lugares ya usados, PROHIBIDO repetirlos (ni para el animal ni para las personas): "
+        f"{', '.join(names)}."
+    ) if names else ""
     return (
         "\n\nNo repitas el animal, el conflicto, el escenario, el pais, el tipo de final ni el "
         "nombre del rescatista (crea personaje y lugar nuevos cada vez) "
-        f"de estas historias recientes:\n{lines}"
+        f"de estas historias recientes:\n{lines}" + banned
     )
+
+
+_NAME_WORD = re.compile(r"(?<![.!?¿¡\"«]\s)(?<!^)\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b")
+
+
+def _used_names(scripts: list) -> list:
+    """Nombres propios (animales, personas, lugares) que ya aparecen en guiones anteriores."""
+    names = []
+    for script in scripts:
+        for n in _NAME_WORD.findall(re.sub(r"\[[^\]]*\]", "", script)):
+            if n not in names:
+                names.append(n)
+    return names
 
 
 # Patrones de historia validados (Workflow V6, posts reales de la pagina).
@@ -622,7 +694,7 @@ def existing_slots(page_name: str, networks: dict, exclude_project: Optional[str
         if pid == exclude_project or _project_page_name(project) != page_name:
             continue
         for v in project.get("videos", []):
-            if v.get("status") == "error":
+            if v.get("status") in ("error", "removed"):
                 continue
             try:
                 taken.append(datetime.fromisoformat(v["scheduled_at"]))
@@ -856,7 +928,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         else "auto"
     )
     rescue = (
-        content_type == "video"
+        content_type in ("video", "mix_historias")
         and page_name.strip().upper() == RESCUE_PAGE_NAME
         and bool(networks.get("youtube"))
     )
@@ -996,6 +1068,31 @@ def delete_project(project_id: str) -> bool:
         _save(projects)
     for video in project["videos"]:
         _purge_video_assets(project_id, video)
+    return True
+
+
+def delete_video(project_id: str, index: int) -> bool:
+    """Elimina UN item del lote: lo marca "removed" (no se saca de la lista porque el resto del
+    modulo accede por posicion), borra sus archivos y deja de generarse/publicarse. No cancela lo ya
+    programado en Facebook/YouTube. Un item generandose o publicandose no se puede eliminar. Si no
+    queda ningun item activo, se elimina el lote entero."""
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project or not (0 <= index < len(project["videos"])):
+            return False
+        video = project["videos"][index]
+        if video["status"] in ("generating", "publishing"):
+            return False
+        if video["status"] != "removed":
+            video["status"] = "removed"
+            video["stage"] = None
+            video["error"] = None
+            _save(projects)
+        everything_gone = all(v["status"] == "removed" for v in project["videos"])
+    _purge_video_assets(project_id, video)
+    if everything_gone:
+        delete_project(project_id)
     return True
 
 
@@ -1164,6 +1261,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     bebe_idea = bebe_tag = None
     if rescue:
         trigger_message += rescue_story_block(pattern) + _rescue_history_block()
+    elif _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME:  # Historias sin YouTube: igual sin repetir nombres
+        trigger_message += _rescue_history_block()
     elif bebe:
         bebe_idea, bebe_tag, extra = bebe_trigger_block()
         trigger_message += extra
@@ -1193,6 +1292,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 f"no se encontraron prompts de imagen: Bebé Héroe necesita {BEBE_HEROE_SCENES} escenas "
                 f"y llegaron {len(story['prompts'])}"
             )
+        auto_pipeline.validate_prompts_english(story)
         if _text_kind_for_page(_project_page_name(project)) == "macrame":
             auto_pipeline.validate_macrame_story(story)
         visual_style = vs.get("visual_style")
@@ -1380,10 +1480,21 @@ GAMING_IMAGE_COMPOSITION = (
 
 
 NINIO_IMAGE_COMPOSITION = (
-    " Composition: keep the faces, hands and plate inside the central 60% of the frame; leave "
-    "the top 20% and bottom 20% calm and uncluttered (soft background, no key details) because "
-    "text is added there later. Full-bleed photo edge to edge: no borders, no frame, no text, "
-    "no letters, no logos."
+    " Composition: calm, composed editorial lifestyle photograph, medium-wide shot (not an extreme "
+    "close-up of a face), peaceful mood, nobody crying or shouting; keep the faces, hands and plate "
+    "inside the central 60% of the frame. Full-bleed photo edge to edge: no borders, no frame, no "
+    "text, no letters, no logos."
+)
+
+HISTORIAS_IMAGE_COMPOSITION = (
+    " Composition: warm, cinematic documentary photo of the rescued animal in a safe, hopeful moment, medium "
+    "close-up, eyes visible; full-bleed photo edge to edge: no borders, no frame, no text, no letters, no logos."
+)
+
+MACRAME_IMAGE_COMPOSITION = (
+    " Composition: the macrame piece and the hands centered in the central 60% of the frame, "
+    "clean linen background. Natural window light, light oak table, beige tones. "
+    "Full-bleed photo edge to edge: no borders, no frame, no text, no letters, no logos."
 )
 
 GAMING_HISTORY_STORE_NAME = "gaming_post_history"
@@ -1395,33 +1506,195 @@ GAMING_HISTORY_MAX = 60  # entradas guardadas antes de podar
 # difieren en estos valores. La clave es el tipo de lote (`content_type`).
 IMAGE_POST_PROFILES = {
     "gaming_image": {
-        "kind": "gaming",  # prompts/gaming_system.md
+        "kind": "gaming_news",  # prompts/gaming_news_system.md: noticias reales de videojuegos (gaming_news.py)
+        "news": True,
         "templates": GAMING_TEMPLATES, "week": GAMING_WEEK,
         "slot_hours": GAMING_SLOT_HOURS, "network_offsets": GAMING_NETWORK_OFFSETS,
         "history_store": GAMING_HISTORY_STORE_NAME,
         "composition": GAMING_IMAGE_COMPOSITION, "text_fill": (255, 255, 255),
         "max_hashtags": {"instagram": GAMING_MAX_HASHTAGS["instagram"], "facebook": GAMING_MAX_HASHTAGS["facebook"]},
-        "default_trigger": "dame el próximo post gaming", "label": "Post gaming",
+        "default_trigger": "dame la próxima noticia de videojuegos", "label": "Noticia gaming",
+        "ai_design": "news",
     },
     "ninio_image": {
         "kind": "ninio_post",  # prompts/ninio_post_system.md
         "templates": NINIO_TEMPLATES, "week": NINIO_WEEK,
         "slot_hours": NINIO_SLOT_HOURS, "network_offsets": {},
         "history_store": "ninio_post_history",
-        "composition": NINIO_IMAGE_COMPOSITION, "text_fill": (255, 221, 51),  # amarillo con borde negro
+        "composition": NINIO_IMAGE_COMPOSITION, "text_fill": (255, 221, 51),
+        "card": {"panel": (251, 243, 228), "ink": (59, 42, 32), "accent": (214, 106, 79)},  # crema, cafe, coral
+        "ai_design": "ad",  # Meta AI dibuja el anuncio completo (foto + texto) con un prompt a WhatsApp
+        "ad": {
+            "blob": "mint green", "blob_hex": (221, 235, 211), "pill": "salmon pink", "pill_hex": (249, 199, 184),
+            "ink": (31, 59, 53), "ink_name": "teal green",
+            "badges": ("Estrategias prácticas", "Ideas para la mesa", "Sin presión"),
+            "panel": (251, 243, 228),
+        },
         "max_hashtags": {"instagram": 5, "facebook": 3},
         "default_trigger": "dame el próximo post de niño selectivo", "label": "Post niño selectivo",
+    },
+    "historias_image": {
+        "kind": "historias_post",  # prompts/historias_post_system.md
+        "templates": HISTORIAS_TEMPLATES, "week": HISTORIAS_WEEK,
+        "slot_hours": HISTORIAS_SLOT_HOURS, "network_offsets": {},
+        "history_store": "historias_post_history",
+        "composition": HISTORIAS_IMAGE_COMPOSITION, "text_fill": (255, 255, 255),
+        "rotate": True,  # rota las plantillas por historial: nunca dos iguales seguidas
+        "ai_design": "story",  # look de foto viral de Facebook (collage / foto con texto manuscrito / cartel)
+        "max_hashtags": {"instagram": 6, "facebook": 3},
+        "default_trigger": "dame el próximo post de historias de rescate", "label": "Post historias",
+    },
+    "macrame_image": {
+        "kind": "macrame_post",  # prompts/macrame_post_system.md
+        "templates": MACRAME_TEMPLATES, "week": MACRAME_WEEK,
+        "slot_hours": MACRAME_SLOT_HOURS, "network_offsets": {},
+        "history_store": "macrame_post_history",
+        "composition": MACRAME_IMAGE_COMPOSITION, "text_fill": (255, 255, 255),
+        "card": {"panel": (240, 230, 212), "ink": (74, 52, 38), "accent": (176, 120, 84)},  # lino, cafe, terracota
+        "ai_design": "ad",
+        "ad": {
+            "blob": "warm beige", "blob_hex": (240, 230, 212), "pill": "terracotta peach", "pill_hex": (236, 190, 160),
+            "ink": (74, 52, 38), "ink_name": "brown",
+            "panel": (245, 236, 220),
+            "photo": "the finished macrame piece is the hero of the photo, in sharp focus.",
+        },
+        "max_hashtags": {"instagram": 6, "facebook": 3},
+        "default_trigger": "dame el próximo post de macramé", "label": "Post macramé",
     },
 }
 
 
+def _hex(rgb: tuple) -> str:
+    return "#%02X%02X%02X" % tuple(rgb)
+
+
+def _ai_ad_layout(post: dict, profile: dict, page_name: str) -> str:
+    """Instrucciones (en ingles) para que Meta AI dibuje el post completo como un anuncio de marca
+    de crianza/hogar (estilo infografia calida): titular grande en una burbuja pastel, subtitulo
+    manuscrito, insignias con iconos, burbuja de llamado a la accion, sello de la marca y adornos
+    dibujados a mano, sobre una foto luminosa. Los textos van escritos tal cual (tildes y enes)."""
+    ad = profile["ad"]
+    clean = lambda s: (s or "").strip().rstrip(".").replace('"', "'")  # noqa: E731
+    headline, sub = meme_maker.sentence_case(clean(post["top"])).upper(), clean(post.get("bottom"))
+    words = headline.split()
+    mark = (  # la palabra mas fuerte del titular va resaltada en una pildora de color
+        f' Highlight the words "{" ".join(words[len(words) // 2:][:2])}" inside a rounded {ad["pill"]} pill.'
+        if len(words) > 2 else ""
+    )
+    parts = [
+        f'(a) a wide rounded {ad["blob"]} bubble holding the headline in big, chunky, friendly rounded bold '
+        f'sans-serif capitals, dark {ad["ink_name"]} ({_hex(ad["ink"])}): "{headline}".{mark}',
+    ]
+    if sub:
+        parts.append(f'(b) under it, a handwritten-style subtitle with a hand-drawn underline: "{sub}"')
+    if ad.get("badges"):
+        names = "; ".join(f'"{t}"' for t in ad["badges"])
+        parts.append(f"(c) a row of {len(ad['badges'])} small round pastel badges, each with a simple line icon and a short caption: {names}")
+    cta, cta_sub = ad.get("cta", ("COMENTA EBOOK", "y te envío la guía por mensaje privado"))
+    parts.append(f'(d) a rounded {ad["pill"]} call-to-action bubble with a chat-bubble icon reading "{cta}" '
+                 f'in bold capitals and, below it in small text, "{cta_sub}"')
+    parts.append(f'(e) next to the call-to-action, a small brand seal with a tiny leaf icon and the name "{clean(page_name)}"')
+    photo = f" {ad['photo']}" if ad.get("photo") else ""
+    return (
+        " Design this as a finished, professional square 1:1 social media post for a " + ad.get("brand", "warm family-and-parenting brand") + ". "
+        "Structure: the top 55% of the image is a clean, bright, natural photo with absolutely NO text, icons or "
+        "graphics over it (people, hands and the plate complete and well framed, never cut by the edges);" + photo +
+        f" a thin {_hex(ad['pill_hex'])} accent line separates it from a solid soft cream ({_hex(ad['panel'])}) panel "
+        "that fills the bottom 45%. Inside the panel, centered and stacked with even spacing and equal side margins, "
+        "in this order, in a polished pastel infographic style with a few small hand-drawn doodles (tiny hearts, "
+        f'sparkles, short dash marks) in the panel only: {"; ".join(parts)}. '
+        "Every text spelled EXACTLY as written, with every accent and the letter ñ intact, fully inside the frame with "
+        "at least 5% margin, nothing cut off, nothing overlapping. No other text, no watermark, no borders."
+    )
+
+
+def _ai_story_layout(post: dict, template: str, page_name: str) -> str:
+    """Instrucciones (en ingles) para posts de animales con look de foto viral de Facebook, no de
+    anuncio: H1 collage de 3 paneles (2 fotos reales + 1 ilustracion con globos de dialogo), H2 foto
+    con la voz del animal en texto manuscrito y @pagina, H3 el animal con un cartel de madera que
+    pide una reaccion, H4 foto limpia sin texto (la fuerza va en el caption)."""
+    clean = lambda s: (s or "").strip().rstrip(".").replace('"', "'")  # noqa: E731
+    top, bottom, page = clean(post["top"]), clean(post.get("bottom")), clean(page_name)
+    exact = ("Every text spelled EXACTLY as written, accents, ¿ ¡ and the letter ñ intact, fully inside the frame "
+             "with at least 5% margin. No other text, no logos, no watermark, no borders.")
+    photo = ("a realistic candid smartphone photo filling the whole square 1:1 frame, the animal looking at the "
+             "camera, natural light, slightly imperfect framing like a real phone photo. ")
+    if template == "H1":
+        return (
+            " Design this as a viral Facebook storytelling collage, square 1:1, with no margins: 3 panels in a "
+            "tall-left layout. Left: one tall realistic smartphone photo of the main scene. Top-right: a realistic "
+            "smartphone photo of the same scene a moment later. Bottom-right: a warm, soft 3D-cartoon illustration "
+            "of the happy ending, with two white comic speech bubbles in bold black capitals, one per character: "
+            f'"{top.upper()}" and "{bottom.upper()}". Thin white dividers between panels. ' + exact
+        )
+    if template == "H2":
+        return (
+            f" Design this as a viral Facebook photo post: {photo}Over the calm, empty side of the photo, centered, "
+            "write in a casual dark handwritten marker font, as if the animal were speaking, in 3-4 short lines: "
+            f'"{top}" and, as its own last line with a hand-drawn underline, "{bottom}". '
+            f'At the very bottom-left, small white underlined text: "@{page}". ' + exact
+        )
+    if template == "H3":
+        return (
+            f" Design this as a viral Facebook photo post: {photo}The animal sits next to (or wears around its neck) "
+            "a small hand-made wooden sign with burned lettering in a casual handwritten font that reads: "
+            f'"{top}". The sign is clearly readable and is the only text in the image. ' + exact
+        )
+    return (
+        f" Make this a viral Facebook photo post: {photo}Absolutely NO text, letters, signs, logos or watermark "
+        "anywhere in the image."
+    )
+
+
+def _ai_news_layout(post: dict, source: str) -> str:
+    """Instrucciones (en ingles) para que Meta AI dibuje la tarjeta de noticia completa: ilustracion a
+    sangre, etiqueta NOTICIA, titular grande, dato clave y fuente."""
+    clean = lambda s: (s or "").strip().rstrip(".").replace('"', "'")  # noqa: E731
+    headline, detail = clean(post["top"]).upper(), clean(post.get("bottom"))
+    parts = [
+        '(a) top-left, a small bold neon-red rounded label reading "NEWS" in white capitals',
+        f'(b) in the lower third, over a soft dark gradient, the headline in huge white condensed bold capitals: "{headline}"',
+    ]
+    if detail:
+        parts.append(f'(c) right under the headline, smaller, in a bright accent color (cyan or yellow): "{detail}"')
+    parts.append(f'(d) at the very bottom, tiny and discreet, in light gray: "Source: {clean(source)}"')
+    return (
+        " Design this as a finished, professional gaming-news social media post, square 1:1, full-bleed cinematic "
+        "illustration edge to edge, in the style of a modern esports/news channel graphic. Overlay these text elements, "
+        "each spelled EXACTLY as written, with every accent and the letter ñ intact: " + "; ".join(parts) + ". "
+        "Clean hierarchy, generous margins, every text fully inside the frame with at least 5% margin, nothing cut off, "
+        "nothing overlapping. No other text, no logos, no watermark, no borders."
+    )
+
+
+def _ai_meme_layout(post: dict) -> str:
+    """Instrucciones (en ingles) para que Meta AI dibuje el meme completo: texto superior y, si hay,
+    remate inferior, en blanco con contorno negro grueso sobre la captura."""
+    top = (post["top"] or "").strip().upper().replace('"', "'")
+    bottom = (post.get("bottom") or "").strip().replace('"', "'")
+    text = f'the top text "{top}"' + (f' and the bottom text "{bottom.upper()}"' if bottom else "")
+    return (
+        " Design this as a finished viral meme post, vertical 4:5, full-bleed image edge to edge. Overlay "
+        f"{text} in huge white condensed bold sans-serif capitals with a thick black outline, centered, "
+        + ("top text near the top edge and bottom text near the bottom edge" if bottom else "text near the top edge")
+        + ", with generous margins so nothing is cut off. The text must be spelled EXACTLY as written, accents and the letter ñ intact. No other text, "
+        "no logos, no watermark, no borders."
+    )
+
+
 def _image_post_template(profile_key: str, scheduled_at: Optional[str]) -> str:
-    """Plantilla de la semana tipo del perfil que le toca a este horario."""
+    """Plantilla del post. Con `rotate` en el perfil, la que lleva mas tiempo sin usarse (historial);
+    si no, la de la semana tipo que le toca a este horario."""
+    profile = IMAGE_POST_PROFILES[profile_key]
+    if profile.get("rotate"):
+        recent = [e.get("template") for e in _load_gaming_history(profile["history_store"])]
+        last = {t: max((i for i, r in enumerate(recent) if r == t), default=-1) for t in profile["templates"]}
+        return min(profile["templates"], key=lambda t: last[t])  # empate: la primera (H1..H4)
     try:
         dt = datetime.fromisoformat(scheduled_at)
     except (TypeError, ValueError):
         dt = datetime.now()
-    return IMAGE_POST_PROFILES[profile_key]["week"][dt.weekday()][0 if dt.hour < 16 else 1]
+    return profile["week"][dt.weekday()][0 if dt.hour < 16 else 1]
 
 
 def generate_gaming_post(
@@ -1448,11 +1721,16 @@ def generate_gaming_post(
             on_stage(name)
 
     _stage("idea")
-    template_message = (
-        trigger_message
-        + f"\n\nPlantilla de este post: {template} ({profile['templates'][template]})."
-        + _gaming_history_block(store_name=profile["history_store"])
-    )
+    news_item = None
+    if profile.get("news"):  # noticia real y reciente, que no se haya publicado ya
+        news_item = gaming_news.next_news()
+        template_message = trigger_message + gaming_news.news_block(news_item)
+    else:
+        template_message = (
+            trigger_message
+            + f"\n\nPlantilla de este post: {template} ({profile['templates'][template]})."
+            + _gaming_history_block(store_name=profile["history_store"])
+        )
     provider_pref = (text_provider_pref if text_provider_pref in TEXT_PROVIDER_CHOICES else "auto")
     _provider_attempts: list = []
     reply = _run_stage_with_retry(
@@ -1473,7 +1751,14 @@ def generate_gaming_post(
     _stage("imagen")
     dest_dir.mkdir(parents=True, exist_ok=True)
     base_path = dest_dir / "base.jpg"
-    image_prompt = post["image_prompt"].rstrip() + profile["composition"]
+    ai_design = profile.get("ai_design")  # "card" / "meme": Meta AI dibuja el post completo, con texto
+    image_prompt = post["image_prompt"].rstrip() + (
+        _ai_ad_layout(post, profile, page_name) if ai_design == "ad"
+        else _ai_story_layout(post, template, page_name) if ai_design == "story"
+        else _ai_news_layout(post, news_item["source"]) if ai_design == "news"
+        else _ai_meme_layout(post) if ai_design == "meme"
+        else profile["composition"]
+    )
 
     def _do_generate_image():
         with app._clipgen_lock:
@@ -1484,21 +1769,33 @@ def generate_gaming_post(
             }]}
             generated = auto_pipeline.generate_clips(
                 story, dest_dir, unattended=True, start_index=0,
-                provider="whatsapp", generate_video=False,
+                provider=image_provider if image_provider in auto_pipeline.PROVIDERS else "whatsapp",
+                generate_video=False,
+                aspect="1:1" if ai_design else "3:4",  # Flow: posts cuadrados (los disenados por la IA)
             )
             Path(generated[0]).replace(base_path)
 
     _run_stage_with_retry(
         _do_generate_image,
         attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-        on_retry=lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION),
+        on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider != "flow" else None,
         stage_label="imagen",
     )
-    meme_maker.render_meme(
-        base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG,
-        fill=profile["text_fill"],
-    )
+    if ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
+        meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_SQUARE)
+    elif profile.get("card"):  # tarjeta editorial: texto en un panel, no sobre la foto
+        meme_maker.render_card(
+            base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG, **profile["card"],
+        )
+    else:
+        meme_maker.render_meme(
+            base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG,
+            fill=profile["text_fill"],
+        )
     base_path.unlink(missing_ok=True)
+    if news_item:
+        gaming_news.mark_used(news_item)  # solo si el post salio completo
+        post["news_link"] = news_item["link"]
     return post
 
 
@@ -1518,14 +1815,14 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
     profile = IMAGE_POST_PROFILES[profile_key]
     template = _image_post_template(profile_key, project["videos"][index].get("scheduled_at"))
     dest_dir = video_maker.VIDEO_PUBLIC_DIR / story_id
-    dest_path = dest_dir / "cover.jpg"  # 4:5 con texto (Facebook e Instagram)
+    dest_path = dest_dir / "cover.jpg"  # con texto, cuadrada 1:1 (Facebook e Instagram)
 
     try:
         post = generate_gaming_post(
             _project_page_name(project),
             profile["default_trigger"] if project.get("type") in MIXED_TYPES
             else project.get("trigger_message", profile["default_trigger"]),
-            "whatsapp",
+            project.get("video_settings", {}).get("image_provider", "whatsapp"),
             dest_dir,
             template,
             on_stage=lambda stage: _set_stage(project_id, index, stage),
@@ -1821,7 +2118,32 @@ def _public_image_url(project_id: str, index: int) -> Optional[str]:
     return f"{base}/api/batch/cover/{project_id}/{index}"
 
 
-def _build_publish_content(script_text: str, fallback_title: str, rescue: bool = False) -> dict:
+_COPY_LABELS = re.compile(r"^(FACEBOOK|INSTAGRAM):[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
+
+
+def _story_copy_llm(script_text: str) -> Optional[dict]:
+    """Texto de Facebook/Instagram redactado por la IA para el video de Historias (prompts/
+    historias_copy_system.md), en vez de un extracto del guion. None si no hay IA o la respuesta
+    no sirve: el llamador usa entonces el texto deterministico."""
+    try:
+        text, _ = text_provider.generate_text(
+            (_PROMPTS_DIR / "historias_copy_system.md").read_text(encoding="utf-8"),
+            f"Guion del video:\n{script_text}", max_tokens=1200, temperature=0.8,
+        )
+    except Exception as e:
+        logger.warning("batch: copy de historias por IA fallo (%s); texto deterministico", e)
+        return None
+    parts = _COPY_LABELS.split(text)  # ['', 'FACEBOOK', fb, 'INSTAGRAM', ig]
+    found = {parts[i].upper(): parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
+    copy = {k: found.get(k.upper(), "") for k in ("FACEBOOK", "INSTAGRAM")}
+    if all(120 <= len(v) <= 1200 and "[" not in v and "#" in v for v in copy.values()):
+        return {"facebook": copy["FACEBOOK"], "instagram": copy["INSTAGRAM"]}
+    logger.warning("batch: copy de historias por IA con formato invalido; texto deterministico")
+    return None
+
+
+def _build_publish_content(script_text: str, fallback_title: str, rescue: bool = False,
+                           story_copy: bool = False) -> dict:
     """Genera titulo/descripcion/tags igual que el flujo manual (mismas
     funciones que usan /api/seo/suggest y /api/seo/suggest-social) para que
     el lote nunca publique con esos campos vacios. El titulo se comparte
@@ -1833,10 +2155,12 @@ def _build_publish_content(script_text: str, fallback_title: str, rescue: bool =
             "title": fallback_title, "yt_description": "", "yt_tags": [],
             "facebook_description": "", "instagram_description": "",
         }
+    script_text = re.sub(r"\[([^\]]+)\]", lambda m: m.group(1).title(), script_text)  # [LUNA] -> Luna
     seo = seo_optimizer.suggest_seo(script_text, rescue=rescue)
-    if rescue:
-        facebook_description = seo_optimizer.suggest_rescue_copy(script_text, "facebook")
-        instagram_description = seo_optimizer.suggest_rescue_copy(script_text, "instagram")
+    if rescue or story_copy:  # Historias: texto de la IA; si falla, el de rescate (hashtags validados)
+        written = _story_copy_llm(script_text) if story_copy else None
+        facebook_description = written["facebook"] if written else seo_optimizer.suggest_rescue_copy(script_text, "facebook")
+        instagram_description = written["instagram"] if written else seo_optimizer.suggest_rescue_copy(script_text, "instagram")
     else:
         social = seo_optimizer.suggest_social_caption(script_text)
         facebook_description = social["caption"]
@@ -2008,8 +2332,11 @@ def _publish_batch_video(project_id: str, index: int) -> None:
 
     project = get_project(project_id)
     video = project["videos"][index]
-    content = _build_publish_content(video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project))
-    if _text_kind_for_page(_project_page_name(project)) == BEBE_HEROE_KIND:
+    kind = _text_kind_for_page(_project_page_name(project))
+    content = _build_publish_content(
+        video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project), story_copy=_project_page_name(project).strip().upper() == RESCUE_PAGE_NAME,
+    )
+    if kind == BEBE_HEROE_KIND:
         copy = _bebe_heroe_copy(video)
         content.update(
             title=copy["title"], facebook_description=copy["description"],
@@ -2143,7 +2470,7 @@ def gaming_youtube_fields(seo: Optional[dict], title: str, caption: str) -> tupl
 
 def shorts_text(title: str, description: str) -> tuple:
     """Titulo (<=100) y descripcion con #Shorts para subir un clip 9:16 a YouTube."""
-    title = (title or "Clip gaming").strip()[:100]
+    title = (title or "Gaming clip").strip()[:100]
     description = (description or "").strip()
     if "#shorts" not in description.lower():
         description = f"{description}\n\n#Shorts".strip()
@@ -2258,7 +2585,8 @@ def run_publish_tick(running: Optional[list] = None) -> list:
                 t.start()
                 started.append(t)
 
-        if videos and all(v["status"] == "published" for v in videos):
+        active = [v for v in videos if v["status"] != "removed"]
+        if active and all(v["status"] == "published" for v in active):
             with _lock:
                 fresh = _load()
                 if project_id in fresh:

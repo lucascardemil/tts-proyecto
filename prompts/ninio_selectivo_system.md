@@ -68,7 +68,7 @@ HOOK_TEXT: 3 a 6 palabras + un emoji, expresando una contradicción
 (ej: "No es capricho 🍽️", "La mesa no es una batalla 🕊️").
 
 PERSONAJES:
-[NOMBRE]: descripción EN INGLÉS de 40-60 palabras: edad aproximada, género,
+[NOMBRE]: descripción 100% EN INGLÉS (never Spanish: "4 years old", no "4 años"; "curly hair", no "pelo rizado") de 40-60 palabras: edad aproximada, género,
 pelo, ojos, ropa, expresión. Etiquetas en MAYÚSCULAS (ej: [HIJO], [MAMA],
 [PAPA], [ABUELA]). El plato y la mesa se describen dentro del prompt de cada
 imagen, no como personaje.

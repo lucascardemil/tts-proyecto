@@ -58,31 +58,31 @@ HISTORY_MAX = 200
 GAMES = {
     "cs2": {
         "label": "Counter-Strike 2", "slug": "counter-strike-2", "short": "CS2", "kills": True,
-        "tags": ["#cs2", "#counterstrike2", "#cs2clips", "#jugadasepicas", "#gaming", "#fps", "#viral", "#gamer"],
+        "tags": ["#cs2", "#counterstrike2", "#cs2clips", "#epicplays", "#gaming", "#fps", "#viral", "#gamer"],
     },
     "minecraft": {
         "label": "Minecraft", "slug": "minecraft", "short": "MINECRAFT", "kills": False,
-        "tags": ["#minecraft", "#minecraftpvp", "#minecraftclips", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp"],
+        "tags": ["#minecraft", "#minecraftpvp", "#minecraftclips", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp"],
     },
     "valorant": {
         "label": "Valorant", "slug": "valorant", "short": "VALORANT", "kills": True,
-        "tags": ["#valorant", "#valorantclips", "#valorantace", "#jugadasepicas", "#gaming", "#fps", "#viral", "#gamer"],
+        "tags": ["#valorant", "#valorantclips", "#valorantace", "#epicplays", "#gaming", "#fps", "#viral", "#gamer"],
     },
     "roblox": {
         "label": "Roblox", "slug": "roblox", "short": "ROBLOX", "kills": False,
-        "tags": ["#roblox", "#robloxclips", "#robloxedit", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp"],
+        "tags": ["#roblox", "#robloxclips", "#robloxedit", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp"],
     },
     "fortnite": {
         "label": "Fortnite", "slug": "fortnite", "short": "FORTNITE", "kills": True,
-        "tags": ["#fortnite", "#fortniteclips", "#fortnitebr", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp"],
+        "tags": ["#fortnite", "#fortniteclips", "#fortnitebr", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp"],
     },
     "marvel-rivals": {
         "label": "Marvel Rivals", "slug": "marvel-rivals", "short": "MARVEL RIVALS", "kills": True,
-        "tags": ["#marvelrivals", "#marvelrivalsclips", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp", "#clips"],
+        "tags": ["#marvelrivals", "#marvelrivalsclips", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp", "#clips"],
     },
     "peak": {
         "label": "PEAK", "slug": "peak", "short": "PEAK", "kills": False,
-        "tags": ["#peak", "#peakgame", "#peakclips", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp"],
+        "tags": ["#peak", "#peakgame", "#peakclips", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp"],
     },
 }
 # Orden de rotacion cuando el lote no fija un juego ("mix"): los de mejor
@@ -114,7 +114,7 @@ def _game_from_trending(entry: dict) -> dict:
     return {
         "label": name, "slug": slug, "short": name.upper()[:18],
         "kills": any(h in slug for h in _KILL_GAME_HINTS),
-        "tags": [f"#{compact}", f"#{compact}clips", "#jugadasepicas", "#gaming", "#viral", "#gamer", "#fyp", "#clips"],
+        "tags": [f"#{compact}", f"#{compact}clips", "#epicplays", "#gaming", "#viral", "#gamer", "#fyp", "#clips"],
     }
 
 
@@ -187,12 +187,7 @@ _cached = job_store.load(TRENDING_STORE).get("entries")
 if _cached:
     _apply_trending(_cached)
 
-HOOKS = [
-    "JUGADA DE LOCOS", "NO PUEDE SER REAL", "MIRÁ HASTA EL FINAL", "ESTO ES ILEGAL",
-    "NADIE LO VIO VENIR", "¿CÓMO LO HIZO?", "ESTO NO ES NORMAL", "ÉPICO O SUERTE?",
-]
-# Textos EN PANTALLA del video (en ingles, misma posicion que HOOKS): el caption/titulo de
-# Facebook e Instagram siguen en español.
+# Todo el texto del clip (pantalla, titulo y caption de Facebook/Instagram, YouTube) va en ingles.
 HOOKS_EN = [
     "INSANE PLAY", "THIS CAN'T BE REAL", "WATCH TILL THE END", "THIS IS ILLEGAL",
     "NOBODY SAW IT COMING", "HOW DID HE DO THAT?", "THIS ISN'T NORMAL", "EPIC OR LUCKY?",
@@ -379,12 +374,11 @@ def detect_beats(path: Path, seconds: float, max_beats: int = MAX_BEATS) -> list
 
 def build_texts(clip: dict, game: dict) -> dict:
     rng = random.Random(clip["id"])  # mismo clip -> mismos textos
-    hook = rng.choice(HOOKS)
-    screen_hook = HOOKS_EN[HOOKS.index(hook)]
+    screen_hook = rng.choice(HOOKS_EN)
     cta = rng.choice(CTAS)
-    author = clip.get("author") or "su autor"
+    author = clip.get("author") or "its author"
     caption = (
-        f"{hook.capitalize()} 🔥\n\n¿Suerte o skill? Contame en los comentarios 👇\n\n"
+        f"{screen_hook.capitalize()} 🔥\n\nLuck or skill? Tell me in the comments 👇\n\n"
         f"🎮 {game['label']}\n📹 Clip: @{author} (Medal)\n\n" + " ".join(game["tags"])
     )
     words = screen_hook.split(" ")
@@ -393,7 +387,7 @@ def build_texts(clip: dict, game: dict) -> dict:
         "hook_highlight": [len(words) - 1],
         "tag": f"{game['short']} · EPIC PLAY",
         "cta": cta,
-        "title": f"{hook.capitalize()} 🎮 {game['label']}"[:100],
+        "title": f"{screen_hook.capitalize()} 🎮 {game['label']}"[:100],
         "caption": caption,
     }
 

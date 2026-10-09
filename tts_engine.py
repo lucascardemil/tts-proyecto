@@ -485,10 +485,40 @@ def _get_verify_whisper_model():
     return _verify_whisper_model
 
 
+_UNITS = ("cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once",
+          "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve", "veinte",
+          "veintiuno", "veintidos", "veintitres", "veinticuatro", "veinticinco", "veintiseis", "veintisiete",
+          "veintiocho", "veintinueve")
+_TENS = {3: "treinta", 4: "cuarenta", 5: "cincuenta", 6: "sesenta", 7: "setenta", 8: "ochenta", 9: "noventa"}
+_HUNDREDS = {1: "ciento", 2: "doscientos", 3: "trescientos", 4: "cuatrocientos", 5: "quinientos", 6: "seiscientos",
+             7: "setecientos", 8: "ochocientos", 9: "novecientos"}
+
+
+def _spanish_number(n: int) -> str:
+    """Numero entero (0-999999) en palabras, sin acentos: "4" -> "cuatro". El guion puede traer cifras y
+    Whisper escribirlas con letras (o al reves): se comparan siempre con letras."""
+    if n < 30:
+        return _UNITS[n]
+    if n < 100:
+        tens, unit = divmod(n, 10)
+        return _TENS[tens] + (f" y {_UNITS[unit]}" if unit else "")
+    if n == 100:
+        return "cien"
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        return _HUNDREDS[hundreds] + (f" {_spanish_number(rest)}" if rest else "")
+    thousands, rest = divmod(n, 1000)
+    head = "mil" if thousands == 1 else f"{_spanish_number(thousands)} mil"
+    return head + (f" {_spanish_number(rest)}" if rest else "")
+
+
 def _normalize_words(text: str) -> list:
-    """Minúsculas, sin acentos, sin puntuación — para comparar texto pedido vs. transcripto sin falsos positivos."""
+    """Minúsculas, sin acentos, sin puntuación, cifras en palabras — para comparar texto pedido vs. transcripto
+    sin falsos positivos."""
     text = unicodedata.normalize("NFKD", text.lower())
     text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"(?<=\d)[.,](?=\d{3}\b)", "", text)  # 1.500 -> 1500
+    text = re.sub(r"\d{1,6}", lambda m: f" {_spanish_number(int(m.group()))} ", text)
     text = re.sub(r"[^\w\s]", " ", text)
     return text.split()
 
@@ -1016,6 +1046,18 @@ NARRATION_NOISE_TOLERANCE = 0.03
 # Solo es "ruido" (tolerado) una sustitucion casi identica ("colgador"/"colgadora",
 # 0.94); "ansia" por "anciana" (0.83) es una palabra distinta y cuenta como cambio.
 _NOISE_CHAR_RATIO = 0.9
+# Un mismo cambio repetido ("aanya"->"anja" dos veces) es una forma distinta de escribir un nombre o palabra
+# rara, no un error del audio: el TTS no se equivoca igual cada vez.
+_REPEATED_VARIANT_RATIO = 0.6
+
+
+def _phonetic_key(words: str) -> str:
+    """Como suena en español latinoamericano (seseo): "crees en" y "crecen" dan la misma clave."""
+    t = words.replace(" ", "")
+    for a, b in (("qu", "k"), ("ce", "se"), ("ci", "si"), ("z", "s"), ("c", "k"), ("v", "b"), ("ll", "y"),
+                 ("ge", "je"), ("gi", "ji"), ("h", ""), ("w", "u")):
+        t = t.replace(a, b)
+    return re.sub(r"(.)\1+", r"\1", t)
 
 
 def narration_diff(script: str, transcript: str) -> dict:
@@ -1043,8 +1085,15 @@ def narration_diff(script: str, transcript: str) -> dict:
             if (i2 - i1 == j2 - j1 == 1
                     and difflib.SequenceMatcher(a=a, b=b).ratio() >= _NOISE_CHAR_RATIO):
                 noise.append(pair)
+            elif difflib.SequenceMatcher(a=_phonetic_key(a), b=_phonetic_key(b)).ratio() >= _NOISE_CHAR_RATIO:
+                noise.append(pair)  # suena igual, escrito distinto: "crees en" / "crecen"
             else:
                 changed.append(pair)
+    repeated = {p for p in changed if changed.count(p) >= 2
+                and difflib.SequenceMatcher(a=p[0], b=p[1]).ratio() >= _REPEATED_VARIANT_RATIO}
+    if repeated:
+        noise += [p for p in changed if p in repeated]
+        changed = [p for p in changed if p not in repeated]
     removed_words = sum(len(r.split()) for r in removed)
     changed_words = sum(len(c[0].split()) for c in changed)
     allowed = max(1, round(NARRATION_NOISE_TOLERANCE * len(exp)))

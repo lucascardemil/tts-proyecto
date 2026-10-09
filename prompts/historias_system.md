@@ -41,9 +41,15 @@ HOOK_TEXT: 3 a 6 palabras + un emoji, expresando una contradicción
 (ej: "Todos lo odiaban por ladrón 🐕", "Nadie quería acercarse a él 🌧️").
 
 PERSONAJES:
-[NOMBRE]: descripción EN INGLÉS de 40-60 palabras: especie/raza, edad, tamaño,
+[NOMBRE]: descripción 100% EN INGLÉS (never Spanish: "8 years old", no "8 años"; "golden fur", no "pelaje dorado") de 40-60 palabras: especie/raza, edad, tamaño,
 color exacto y patrón de pelaje, ojos, rasgos distintivos, ropa/accesorios.
 Usa nombres de etiqueta en MAYÚSCULAS (ej: [PERRO], [GATA], [RESCATISTA]).
+
+NOMBRES EN LA NARRACIÓN: inventa un nombre propio distinto y poco común para el
+animal y otro para la persona en CADA historia; varía origen y sonido (Tobías,
+Nuri, Bruno, Zoe, Iker, Amaya, Chispa, Ñaño, Mirta...). Evita los nombres más
+repetidos: Luna, Max, Bella, Rocky, Canela, Marco, Marcos, Mateo, Sofía.
+Si el mensaje trae "Nombres y lugares ya usados", no uses ninguno de ellos.
 
 Guion
 Narración completa en español, 110-160 palabras, escrita en un solo bloque,
@@ -67,7 +73,12 @@ REGLAS:
 - "PERSONAJES:" va antes del bloque "Guion".
 - Cada "Imagen N" tiene exactamente 3 líneas: "Imagen N", "Frase del guion: «...»"
   y "Prompt: [...]".
-- Prompts de imagen EN INGLÉS; narración y HOOK_TEXT en español.
+- Prompts de imagen SIEMPRE EN INGLÉS, NUNCA en español ni una sola palabra
+  (la IA de imágenes rinde mucho mejor en inglés). Cada prompt es una
+  descripción visual en inglés natural y concreta, por ejemplo: "9:16 vertical,
+  photorealistic, warm and hopeful: medium close-up of [PERRO] looking up at the
+  old fisherman on a wooden pier at sunrise, soft golden backlight, gentle
+  expression". Solo la narración, la "Frase del guion" y HOOK_TEXT van en español.
 - De 8 a 10 imágenes. La Imagen 1 es el momento más emotivo, nunca el más crudo.
 - LA TRANSFORMACIÓN SE MUESTRA EN 2 ESCENAS SECUENCIALES (NO split screen):
   Imagen penúltima: el animal en transición (llegando, siendo recibido, primera

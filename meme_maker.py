@@ -20,6 +20,7 @@ FONT_PATH = Path(__file__).parent / "fonts" / "Anton-Regular.ttf"
 
 # (ancho, alto) finales.
 SIZE_IG = (1080, 1350)  # 4:5
+SIZE_SQUARE = (1080, 1080)  # 1:1 (anuncios disenados por la IA)
 
 MARGIN_X = 0.06  # fraccion del ancho
 MARGIN_Y = 0.055  # fraccion del alto (el workflow pide ~80px de 1350)
@@ -177,5 +178,99 @@ def render_meme(
         img = _crop_to(_trim_dark_borders(base.convert("RGB")), size)
     _draw_text(img, top, at_top=True, fill=fill)
     _draw_text(img, bottom or "", at_top=False, fill=fill)
+    img.save(out_path, "JPEG", quality=92)
+    return out_path
+
+
+# ── Tarjeta editorial (posts de Niño selectivo y Macramé) ─────────────────────
+# Foto limpia arriba y un panel de color de marca abajo con el titular y el remate: el texto nunca
+# tapa la cara ni las manos. Georgia Bold/Italic del sistema (o Cambria) y, si no hay, Anton.
+
+CARD_PHOTO_FRAC = 0.65  # fraccion del alto que ocupa la foto
+CARD_ACCENT_H = 10  # franja de color entre la foto y el panel
+CARD_PAD_X = 0.08
+_SERIF_BOLD = ("C:/Windows/Fonts/georgiab.ttf", "C:/Windows/Fonts/cambriab.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf")
+_SERIF_ITALIC = ("C:/Windows/Fonts/georgiai.ttf", "C:/Windows/Fonts/cambriai.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf")
+
+
+def _serif(candidates: tuple, px: int) -> ImageFont.FreeTypeFont:
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, px)
+        except OSError:
+            continue
+    return _font(px)
+
+
+def fit_post(base_path: Path, out_path: Path, size: tuple) -> Path:
+    """Imagen ya diseñada (con su texto) -> JPEG recortado al centro a `size`, sin bordes negros."""
+    with Image.open(base_path) as base:
+        _crop_to(_trim_dark_borders(base.convert("RGB")), size).save(out_path, "JPEG", quality=92)
+    return out_path
+
+
+def sentence_case(text: str) -> str:
+    return _sentence_case(text)
+
+
+def _sentence_case(text: str) -> str:
+    """"NO ES MAÑA" -> "No es maña": en una tarjeta sobria el titular no grita."""
+    text = (text or "").strip()
+    if text.isupper():
+        text = text.lower()
+    return text[:1].upper() + text[1:]
+
+
+def _fit_serif(draw, text: str, candidates: tuple, max_width: int, max_height: int, start: int, floor: int, gap: float):
+    px = start
+    while True:
+        font = _serif(candidates, px)
+        lines = _wrap(draw, text, font, max_width)
+        widest = max((draw.textlength(line, font=font) for line in lines), default=0)
+        if (widest <= max_width and len(lines) * px * gap <= max_height) or px <= floor:
+            return font, lines
+        px -= 2
+
+
+def render_card(
+    base_path: Path, headline: str, subline: Optional[str], out_path: Path, size: tuple,
+    panel: tuple = (251, 243, 228), ink: tuple = (59, 42, 32), accent: tuple = (214, 106, 79),
+) -> Path:
+    """Escribe en `out_path` (JPEG) una tarjeta `size`: foto arriba, franja de acento y panel de color
+    con el titular (serif en negrita) y el remate (cursiva, color de acento)."""
+    w, h = size
+    photo_h = int(h * CARD_PHOTO_FRAC)
+    with Image.open(base_path) as base:
+        photo = _crop_to(_trim_dark_borders(base.convert("RGB")), (w, photo_h))
+    img = Image.new("RGB", size, panel)
+    img.paste(photo, (0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((0, photo_h, w, photo_h + CARD_ACCENT_H), fill=accent)
+
+    top = photo_h + CARD_ACCENT_H
+    area_h = h - top
+    pad = int(h * 0.04)
+    max_w = int(w * (1 - 2 * CARD_PAD_X))
+    head = _sentence_case(headline)
+    sub = (subline or "").strip().rstrip(".")
+    sub_h_budget = int(area_h * 0.30) if sub else 0
+    head_font, head_lines = _fit_serif(
+        draw, head, _SERIF_BOLD, max_w, area_h - 2 * pad - sub_h_budget, int(w * 0.082), int(w * 0.05), 1.18,
+    )
+    head_h = len(head_lines) * head_font.size * 1.18
+    sub_font = sub_lines = None
+    sub_h = 0
+    if sub:
+        sub_font, sub_lines = _fit_serif(draw, sub, _SERIF_ITALIC, max_w, sub_h_budget, int(w * 0.05), int(w * 0.034), 1.25)
+        sub_h = len(sub_lines) * sub_font.size * 1.25
+    gap = int(h * 0.02) if sub else 0
+    y = top + (area_h - (head_h + gap + sub_h)) / 2  # bloque centrado en el panel
+    for line in head_lines:
+        draw.text((w / 2, y), line, font=head_font, fill=ink, anchor="ma")
+        y += head_font.size * 1.18
+    y += gap
+    for line in sub_lines or []:
+        draw.text((w / 2, y), line, font=sub_font, fill=accent, anchor="ma")
+        y += sub_font.size * 1.25
     img.save(out_path, "JPEG", quality=92)
     return out_path

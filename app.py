@@ -630,10 +630,17 @@ HTML = r"""<!DOCTYPE html>
       </div>
       <select id="pipeline-type">
         <option value="video">Video completo (guion + clips + audio)</option>
-        <option value="gaming_image">Post de imagen — Gaming viral (4:5, Facebook + Instagram)</option>
+        <option value="gaming_image">Post de noticias — Videojuegos (4:5, Facebook + Instagram)</option>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
+        <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
+        <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
+        <option value="mix_ninio">Mixto — Niño selectivo (video + post de imagen)</option>
+        <option value="mix_gaming">Mixto — Gaming (alterna clip y post)</option>
+        <option value="mix_macrame">Mixto — Macramé (video + post de imagen)</option>
+        <option value="mix_historias">Mixto — Historias (video + post de imagen)</option>
       </select>
+      <p class="card-desc" id="pipeline-mixed-hint" style="display:none">Genera un video y un post de imagen a la vez (el post espera su turno en la cola de imágenes). En Gaming alterna: cada vez hace la que toca, clip o post.</p>
 
       <div class="field-label-row" style="margin-top:14px">
         <label for="pipeline-page">Página</label>
@@ -710,7 +717,17 @@ HTML = r"""<!DOCTYPE html>
         <option value="600" class="duration-long-option">10 minutos</option>
       </select>
 
-      <input type="hidden" id="pipeline-provider" value="whatsapp"><!-- único generador de clips -->
+      <div class="field-label-row" style="margin-top:14px">
+        <label for="pipeline-provider">Crear las imágenes con</label>
+      </div>
+      <select id="pipeline-provider">
+        <option value="whatsapp">WhatsApp / Meta IA</option>
+        <option value="flow">Google Flow (solo imágenes)</option>
+      </select>
+      <div data-flow-box="pipeline-provider" style="display:none;margin-top:6px;font-size:13px">
+        <span data-flow-status></span>
+        <button class="btn-sm" type="button" data-flow-open>Abrir Flow</button>
+      </div>
 
       <label class="checkbox-row" for="pipeline-subtitles-enabled">
         <input type="checkbox" id="pipeline-subtitles-enabled" checked>
@@ -728,7 +745,19 @@ HTML = r"""<!DOCTYPE html>
       </label>
       </div>
 
-      <div id="pipeline-gaming-only-fields" style="display:none"></div>
+      <div id="pipeline-gaming-only-fields" style="display:none">
+        <div class="field-label-row" style="margin-top:14px">
+        <label for="pipeline-image-provider">Crear la imagen del post con</label>
+      </div>
+      <select id="pipeline-image-provider">
+        <option value="whatsapp">WhatsApp / Meta IA</option>
+        <option value="flow">Google Flow (solo imágenes)</option>
+      </select>
+      <div data-flow-box="pipeline-image-provider" style="display:none;margin-top:6px;font-size:13px">
+        <span data-flow-status></span>
+        <button class="btn-sm" type="button" data-flow-open>Abrir Flow</button>
+      </div>
+      </div>
 
 
 
@@ -955,6 +984,7 @@ HTML = r"""<!DOCTYPE html>
           <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> Videos generados</h2>
           <p class="card-desc">Elegí un video ya generado para publicarlo en redes sociales.</p>
           <button class="btn-sm" id="historial-refresh-btn">⟳ Actualizar</button>
+          <button class="btn-sm" id="historial-delete-all-btn">🗑️ Eliminar todos</button>
           <div id="historial-grid" class="hist-grid"></div>
         </div>
       </div>
@@ -983,11 +1013,15 @@ HTML = r"""<!DOCTYPE html>
       </div>
       <select id="lote-type">
         <option value="video">Video completo (guion + clips + audio)</option>
-        <option value="gaming_image">Post de imagen — Gaming viral (4:5, Facebook + Instagram)</option>
+        <option value="gaming_image">Post de noticias — Videojuegos (4:5, Facebook + Instagram)</option>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
+        <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
+        <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (1 video, 1 post, 1 video, 1 post…)</option>
         <option value="mix_gaming">Mixto — Gaming (1 clip, 1 post, 1 clip, 1 post…)</option>
+        <option value="mix_macrame">Mixto — Macramé (1 video, 1 post, 1 video, 1 post…)</option>
+        <option value="mix_historias">Mixto — Historias (1 video, 1 post, 1 video, 1 post…)</option>
       </select>
       <p class="card-desc" id="lote-mixed-hint" style="display:none">El total se reparte solo, alternando video y post (10 = 5 y 5; si es impar, el video lleva uno más). Usa los horarios del post de imagen del nicho.</p>
 
@@ -997,7 +1031,12 @@ HTML = r"""<!DOCTYPE html>
         </div>
         <select id="lote-image-provider">
           <option value="whatsapp">WhatsApp / Meta IA</option>
+          <option value="flow">Google Flow</option>
         </select>
+        <div data-flow-box="lote-image-provider" style="display:none;margin-top:6px;font-size:13px">
+          <span data-flow-status></span>
+          <button class="btn-sm" type="button" data-flow-open>Abrir Flow</button>
+        </div>
       </div>
 
       <div id="lote-clip-only-fields" style="display:none">
@@ -1082,7 +1121,17 @@ HTML = r"""<!DOCTYPE html>
               <option value="horizontal">Horizontal 16:9 (YouTube estándar)</option>
             </select>
           </div>
-          <input type="hidden" id="lote-provider" value="whatsapp"><!-- único generador de clips -->
+          <div class="field-label-row" style="margin-top:14px">
+        <label for="lote-provider">Crear las imágenes con</label>
+      </div>
+      <select id="lote-provider">
+        <option value="whatsapp">WhatsApp / Meta IA</option>
+        <option value="flow">Google Flow (solo imágenes)</option>
+      </select>
+      <div data-flow-box="lote-provider" style="display:none;margin-top:6px;font-size:13px">
+        <span data-flow-status></span>
+        <button class="btn-sm" type="button" data-flow-open>Abrir Flow</button>
+      </div>
         </div>
 
         <div class="field-label-row" style="margin-top:14px">
@@ -1338,6 +1387,37 @@ async function loadHistorialVideos() {
 }
 $("historial-refresh-btn").addEventListener("click", loadHistorialVideos);
 
+$("historial-delete-all-btn").addEventListener("click", async () => {
+  const items = [...document.querySelectorAll("#historial-grid .hist-item")];
+  if (!items.length) { await appAlert("No hay videos en el historial.", "Historial"); return; }
+  const ok = await appConfirm(
+    `¿Eliminar los ${items.length} videos del historial? Se borran los videos, audios, clips fuente y todo registro asociado. Esta acción no se puede deshacer.`,
+    { title: "Eliminar todos los videos", confirmLabel: "Eliminar todos" }
+  );
+  if (!ok) return;
+  // Soltar los streams abiertos (miniaturas y reproductor) para que Windows no bloquee los archivos.
+  document.querySelectorAll("#historial-grid video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });
+  $("pipeline-player").pause(); $("pipeline-player").removeAttribute("src"); $("pipeline-player").load();
+  const btn = $("historial-delete-all-btn");
+  btn.disabled = true;
+  let failed = 0;
+  for (const [i, item] of items.entries()) {
+    btn.textContent = `Eliminando ${i + 1}/${items.length}…`;
+    const filename = item.querySelector(".hist-item-name").textContent;
+    try {
+      const res = await fetch(`/api/videos/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      if (!(await res.json()).ok) failed++;
+    } catch (e) { failed++; }
+  }
+  btn.disabled = false;
+  btn.textContent = "🗑️ Eliminar todos";
+  currentVideoPath = null;
+  $("pipeline-result").classList.remove("visible");
+  $("historial-publish-hint").style.display = "";
+  await loadHistorialVideos();
+  if (failed) await appAlert(`${failed} video(s) no se pudieron eliminar (en uso). Cerrá la vista previa e intentá de nuevo.`, "Historial");
+});
+
 async function deleteHistorialVideo(filename, item) {
   const ok = await appConfirm(
     `¿Eliminar "${filename}"? Se borra el video, el audio narrado, los clips fuente y todo registro asociado (generación y publicaciones). Esta acción no se puede deshacer.`,
@@ -1524,26 +1604,68 @@ function updatePipelineStyleVisibility() {
   $("pipeline-style-wrap").style.display = page === "Historias" && !isGaming ? "" : "none";
 }
 
+// Selector "WhatsApp / Google Flow": con Flow se muestra su estado y el boton para abrir su navegador,
+// y (en videos) se desactivan los clips animados, que Flow no genera.
+async function refreshFlowStatus(box) {
+  const out = box.querySelector("[data-flow-status]");
+  out.textContent = "Comprobando Flow…";
+  try {
+    const data = await (await fetch("/api/flow/status")).json();
+    out.textContent = (data.state === "ok" ? "✅ " : "⚠️ ") + (data.message || "");
+  } catch (e) { out.textContent = "⚠️ No se pudo consultar Flow."; }
+}
+function wireFlowProvider(selectId, clipsCheckboxId) {
+  const sel = $(selectId);
+  const box = document.querySelector(`[data-flow-box="${selectId}"]`);
+  const update = () => {
+    const flow = sel.value === "flow";
+    box.style.display = flow ? "" : "none";
+    if (clipsCheckboxId) {
+      $(clipsCheckboxId).disabled = flow;
+      if (flow) $(clipsCheckboxId).checked = false;
+    }
+    if (flow) refreshFlowStatus(box);
+  };
+  sel.addEventListener("change", update);
+  box.querySelector("[data-flow-open]").addEventListener("click", async () => {
+    try { await fetch("/api/flow/launch", { method: "POST" }); } catch (e) {}
+    setTimeout(() => refreshFlowStatus(box), 4000);
+  });
+  update();
+}
+wireFlowProvider("pipeline-provider", "pipeline-generate-video-clips");
+wireFlowProvider("pipeline-image-provider");
+wireFlowProvider("lote-provider", "lote-generate-video-clips");
+wireFlowProvider("lote-image-provider");
+
 let gamingJobId = null;
+let lastGamingJobType = null; // tipo del ultimo post renderizado (para regenerar en un mixto)
 try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
 // Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
-const isPostType = (type) => type.startsWith("gaming_") || type === "ninio_image";
-const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image";
+const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
-  ninio_image: "dame el próximo post de niño selectivo",
-  mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming",
+  ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
+  historias_image: "dame el próximo post de historias de rescate", mix_historias: "dame una historia",
+  mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming", mix_macrame: "dame una historia",
 };
-const isMixedType = (type) => type === "mix_ninio" || type === "mix_gaming";
+// Cada mixto alterna estos dos tipos (igual que MIXED_TYPES en batch_pipeline.py).
+const MIXED_PAIRS = {
+  mix_ninio: ["video", "ninio_image"], mix_gaming: ["gaming_clip", "gaming_image"], mix_macrame: ["video", "macrame_image"], mix_historias: ["video", "historias_image"],
+};
+const isMixedType = (type) => type in MIXED_PAIRS;
 function updatePipelineTypeVisibility() {
   const type = $("pipeline-type").value;
   const isGaming = isPostType(type);
-  $("pipeline-video-only-fields").style.display = isGaming ? "none" : "";
-  $("pipeline-gaming-only-fields").style.display = isImagePostType(type) ? "" : "none";
-  $("pipeline-clip-only-fields").style.display = type === "gaming_clip" ? "" : "none";
-  $("pipeline-start-label").textContent = type === "gaming_clip" ? "Generar clip" : isGaming ? "Generar post" : "Generar video";
+  const mixed = isMixedType(type);
+  $("pipeline-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
+  $("pipeline-gaming-only-fields").style.display = (isImagePostType(type) || type === "mix_gaming") ? "" : "none";
+  $("pipeline-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
+  $("pipeline-mixed-hint").style.display = mixed ? "" : "none";
+  $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : isGaming ? "Generar post" : "Generar video";
   $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
-  if (isGaming && gamingJobId) pollGamingJob();
+  if ((isGaming || mixed) && gamingJobId) pollGamingJob();
   updatePipelineStyleVisibility();
 }
 $("pipeline-type").addEventListener("change", updatePipelineTypeVisibility);
@@ -1897,7 +2019,10 @@ $("gaming-yt-connect-btn").addEventListener("click", () =>
 function renderGamingJob(job) {
   const busy = Object.values(job.networks).some((n) => n.status === "waiting" || n.status === "running");
   const isClip = job.kind === "clip";
-  $("gaming-panel").style.display = $("pipeline-type").value === (isClip ? "gaming_clip" : job.profile || "gaming_image") ? "" : "none";
+  const selected = $("pipeline-type").value;
+  const jobType = isClip ? "gaming_clip" : job.profile || "gaming_image";
+  lastGamingJobType = jobType;
+  $("gaming-panel").style.display = selected === jobType || (isMixedType(selected) && MIXED_PAIRS[selected].includes(jobType)) ? "" : "none";
   $("gaming-preview").style.display = job.status === "ready" ? "" : "none";
   $("gaming-status").textContent = job.status === "generating"
     ? GAMING_STAGE_LABELS[job.stage] || "Generando…"
@@ -1949,23 +2074,27 @@ async function pollGamingJob() {
   if (job.status === "generating" || busy) gamingPollTimer = setTimeout(pollGamingJob, 3000);
 }
 
-async function startGamingPost(pageName, triggerMessage) {
+const GAMING_START_KIND = { ninio_image: "ninio", macrame_image: "macrame", historias_image: "historias" };
+async function startGamingPost(pageName, triggerMessage, type, withVideo = false) {
   $("pipeline-start-btn").disabled = true;
   let started = false;
   try {
     const res = await fetch("/api/gaming/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify($("pipeline-type").value === "gaming_clip" ? {
+      body: JSON.stringify(type === "gaming_clip" ? {
         kind: "clip", game: $("pipeline-game").value, medal_url: $("pipeline-medal-url").value.trim(),
       } : {
-        kind: $("pipeline-type").value === "ninio_image" ? "ninio" : "image",
+        kind: GAMING_START_KIND[type] || "image",
         page_name: pageName,
-        trigger_message: triggerMessage || PIPELINE_TRIGGER_DEFAULTS[$("pipeline-type").value],
+        trigger_message: triggerMessage || PIPELINE_TRIGGER_DEFAULTS[type],
         text_provider: "auto",
+        // Un post que acompaña a un video usa el mismo generador que el video; el resto, el suyo.
+        image_provider: $("pipeline-video-only-fields").style.display === "none"
+          ? $("pipeline-image-provider").value : $("pipeline-provider").value,
       }),
     });
     const data = await res.json();
-    if (!data.ok) { alert(data.error || "No se pudo iniciar el post."); return; }
+    if (!data.ok) { appAlert(data.error || "No se pudo iniciar el post.", "Post de imagen"); return; }
     started = true;
     setGamingJobId(data.job_id);
     $("gaming-cover").dataset.job = "";
@@ -1974,7 +2103,8 @@ async function startGamingPost(pageName, triggerMessage) {
   } catch (e) {
     alert("Error de conexión con el servidor.");
   } finally {
-    if (!started) $("pipeline-start-btn").disabled = false;
+    // Junto al video el botón lo maneja el arranque del video.
+    if (!started && !withVideo) $("pipeline-start-btn").disabled = false;
   }
 }
 
@@ -2011,7 +2141,7 @@ $("gaming-publish-btn").addEventListener("click", async () => {
 $("gaming-regen-btn").addEventListener("click", () => {
   const pageSel = $("pipeline-page");
   if (!pageSel.selectedOptions.length) return;
-  startGamingPost(pageSel.selectedOptions[0].textContent.trim(), "dame una historia");
+  startGamingPost(pageSel.selectedOptions[0].textContent.trim(), "dame una historia", lastGamingJobType || $("pipeline-type").value);
 });
 
 $("gaming-cancel-btn").addEventListener("click", async () => {
@@ -2030,8 +2160,37 @@ $("pipeline-start-btn").addEventListener("click", async () => {
   if (!pageSel.selectedOptions.length) { alert("Elegí una página antes de generar."); return; }
   const pageName = pageSel.selectedOptions[0].textContent.trim();
 
-  if (isPostType($("pipeline-type").value)) {
-    await startGamingPost(pageName, PIPELINE_TRIGGER_DEFAULTS[$("pipeline-type").value]);
+  const selectedType = $("pipeline-type").value;
+  // Mixto video + post (niño selectivo, macramé): un clic genera los dos a la vez. La generación de
+  // imágenes en WhatsApp está en cola en el servidor, así que el segundo espera al primero.
+  if (isMixedType(selectedType) && selectedType !== "mix_gaming") {
+    const postType = MIXED_PAIRS[selectedType][1];
+    const ok = await appConfirm(
+      "Se generan un video (historia nueva de la IA) y un post de imagen, uno detrás del otro.",
+      { title: "Revisá antes de generar", confirmLabel: "Generar video + post", cancelLabel: "Cancelar" }
+    );
+    if (!ok) return;
+    startGamingPost(pageName, PIPELINE_TRIGGER_DEFAULTS[postType], postType, true);
+    await startVideoPipeline(pageName);
+    return;
+  }
+
+  // Mixto gaming: el servidor dice cuál toca (clip o post); el contador solo avanza si se confirma.
+  const mixed = isMixedType(selectedType);
+  const mixedNext = (advance) => fetch("/api/mixed/next", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: selectedType, advance }),
+  }).then((r) => r.json());
+  let type = selectedType;
+  if (mixed) {
+    const next = await mixedNext(false);
+    if (!next.ok) { alert(next.error || "No se pudo decidir qué toca generar."); return; }
+    type = next.kind;
+  }
+
+  if (isPostType(type)) {
+    if (mixed) await mixedNext(true);
+    await startGamingPost(pageName, PIPELINE_TRIGGER_DEFAULTS[type], type);
     return;
   }
 
@@ -2040,7 +2199,11 @@ $("pipeline-start-btn").addEventListener("click", async () => {
     { title: "Revisá antes de generar", confirmLabel: "Generar video", cancelLabel: "Cancelar" }
   );
   if (!confirmado) return;
+  if (mixed) await mixedNext(true);
+  await startVideoPipeline(pageName);
+});
 
+async function startVideoPipeline(pageName) {
   $("pipeline-start-btn").disabled = true;
   $("pipeline-retry-btn").style.display = "none";
   $("pipeline-cancel-btn").style.display = "none";
@@ -2093,7 +2256,7 @@ $("pipeline-start-btn").addEventListener("click", async () => {
     console.error("pipeline/start falló:", e);
     $("pipeline-start-btn").disabled = false;
   }
-});
+}
 
 function _escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({
@@ -2167,7 +2330,7 @@ function _loteStatusLabel(status) {
 }
 
 function _loteVideoSummary(project) {
-  const videos = project.videos || [];
+  const videos = (project.videos || []).filter(v => v.status !== "removed");
   const generated = videos.filter(v => v.status !== "pending" && v.status !== "generating").length;
   const published = videos.filter(v => v.status === "published").length;
   const next = videos.find(v => v.status === "ready" || v.status === "pending");
@@ -2259,18 +2422,24 @@ function _loteVideoRowHtml(v, project) {
         ${detail ? `<div class="lote-detail">${detail}</div>` : ""}${extra}
       </div>
       <div class="lote-nets">${_loteNetSchedule(v, project)}</div>
-      <div class="lote-act">${action}</div>
+      <div class="lote-act">${action}${
+        v.status === "generating" || v.status === "publishing" ? ""
+          : `<button class="btn-sm" title="Eliminar este item del lote" data-lote-del-item="${projectId}" data-lote-del-index="${v.index}">🗑️</button>`
+      }</div>
     </div>`;
 }
 
 function _loteVideoRows(project) {
-  const videos = project.videos || [];
+  const videos = (project.videos || []).filter(v => v.status !== "removed");
   if (!videos.length) return "";
   return `<div class="lote-video-list">
     <div class="lote-row lote-row-head"><div>#</div><div>Estado</div><div>Horario por red</div><div></div></div>
     ${videos.map(v => _loteVideoRowHtml(v, project)).join("")}
   </div>`;
 }
+
+// Lotes desplegados (se recuerda entre recargas de 5 s para que no se cierren solos).
+const loteOpen = new Set();
 
 async function loadLoteProjects() {
   const wrap = $("lote-list");
@@ -2283,10 +2452,10 @@ async function loadLoteProjects() {
       return;
     }
     wrap.innerHTML = projects.map(p => `
-      <div class="card" style="margin-top:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <details class="card lote-card" style="margin-top:10px" data-lote-id="${p.id}"${loteOpen.has(p.id) ? " open" : ""}>
+        <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px">
           <div>
-            <strong>${_escapeHtml(p.name)}</strong> — ${_loteStatusLabel(p.status)}
+            <strong>▸ ${_escapeHtml(p.name)}</strong> — ${_loteStatusLabel(p.status)}
             <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${_loteVideoSummary(p)}</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
@@ -2295,9 +2464,27 @@ async function loadLoteProjects() {
             ${(p.status === "running" || p.status === "paused") ? `<button class="btn-sm" data-lote-cancel="${p.id}">Cancelar</button>` : ""}
             ${(p.status === "cancelled" || p.status === "done") ? `<button class="btn-sm" data-lote-delete="${p.id}">Eliminar</button>` : ""}
           </div>
-        </div>
+        </summary>
         ${_loteVideoRows(p)}
-      </div>`).join("");
+      </details>`).join("");
+    // Los botones de la cabecera no abren/cierran el desplegable por sí solos (un botón dentro de <summary>
+    // no activa el summary). OJO: no frenar el clic con stopPropagation en captura: en el propio botón
+    // (fase de destino) eso también impide que corran sus controladores normales (Pausar/Cancelar...).
+    wrap.querySelectorAll("details.lote-card").forEach(d =>
+      d.addEventListener("toggle", () => { d.open ? loteOpen.add(d.dataset.loteId) : loteOpen.delete(d.dataset.loteId); }));
+    wrap.querySelectorAll("[data-lote-del-item]").forEach(btn =>
+      btn.addEventListener("click", async () => {
+        const ok = await appConfirm(
+          "¿Eliminar este item del lote? Se borran sus archivos y no se vuelve a generar ni publicar. Lo que ya quedó programado en las redes no se cancela.",
+          { title: "Eliminar item", confirmLabel: "Eliminar" });
+        if (!ok) return;
+        try {
+          const res = await fetch(`/api/batch/delete-item/${btn.dataset.loteDelItem}/${btn.dataset.loteDelIndex}`, { method: "POST" });
+          const data = await res.json();
+          if (!data.ok) await appAlert(data.error || "No se pudo eliminar.", "Error");
+        } catch (e) {}
+        loadLoteProjects();
+      }));
     wrap.querySelectorAll("[data-lote-pause]").forEach(btn =>
       btn.addEventListener("click", () => loteProjectAction(btn.dataset.lotePause, "pause")));
     wrap.querySelectorAll("[data-lote-resume]").forEach(btn =>
@@ -2416,7 +2603,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
       : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
       : isGaming ? { image_provider: $("lote-image-provider").value } : {
-      ...(contentType === "mix_ninio" ? { image_provider: $("lote-image-provider").value } : {}),
+      ...(contentType === "mix_ninio" || contentType === "mix_macrame" || contentType === "mix_historias" ? { image_provider: $("lote-provider").value } : {}),
       voice: $("lote-voice").value,
       subtitle_preset: $("lote-subtitle-preset").value,
       orientation: $("lote-orientation").value,
@@ -3661,6 +3848,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 prefer=text_provider_pref,
                 attempted=_provider_attempts,
             )
+            auto_pipeline.validate_prompts_english(auto_pipeline.load_story_from_text(story_text, story_id))
             if text_kind == "macrame":
                 auto_pipeline.validate_macrame_story(auto_pipeline.load_story_from_text(story_text, story_id))
             if bebe:
@@ -4678,12 +4866,39 @@ def api_gaming_games():
     return jsonify({"ok": True, "games": gaming_clip.list_games()})
 
 
+@app.route("/api/flow/status")
+def api_flow_status():
+    import flow_images
+    return jsonify({"ok": True, **flow_images.status()})
+
+
+@app.route("/api/flow/launch", methods=["POST"])
+def api_flow_launch():
+    """Abre el Brave de Flow (perfil dedicado, puerto 9333) para iniciar sesion en Google a mano."""
+    import flow_images
+    try:
+        return jsonify({"ok": True, "launched": flow_images.launch_browser()})
+    except flow_images.FlowError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/mixed/next", methods=["POST"])
+def api_mixed_next():
+    """Que toca generar en un mixto de "Generar video (automatico)": video/clip o post (alterna)."""
+    data = request.get_json(force=True) or {}
+    mix_type = (data.get("type") or "").strip()
+    if mix_type not in batch_pipeline.MIXED_TYPES:
+        return jsonify({"ok": False, "error": "Tipo mixto inválido."}), 400
+    return jsonify({"ok": True, "kind": batch_pipeline.next_mixed_kind(mix_type, advance=bool(data.get("advance")))})
+
+
 @app.route("/api/gaming/start", methods=["POST"])
 def api_gaming_start():
     data = request.get_json(force=True)
     kind = "clip" if data.get("kind") == "clip" else "image"
     # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
-    profile_key = "ninio_image" if data.get("kind") == "ninio" else "gaming_image"
+    profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image"}.get(
+        data.get("kind"), "gaming_image")
     if kind == "clip":
         game_key = data.get("game") or ""
         if game_key not in gaming_clip.GAMES:
@@ -4703,6 +4918,8 @@ def api_gaming_start():
         if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
             text_provider_pref = ""
         image_provider = (data.get("image_provider") or "whatsapp").strip()
+        if image_provider not in auto_pipeline.PROVIDERS:
+            return jsonify({"ok": False, "error": f"Generador de imagen desconocido: {image_provider}"}), 400
         target, args = _run_gaming_generate, (page_name, trigger_message, image_provider, text_provider_pref, profile_key)
 
     _prune_gaming_jobs()
@@ -4823,7 +5040,7 @@ def _run_gaming_clip_publish(job_id: str, job: dict, network: str, page_id: str,
     """Clip de video: sube el mp4 directo (sin tunel). Facebook y YouTube (canal
     de gaming, como Short) programan nativo; Instagram duerme hasta la hora,
     igual que con la imagen."""
-    title = job.get("title") or "Clip gaming"
+    title = job.get("title") or "Gaming clip"
     on_status = lambda st: _gaming_net_update(job_id, network, stage=st)
     if network == "youtube":
         yt_title, yt_description, yt_tags = batch_pipeline.gaming_youtube_fields(job.get("yt_seo"), title, caption)
@@ -5449,6 +5666,9 @@ def api_batch_create():
     voice_error = _voice_error(video_settings.get("voice"))
     if voice_error:
         return jsonify({"ok": False, "error": voice_error})
+    for key in ("provider", "image_provider"):
+        if video_settings.get(key, "whatsapp") not in auto_pipeline.PROVIDERS:
+            return jsonify({"ok": False, "error": f"Generador de imágenes desconocido: {video_settings[key]}"})
     if content_type in ("gaming_clip", "mix_gaming") and video_settings.get("gaming_game", "mix") not in {"mix", *gaming_clip.GAMES}:
         return jsonify({"ok": False, "error": "Juego inválido."})
     try:
@@ -5521,6 +5741,12 @@ def api_batch_cancel(project_id):
 @app.route("/api/batch/delete/<project_id>", methods=["POST"])
 def api_batch_delete(project_id):
     return jsonify({"ok": batch_pipeline.delete_project(project_id)})
+
+
+@app.route("/api/batch/delete-item/<project_id>/<int:index>", methods=["POST"])
+def api_batch_delete_item(project_id, index):
+    ok = batch_pipeline.delete_video(project_id, index)
+    return jsonify({"ok": ok, **({} if ok else {"error": "No se pudo eliminar (¿se está generando o publicando?)."})})
 
 
 @app.route("/api/batch/retry/<project_id>/<int:index>", methods=["POST"])

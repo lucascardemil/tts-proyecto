@@ -173,7 +173,8 @@ AGENT_BROWSER_STATE_DIR = Path.home() / ".agent-browser"
 AGENT_BROWSER_BROWSERS_DIR = AGENT_BROWSER_STATE_DIR / "browsers"
 _SINGLETON_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 
-PROVIDERS = ("whatsapp",)
+# "flow" = Google Flow (flow_images.py): solo imagenes, sin clips de video.
+PROVIDERS = ("whatsapp", "flow")
 
 POLL_INTERVAL_SECONDS = 4
 IMAGE_TIMEOUT_SECONDS = 600
@@ -866,6 +867,32 @@ MACRAME_MIN_PROMPT_WORDS = 70
 _MACRAME_SHEET_TAGS = ("Pieza", "Manos", "Escena")
 
 
+_ES_WORDS = frozenset(
+    "el la los las del con una un unos unas y en que su sus por para se al lo es está como más pero sin sobre "
+    "entre desde hasta cuando mientras luz suave primer plano perro gato niño niña mano manos ojos".split()
+)
+_EN_WORDS = frozenset(
+    "the a an of with and in on at to his her its is are from by for under over while soft light close up dog cat "
+    "boy girl hand hands eyes looking".split()
+)
+
+
+def _looks_spanish(prompt: str) -> bool:
+    words = re.findall(r"[a-záéíóúñü]+", prompt.lower())
+    es = sum(w in _ES_WORDS for w in words)
+    en = sum(w in _EN_WORDS for w in words)
+    accents = len(re.findall(r"[áéíóúñ¿¡]", prompt.lower()))
+    return (es >= 3 and es > en) or (accents >= 3 and en < es + accents)
+
+
+def validate_prompts_english(story: dict) -> None:
+    """Los prompts de imagen deben estar en ingles (Meta AI interpreta mucho mejor ese idioma). Si el
+    modelo de texto los escribio en español, se rechaza para regenerar el guion (otro modelo suele cumplir)."""
+    bad = [str(p["index"]) for p in story["prompts"] if _looks_spanish(p["prompt"])]
+    if bad:
+        raise PipelineError(f"Los prompts de imagen no están en inglés (imágenes: {', '.join(bad)}).")
+
+
 def validate_macrame_story(story: dict) -> None:
     """Rechaza una historia de macrame cuyos prompts no traen la ficha fija de
     la pieza (sin ella no hay continuidad visual entre imagenes) o son
@@ -946,11 +973,23 @@ def _open_meta_ai(unattended: bool) -> None:
     # entre versiones -- alcanza con que el elemento clickeable tenga "Meta AI"
     # en su nombre accesible.
     meta_ai_ref = _find_ref(snap, r'"Meta AI[^"]*"\s*\[ref=(\w+)\]')
-    if not meta_ai_ref:
-        raise PipelineError(
-            "No pude ubicar la referencia del boton Meta AI. Snapshot:\n" + snap[:2000]
-        )
-    _run_agent_browser(["click", f"@{meta_ai_ref}"], WHATSAPP_SESSION)
+    # La referencia (@eN) vale solo para el snapshot que la dio: si WhatsApp Web se vuelve a dibujar
+    # entre el snapshot y el clic, agent-browser responde "Unknown ref". Se toma otro snapshot y se
+    # reintenta en vez de fallar el video.
+    for attempt in range(1, 4):
+        if not meta_ai_ref:
+            raise PipelineError(
+                "No pude ubicar la referencia del boton Meta AI. Snapshot:\n" + snap[:2000]
+            )
+        try:
+            _run_agent_browser(["click", f"@{meta_ai_ref}"], WHATSAPP_SESSION)
+            return
+        except PipelineError as e:
+            if "Unknown ref" not in str(e) or attempt == 3:
+                raise
+            time.sleep(2)
+            snap = _run_agent_browser(["snapshot", "-i"], WHATSAPP_SESSION)
+            meta_ai_ref = _find_ref(snap, r'"Meta AI[^"]*"\s*\[ref=(\w+)\]')
 
 
 def _last_row_block(snap: str) -> str:
@@ -1230,7 +1269,9 @@ def _generate_clips_whatsapp(story: dict, download_dir: Path, unattended: bool, 
 
 
 def generate_clips(story: dict, download_dir: Path, unattended: bool, start_index: int = 0,
-                    on_progress=None, provider: str = "whatsapp", generate_video: bool = True) -> list:
+                    on_progress=None, provider: str = "whatsapp", generate_video: bool = True,
+                    aspect: str = "9:16") -> list:
+    """`aspect` solo lo usa Flow ("9:16" para las escenas de un video, "1:1" para un post de imagen)."""
     if provider not in PROVIDERS:
         raise PipelineError(f"Proveedor desconocido: {provider} (opciones: {', '.join(PROVIDERS)})")
 
@@ -1246,8 +1287,16 @@ def generate_clips(story: dict, download_dir: Path, unattended: bool, start_inde
     logger.info("generate_clips: provider=%s start_index=%d prompts=%d dir=%s generate_video=%s",
                 provider, start_index, n_prompts, download_dir, generate_video)
     try:
-        clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report,
-                                          generate_video=generate_video)
+        if provider == "flow":
+            import flow_images
+            try:  # reanuda sola: salta las scene_NNN.jpg que ya existen
+                flow_images.generate_scene_images(story, download_dir, on_progress=report, aspect=aspect)
+            except flow_images.FlowError as e:
+                raise PipelineError(str(e)) from e
+            clips = [str(download_dir / f"scene_{i:03d}.jpg") for i in range(n_prompts)]
+        else:
+            clips = _generate_clips_whatsapp(story, download_dir, unattended, start_index, report,
+                                              generate_video=generate_video)
         logger.info("generate_clips: listo, %d clips generados en %s", len(clips), download_dir)
         return clips
     except Exception:

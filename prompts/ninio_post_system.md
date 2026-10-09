@@ -31,15 +31,15 @@ NO lleva texto, letras, carteles ni logos.
 
 ## PLANTILLAS (la del día viene en el mensaje)
 - N1 Mito vs Realidad: TOP desmonta el mito ("NO ES MAÑA"), BOTTOM da la
-  realidad ("es neofobia y es normal"). Palabra clave: CALMA.
+  realidad ("es neofobia y es normal"). Palabra clave: EBOOK.
 - N2 El error que empeora todo: TOP nombra el error ("OBLIGAR A PROBAR
   EMPEORA TODO"), BOTTOM da la alternativa ("tú come primero, porción mini").
-  Palabra clave: FRASES.
+  Palabra clave: EBOOK.
 - N3 Ritual de 1 minuto: TOP "RITUAL DE 1 MINUTO ANTES DE COMER", BOTTOM los
-  pasos cortos ("1 oler · 2 tocar · 3 verte comer"). Palabra clave: RITUAL.
+  pasos cortos ("1 oler · 2 tocar · 3 verte comer"). Palabra clave: EBOOK.
 - N4 Frase de paz: TOP una frase corta que abraza, BOTTOM vacío o una línea de
   cierre ("no buscamos que coma hoy, buscamos que se sienta seguro"). Palabra
-  clave: CALMA.
+  clave: EBOOK.
 
 ## FORMATO DE SALIDA (obligatorio, en este orden exacto, nada antes de IDEA:)
 
@@ -70,10 +70,7 @@ CAPTION: EN ESPAÑOL, exactamente en este orden:
 línea 1: gancho en MAYÚSCULAS + un emoji;
 línea 2: validación sin culpa (una frase);
 línea 3: la micro-acción concreta para hoy (una frase);
-línea 4: CTA específico con la palabra clave de la plantilla en MAYÚSCULAS
-  ("Escribe CALMA y te envío el audio de 1 minuto", "Escribe RITUAL y te mando
-  el paso a paso", "Escribe FRASES y te mando 3 frases para la mesa"). Usa solo
-  CALMA, RITUAL o FRASES (convierten más que "EBOOK") y NUNCA "comenta EBOOK";
+línea 4: CTA siempre igual: "Comenta EBOOK y te envío la guía por mensaje privado";
 y al final, en una línea aparte, exactamente estos hashtags en este orden:
 #ninoselectivo #alimentacioninfantil #pickyeater #mamaprimeriza
 #crianzarespetuosa

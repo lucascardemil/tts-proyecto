@@ -177,3 +177,21 @@ def test_timeline_visible_content_covers_whole_audio():
     # Remotion pone las escenas una tras otra (duracion = end - start) menos el solape de transicion
     visible = sum(sc["endFrame"] - sc["startFrame"] for sc in tl["scenes"]) - (len(tl["scenes"]) - 1) * video_maker.TRANSITION_FRAMES
     assert abs(visible - round(12.0 * video_maker.FPS)) <= 1
+
+
+def test_digits_and_words_are_the_same_to_the_narration_check():
+    assert tts_engine._normalize_words("Tenía 4 años y 21 gatos, 150 sillas y 2026") == (
+        "tenia cuatro anos y veintiuno gatos ciento cincuenta sillas y dos mil veintiseis".split())
+    r = tts_engine.narration_diff("Eran 4 amigos y 12 perros", "Eran cuatro amigos y doce perros")
+    assert r["ok"] and not r["changed"] and not r["added"]
+
+
+def test_split_words_and_repeated_name_spelling_are_tolerated_but_real_errors_are_not():
+    script = "Aanya dijo que crees en ti. Más tarde Aanya sonrió y sus amigos creen en ella."
+    heard = "Anja dijo que crecen ti. Más tarde Anja sonrió y sus amigos creen en ella."
+    r = tts_engine.narration_diff(script, heard)
+    assert r["ok"], r
+    assert ("aanya", "anja") in r["noise"] and ("crees en", "crecen") in r["noise"]
+    # una palabra distinta que se oye una sola vez sigue contando como error
+    bad = tts_engine.narration_diff("La anciana cruzó el río con su perro fiel y dormido", "La ansia cruzó el río con su perro fiel y dormido")
+    assert bad["changed"] == [("anciana", "ansia")]
