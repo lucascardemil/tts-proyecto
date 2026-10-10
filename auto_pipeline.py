@@ -589,7 +589,7 @@ def load_story_from_text(text: str, story_id: str) -> dict:
 
 
 _TRAILING_SECTION_RE = re.compile(
-    r"\n[ \t]*#{0,3}[ \t]*(?:CAPTION|PERFORMANCE GOAL|SERIE POTENCIAL)\b",
+    r"\n[ \t]*#{0,3}[ \t]*(?:CAPTION|PERFORMANCE GOAL|SERIE POTENCIAL|GUION)\b",
     re.IGNORECASE,
 )
 # Heading de seccion "IMAGENES"/"IMÁGENES" (sola en su linea) que separa guion y prompts.
@@ -890,6 +890,8 @@ def validate_prompts_english(story: dict) -> None:
     modelo de texto los escribio en español, se rechaza para regenerar el guion (otro modelo suele cumplir)."""
     bad = [str(p["index"]) for p in story["prompts"] if _looks_spanish(p["prompt"])]
     if bad:
+        first = next(p for p in story["prompts"] if str(p["index"]) == bad[0])
+        logger.warning("prompt de imagen %s detectado como español: %.400s", bad[0], first["prompt"])
         raise PipelineError(f"Los prompts de imagen no están en inglés (imágenes: {', '.join(bad)}).")
 
 

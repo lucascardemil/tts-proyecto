@@ -377,7 +377,10 @@ def publish_photo(
 
 
 def _graph_time(value: str) -> Optional[datetime]:
-    """Hora de la Graph API ("2026-10-08T16:00:00+0000") -> datetime local naive."""
+    """Hora de la Graph API ("2026-10-08T16:00:00+0000", o epoch en segundos como en scheduled_posts) ->
+    datetime local naive."""
+    if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+        return datetime.fromtimestamp(int(value))
     try:
         return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z").astimezone().replace(tzinfo=None)
     except (TypeError, ValueError):

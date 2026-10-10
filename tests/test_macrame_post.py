@@ -209,3 +209,21 @@ def test_story_copy_is_written_by_ai_not_a_script_extract(monkeypatch):
 def test_used_names_collects_proper_nouns_from_past_scripts():
     names = bp._used_names(["Durante siete meses, Luna esperó en la plaza. Ese día el herrero Marco la vio.", "[PERRO] corrió a Lima."])
     assert {"Luna", "Marco", "Lima"} <= set(names) and "Durante" not in names and "PERRO" not in names
+
+
+def test_future_slot_keeps_todays_slot_at_night_and_ignores_other_pages(monkeypatch):
+    class FakeNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 9, 2, 0)
+    monkeypatch.setattr(bp, "datetime", FakeNow)
+    projects = {
+        "mine": {"page_name": "MACRAME CREATIVO", "videos": [{"status": "generating", "scheduled_at": "2026-10-09T13:00:00"}]},
+        "other": {"page_name": "HISTORIAS", "videos": [{"status": "ready", "scheduled_at": "2026-10-09T13:00:00"}]},
+        "same": {"page_name": "MACRAME CREATIVO", "videos": [{"status": "ready", "scheduled_at": "2026-10-09T19:00:00"}]},
+    }
+    # a las 2 a. m. las 13:00 de hoy siguen siendo de hoy, y otra pagina a la misma hora no lo empuja
+    assert bp._future_slot(projects, ("mine", 0), "2026-10-09T13:00:00") == datetime(2026, 10, 9, 13)
+    # otro item de la MISMA pagina a menos de una hora si lo mueve un dia
+    projects["same"]["videos"][0]["scheduled_at"] = "2026-10-09T13:30:00"
+    assert bp._future_slot(projects, ("mine", 0), "2026-10-09T13:00:00") == datetime(2026, 10, 10, 13)

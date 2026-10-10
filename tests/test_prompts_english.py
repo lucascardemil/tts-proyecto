@@ -37,3 +37,15 @@ def test_error_is_healable_and_historias_prompt_demands_english():
     assert bp._is_healable_error("Los prompts de imagen no están en inglés (imágenes: 2)")
     text = bp._text_system_prompt("historias")
     assert "NUNCA en español" in text
+
+
+def test_script_after_last_image_is_not_part_of_its_prompt():
+    import auto_pipeline as ap
+    text = (
+        "Imagen 1\nFrase del guion: «Hola mundo»\nPrompt: 9:16, photorealistic, a keychain on a wooden table, soft light.\n\n"
+        "Imagen 2\nFrase del guion: «Adiós»\nPrompt: 9:16, photorealistic, hands holding the finished keychain.\n\n"
+        "GUION\n¿Y si te digo que con dos metros de cuerda puedes hacer esto? En solo doce minutos y con dos cordones sencillos."
+    )
+    story = ap._parse_story(text, "t_trailing_guion")
+    assert "GUION" not in story["prompts"][-1]["prompt"] and "cuerda" not in story["prompts"][-1]["prompt"]
+    ap.validate_prompts_english(story)

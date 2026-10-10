@@ -1940,20 +1940,20 @@ def _future_slot(projects: dict, exclude: tuple, scheduled_at: Optional[str]) ->
     con el de otro video ya listo o publicado. Mover de a dias enteros mantiene
     el horario dentro de 9-20 y respeta los N por dia del lote.
 
-    Dentro de 9-20 vale el resto del dia (con NATIVE_SCHEDULE_MIN_LEAD de
-    anticipacion); fuera de esa franja (de noche o de madrugada) el dia de hoy
-    se da por terminado y el primer dia valido es manana."""
+    El adelanto minimo cuenta desde ahora a cualquier hora (el horario del item ya esta en 9-21): a las
+    2 a. m. un item de las 13:00 de hoy sigue siendo de hoy. Solo cuentan los videos de la MISMA pagina:
+    el espaciado es por pagina, y los de otras paginas no deben empujar este lote."""
     now = datetime.now()
-    if BATCH_HOUR_START <= now.hour <= BATCH_HOUR_END:
-        earliest = now + NATIVE_SCHEDULE_MIN_LEAD
-    else:
-        earliest = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+    earliest = now + NATIVE_SCHEDULE_MIN_LEAD
+    page = _project_page_name(projects.get(exclude[0], {}))
     try:
         slot = datetime.fromisoformat(scheduled_at)
     except (TypeError, ValueError):
         slot = _into_publish_window(earliest)
     taken = []
     for pid, project in projects.items():
+        if _project_page_name(project) != page:
+            continue
         for i, v in enumerate(project.get("videos", [])):
             # Solo cuentan los que ya tienen un horario firme; un "pending" o
             # "generating" se mueve solo cuando le toque (mismo criterio).

@@ -99,6 +99,9 @@ PERSONAJES:
 
 GUION
 [Texto narración 25-35 segundos, español, gancho viral, termina con "Comenta EBOOK"]
+(El guion se LEE EN VOZ ALTA y se verifica contra el audio: escribe solo palabras en español. Sin palabras en inglés
+("boho", "plus", "DIY", "tips"), sin abreviaturas ni símbolos: "milímetros", "centímetros", "metros", "dólares",
+"por ciento" en vez de mm, cm, m, USD, %. Los números pueden ir con cifras.)
 
 IMÁGENES
 Imagen 1

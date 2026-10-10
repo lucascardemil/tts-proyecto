@@ -195,3 +195,12 @@ def test_split_words_and_repeated_name_spelling_are_tolerated_but_real_errors_ar
     # una palabra distinta que se oye una sola vez sigue contando como error
     bad = tts_engine.narration_diff("La anciana cruzó el río con su perro fiel y dormido", "La ansia cruzó el río con su perro fiel y dormido")
     assert bad["changed"] == [("anciana", "ansia")]
+
+
+def test_speakable_spells_out_units_and_symbols_for_tts_and_verification():
+    from tts_engine import speakable, narration_diff
+    out = speakable("2 cordones de 4 mm, 1,2 m, 10 cm, 12 USD, 50% y 12 minutos")
+    assert "4 milímetros" in out and "1 coma 2 metros" in out and "10 centímetros" in out
+    assert "12 dólares" in out and "50 por ciento" in out and "12 minutos" in out
+    heard = "dos cordones de cuatro milimetros uno coma dos metros diez centimetros doce dolares cincuenta por ciento y doce minutos"
+    assert narration_diff(out, heard)["ok"]

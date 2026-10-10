@@ -512,6 +512,24 @@ def _spanish_number(n: int) -> str:
     return head + (f" {_spanish_number(rest)}" if rest else "")
 
 
+_UNIT_WORDS = (  # abreviatura tras una cifra -> como se dice (el TTS las lee mal y Whisper las escribe con letras)
+    ("mm", "milímetros"), ("cm", "centímetros"), ("km", "kilómetros"), ("kg", "kilos"), ("m", "metros"),
+    ("min", "minutos"), ("usd", "dólares"), ("s", "segundos"),
+)
+
+
+def speakable(text: str) -> str:
+    """Guion listo para decirse: unidades y símbolos escritos con letras ("4 mm" -> "4 milímetros", "12 USD" ->
+    "12 dólares", "50%" -> "50 por ciento", "1,2" -> "1 coma 2"). Se aplica al texto que va al TTS y a la
+    verificación, así lo pedido y lo oído coinciden."""
+    text = re.sub(r"(\d)[.,](\d)(?!\d{2}\b)", r"\1 coma \2", text)
+    for abbr, word in _UNIT_WORDS:
+        text = re.sub(rf"(\d)\s*{abbr}\b\.?", rf"\1 {word}", text, flags=re.IGNORECASE)
+    text = re.sub(r"\$\s*(\d+)", r"\1 dólares", text)
+    text = re.sub(r"(\d)\s*%", r"\1 por ciento", text)
+    return text
+
+
 def _normalize_words(text: str) -> list:
     """Minúsculas, sin acentos, sin puntuación, cifras en palabras — para comparar texto pedido vs. transcripto
     sin falsos positivos."""
@@ -1155,6 +1173,7 @@ def text_to_speech_verified(
 def _text_to_speech_verified(text: str, max_attempts: int, **kwargs) -> tuple:
     import json
 
+    text = speakable(text)
     report: dict = {}
     for attempt in range(1, max_attempts + 1):
         path = text_to_speech_long(text, **kwargs)
@@ -1193,7 +1212,7 @@ def text_to_speech_phrases(
 
     paths: list = []
     try:
-        for text in texts:
+        for text in map(speakable, texts):
             best_path, best_report, best_score = None, {}, -1.0
             for attempt in range(1, max_attempts + 1):
                 path = text_to_speech_long(text, **kwargs)
