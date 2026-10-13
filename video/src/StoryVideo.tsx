@@ -129,7 +129,7 @@ const StandardStoryVideo: React.FC<StoryVideoProps> = ({
       ) : null}
 
       {/* Celular con la portada del producto (ebook) sobre la última escena */}
-      {phoneCard ? <PhoneCard src={phoneCard.src} startFrame={phoneCard.startFrame} cta={phoneCard.cta} /> : null}
+      {phoneCard ? <PhoneCard src={phoneCard.src} startFrame={phoneCard.startFrame} cta={phoneCard.cta} bg={phoneCard.bg} /> : null}
 
       {/* Subtítulos sincronizados con la narración */}
       <Subtitles words={subtitles} style={subtitleStyle} />

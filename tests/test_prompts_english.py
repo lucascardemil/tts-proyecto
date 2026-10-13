@@ -57,14 +57,14 @@ def test_ninio_selectivo_is_a_14s_ebook_ad_with_fixed_length():
     assert "Comenta EBOOK" in text and "38 a 46 palabras" in text and "exactamente 5 imágenes" in text and "NO dibujes ningún celular" in text
     assert "PILARES DE VALOR" not in text
     assert bp._has_fixed_length("Niño Selectivo, Familia en Paz") and bp._has_fixed_length("Bebé Héroe")
-    assert not bp._has_fixed_length("HISTORIAS") and not bp._has_fixed_length("MACRAME CREATIVO")
+    assert not bp._has_fixed_length("HISTORIAS") and bp._has_fixed_length("MACRAME CREATIVO")
 
 
 def test_ninio_selectivo_video_gets_the_ebook_phone_card(tmp_path, monkeypatch):
     import batch_pipeline as bp
     assert bp.NINIO_EBOOK_COVER.exists()
     assert bp.phone_card_for_page("Niño Selectivo, Familia en Paz") == str(bp.NINIO_EBOOK_COVER)
-    assert bp.phone_card_for_page("HISTORIAS") is None and bp.phone_card_for_page("MACRAME CREATIVO") is None
+    assert bp.phone_card_for_page("HISTORIAS") is None and bp.phone_card_for_page("MACRAME CREATIVO") == str(bp.AD_KINDS["macrame"]["cover"])
 
 
 def test_ninio_selectivo_images_must_carry_the_character_and_kitchen_sheets():
@@ -90,3 +90,49 @@ def test_ninio_selectivo_images_must_carry_the_character_and_kitchen_sheets():
     bad = ap._parse_story(text.replace("[MATEO] pushes the plate while [LAURA] waits", "someone pushes the plate"), "t_ninio_sheets")
     with pytest.raises(ap.PipelineError, match="(?i)no se encontraron prompts de imagen"):
         ap.validate_ninio_story(bad)
+
+
+def test_macrame_video_is_a_17s_ebook_ad_with_the_same_guarantees():
+    import pytest
+    import auto_pipeline as ap
+    import batch_pipeline as bp
+    text = bp._text_system_prompt("macrame")
+    assert "Comenta EBOOK" in text and "38 a 48 palabras" in text and "exactamente 5 imágenes" in text
+    assert "NO dibujes ningún celular" in text and "PILARES DE VALOR" not in text
+    assert bp.ad_kind_for_page("MACRAME CREATIVO") == "macrame" and bp.ad_kind_for_page("HISTORIAS") is None
+    sheet = ap.build_trigger_message("dame una historia", None, kind="macrame")
+    assert "[ESCENA]" in sheet and "la misma en las 5 imagenes" in sheet
+    story_text = (
+        "HOOK_TEXT: Mi tercer proyecto 🧶\n\nPERSONAJES:\n"
+        "[CAMILA]: 28 years old woman, long wavy brown hair, hazel eyes, freckles, cream (#F2E8D5) knit sweater\n"
+        "[PIEZA]: large beige macrame wall hanging, 3 cm cotton cord (#E8DCC4), square knots and fringe\n"
+        "[ESCENA]: cozy boho living room, sage (#B7C4A8) walls, beige sofa, window on the left\n\n"
+        "Guion\nYo pensaba que el macramé era solo para expertas. Comenta EBOOK y te envío la guía, de verdad que sí.\n\n"
+        "Imagen 1\nFrase del guion: «Yo pensaba»\nPrompt: Vertical 9:16, hands knotting cord in [ESCENA].\n\n"
+        "Imagen 2\nFrase del guion: «Comenta EBOOK»\nPrompt: Vertical 9:16, [CAMILA] smiles holding [PIEZA] at [ESCENA].\n"
+    )
+    ap.validate_ad_story(ap._parse_story(story_text, "t_macrame_ad"), "Escena")
+    no_tag = ap._parse_story(story_text.replace("knotting cord in [ESCENA]", "knotting cord in a room"), "t_macrame_ad")
+    ap.validate_ad_story(no_tag, "Escena")  # la sala se agrega sola si el modelo no usa la etiqueta
+    assert "Setting: Escena (cozy boho" in no_tag["prompts"][0]["prompt"]
+    only_piece = ap._parse_story(story_text.replace("[CAMILA] smiles holding [PIEZA]", "[PIEZA] hangs on the wall"), "t_macrame_ad")
+    ap.validate_ad_story(only_piece, "Escena", ("Pieza",))  # la pieza colgada sin la mujer es valida
+    with pytest.raises(ap.PipelineError):
+        ap.validate_ad_story(only_piece, "Escena")
+    bad = ap._parse_story(story_text.replace("[CAMILA] smiles holding [PIEZA]", "someone holds a thing"), "t_macrame_ad")
+    with pytest.raises(ap.PipelineError, match="(?i)no se encontraron prompts de imagen"):
+        ap.validate_ad_story(bad, "Escena")
+
+
+def test_macrame_ad_publication_text_and_phone_card(monkeypatch, tmp_path):
+    import batch_pipeline as bp
+    assert (bp._PROMPTS_DIR / "macrame_copy_system.md").exists()
+    monkeypatch.setattr(bp.text_provider, "generate_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    out = bp._build_publish_content("Yo pensaba que el macramé era solo para expertas. Comenta EBOOK.", "t", copy_kind="macrame")
+    assert out["facebook_description"] == bp.MACRAME_COPY_FALLBACK and "comenta EBOOK" in out["facebook_description"]
+    # celular con la portada: solo si el archivo existe
+    cover = tmp_path / "ebook_cover.jpg"
+    monkeypatch.setitem(bp.AD_KINDS["macrame"], "cover", cover)
+    assert bp.phone_card_for_page("MACRAME CREATIVO") is None
+    cover.write_bytes(b"x")
+    assert bp.phone_card_for_page("MACRAME CREATIVO") == str(cover)

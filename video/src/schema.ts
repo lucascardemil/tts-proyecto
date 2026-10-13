@@ -100,7 +100,7 @@ export const storyVideoSchema = z.object({
   phrases: z.array(phraseSchema).optional(),
   fontSrc: z.string().optional(),
   // Celular con la portada de un producto (archivo en public/) que aparece sobre la última escena.
-  phoneCard: z.object({ src: z.string(), startFrame: z.number(), cta: z.string().optional() }).optional(),
+  phoneCard: z.object({ src: z.string(), startFrame: z.number(), cta: z.string().optional(), bg: z.string().optional() }).optional(),
   subtitleStyle: subtitleStyleSchema.default({
     fontFamily: "cinzel",
     fontSize: 44,

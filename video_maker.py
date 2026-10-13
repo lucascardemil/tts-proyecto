@@ -850,6 +850,15 @@ def sort_images(image_paths: list, report=print) -> list:
     return image_paths
 
 
+def _cover_background(image_path: str) -> str:
+    """Color de fondo de la pantalla del celular: el del borde superior de la portada, para que los espacios
+    alrededor de una portada cuadrada se vean como parte de ella."""
+    from PIL import Image
+    with Image.open(image_path) as img:
+        px = img.convert("RGB").resize((8, 8)).getpixel((4, 0))
+    return "#%02x%02x%02x" % px
+
+
 def build_props(
     image_paths: list,
     audio_path: str,
@@ -985,6 +994,7 @@ def build_props(
         shutil.copy(phone_card, VIDEO_PUBLIC_DIR / card_name)
         timeline["phoneCard"] = {
             "src": card_name, "startFrame": timeline["scenes"][-1]["startFrame"] + 6, "cta": phone_card_cta,
+            "bg": _cover_background(phone_card),
         }
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")

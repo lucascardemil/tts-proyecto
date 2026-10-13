@@ -3,7 +3,7 @@ import { AbsoluteFill, Img, interpolate, spring, staticFile, useCurrentFrame, us
 
 // Celular con la portada de un producto (p. ej. el ebook) en pantalla: entra con un resorte desde
 // abajo, queda con una ligera inclinación y flota suave. Se dibuja encima de la última escena.
-export const PhoneCard: React.FC<{ src: string; startFrame: number; cta?: string }> = ({ src, startFrame, cta }) => {
+export const PhoneCard: React.FC<{ src: string; startFrame: number; cta?: string; bg?: string }> = ({ src, startFrame, cta, bg }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const t = frame - startFrame;
@@ -31,7 +31,7 @@ export const PhoneCard: React.FC<{ src: string; startFrame: number; cta?: string
           boxSizing: "border-box",
         }}
       >
-        <div style={{ position: "relative", width: "100%", height: "100%", borderRadius: phoneW * 0.1, overflow: "hidden", background: "#fff6ea" }}>
+        <div style={{ position: "relative", width: "100%", height: "100%", borderRadius: phoneW * 0.1, overflow: "hidden", background: bg ?? "#fff6ea" }}>
           <Img src={staticFile(src)} style={{ width: "100%", objectFit: "contain", display: "block", marginTop: "6%" }} />
           {cta ? (
             <div

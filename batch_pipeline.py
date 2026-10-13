@@ -46,7 +46,7 @@ def _text_system_prompt(kind: str) -> str:
 
 # Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas). Bebe Heroe
 # (4 frases / 18 s) y el anuncio de Niño Selectivo (~14 s) quedan fuera: su formato es fijo.
-PILARES_KINDS = {"historias", "macrame"}
+PILARES_KINDS = {"historias"}
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
 STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
@@ -801,21 +801,33 @@ def _text_kind_for_page(page_name: str) -> str:
     return "historias"
 
 
-# Portada del ebook que se muestra en un celular al final del anuncio de Niño Selectivo.
-NINIO_EBOOK_COVER = SCRIPT_DIR / "assets" / "ninio" / "ebook_cover.jpg"
+# Anuncios de ebook (~14-17 s, estilo testimonio): paginas cuyo video es un anuncio con largo fijo, cierre
+# "Comenta EBOOK", fichas fijas (personajes + set) y, al final, un celular con la portada del ebook.
+AD_KINDS = {
+    "ninio_selectivo": {"cover": SCRIPT_DIR / "assets" / "ninio" / "ebook_cover.jpg", "setting": "Cocina"},
+    "macrame": {"cover": SCRIPT_DIR / "assets" / "macrame" / "ebook_cover.jpg", "setting": "Escena", "subjects": ("Pieza",)},
+}
+NINIO_EBOOK_COVER = AD_KINDS["ninio_selectivo"]["cover"]
+
+
+def ad_kind_for_page(page_name: str) -> Optional[str]:
+    """"ninio_selectivo" / "macrame" si el video de la pagina es un anuncio de ebook, o None."""
+    kind = _text_kind_for_page(page_name)
+    return kind if kind in AD_KINDS else None
 
 
 def phone_card_for_page(page_name: str) -> Optional[str]:
-    """Imagen para el celular del cierre del video de la pagina (solo Niño Selectivo), o None."""
-    if _text_kind_for_page(page_name) == "ninio_selectivo" and NINIO_EBOOK_COVER.exists():
-        return str(NINIO_EBOOK_COVER)
+    """Portada del ebook para el celular del cierre del video de la pagina, o None (sin anuncio o sin archivo)."""
+    kind = ad_kind_for_page(page_name)
+    if kind and AD_KINDS[kind]["cover"].exists():
+        return str(AD_KINDS[kind]["cover"])
     return None
 
 
 def _has_fixed_length(page_name: str) -> bool:
-    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s) y el anuncio de
-    ebook de Niño Selectivo (~14 s). La duracion elegida en el lote no les cambia el guion."""
-    return is_bebe_heroe_page(page_name) or _text_kind_for_page(page_name) == "ninio_selectivo"
+    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s) y los anuncios de
+    ebook de Niño Selectivo (~14 s) y Macramé (~17 s). La duracion elegida en el lote no les cambia el guion."""
+    return is_bebe_heroe_page(page_name) or ad_kind_for_page(page_name) is not None
 
 
 def is_bebe_heroe_page(page_name: str) -> bool:
@@ -1311,10 +1323,9 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 f"y llegaron {len(story['prompts'])}"
             )
         auto_pipeline.validate_prompts_english(story)
-        if _text_kind_for_page(_project_page_name(project)) == "macrame":
-            auto_pipeline.validate_macrame_story(story)
-        if _text_kind_for_page(_project_page_name(project)) == "ninio_selectivo":
-            auto_pipeline.validate_ninio_story(story)
+        ad_kind = ad_kind_for_page(_project_page_name(project))
+        if ad_kind:
+            auto_pipeline.validate_ad_story(story, AD_KINDS[ad_kind]["setting"], AD_KINDS[ad_kind].get("subjects", ()))
         visual_style = vs.get("visual_style")
         if visual_style and visual_style != "realista":
             for p in story["prompts"]:
@@ -1340,7 +1351,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 len(story["prompts"]), len(script_text),
             )
         auto_pipeline.validate_script(script_text, min_words=BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
-        if _text_kind_for_page(_project_page_name(project)) == "ninio_selectivo" and "ebook" not in script_text.lower():
+        if ad_kind and "ebook" not in script_text.lower():
             raise RuntimeError("el guion no cierra con Comenta EBOOK (llamado a la accion del anuncio)")
         if not _has_fixed_length(_project_page_name(project)):  # Bebé Héroe (18 s) y el anuncio (14 s) ya miden lo justo: no se recortan
             script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
@@ -2187,6 +2198,21 @@ NINIO_COPY_FALLBACK = (
 )
 
 
+# Texto de publicacion de Macramé si la IA no responde.
+MACRAME_COPY_FALLBACK = (
+    "Yo pensaba que el macramé era solo para expertas 🧶👇\n"
+    "No era falta de talento.\nNo eran mis manos.\nEran los tutoriales que van rapidísimo.\n"
+    "Cuando tuve los nudos paso a paso en fotos, todo se volvió fácil.\n"
+    "Pasé de:\n❌ Pausar el video cada cinco segundos\n❌ Nudos torcidos y cuerda desperdiciada\n"
+    "❌ Pensar que no era para mí\nA:\n✅ Seguir cada paso con calma\n✅ Una pieza prolija en mi pared\n"
+    "✅ Ganas de hacer la siguiente\n"
+    "Por eso uso el Kit Nudo a Nudo: 15 nudos con fotos paso a paso y 3 patrones para empezar.\n"
+    "¿Quieres empezar? Encuéntralo en mi bio.\n👇 comenta EBOOK\n\n"
+    "#macrame #macramefacil #macrameparaprincipiantes #diymacrame #hechoamano"
+)
+COPY_FALLBACKS = {"ninio_selectivo": NINIO_COPY_FALLBACK, "macrame": MACRAME_COPY_FALLBACK}
+
+
 def _build_publish_content(script_text: str, fallback_title: str, rescue: bool = False,
                            copy_kind: Optional[str] = None, niche_tags: Optional[list] = None) -> dict:
     """Genera titulo/descripcion/tags igual que el flujo manual (mismas
@@ -2205,8 +2231,8 @@ def _build_publish_content(script_text: str, fallback_title: str, rescue: bool =
     written = _story_copy_llm(script_text, copy_kind) if copy_kind else None
     if written:  # Historias / Niño Selectivo: texto largo redactado por la IA
         facebook_description, instagram_description = written["facebook"], written["instagram"]
-    elif copy_kind == "ninio_selectivo":
-        facebook_description = instagram_description = NINIO_COPY_FALLBACK
+    elif copy_kind in COPY_FALLBACKS:
+        facebook_description = instagram_description = COPY_FALLBACKS[copy_kind]
     elif rescue or copy_kind:  # Historias sin IA: el de rescate (hashtags validados)
         facebook_description = seo_optimizer.suggest_rescue_copy(script_text, "facebook")
         instagram_description = seo_optimizer.suggest_rescue_copy(script_text, "instagram")
@@ -2385,7 +2411,7 @@ def _publish_batch_video(project_id: str, index: int) -> None:
     content = _build_publish_content(
         video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project),
         copy_kind="historias" if _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME
-        else "ninio_selectivo" if kind == "ninio_selectivo" else None,
+        else kind if kind in COPY_FALLBACKS else None,
         niche_tags=NICHE_HASHTAGS.get(kind),
     )
     if kind == BEBE_HEROE_KIND:

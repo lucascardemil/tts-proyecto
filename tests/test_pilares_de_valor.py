@@ -10,7 +10,7 @@ import batch_pipeline as bp
 
 def test_long_script_niches_get_the_value_pillars():
     assert (bp._PROMPTS_DIR / "_pilares_de_valor.md").exists()
-    for kind in ("historias", "macrame"):
+    for kind in ("historias",):
         text = bp._text_system_prompt(kind)
         assert "PILARES DE VALOR" in text and "Prueba (frase 2)" in text
         # el prompt del nicho va primero y su formato de salida no se pisa
@@ -18,5 +18,5 @@ def test_long_script_niches_get_the_value_pillars():
 
 
 def test_fixed_format_and_image_posts_do_not_get_them():
-    for kind in ("bebe_heroe", "ninio_selectivo", "gaming_news", "ninio_post", "macrame_post", "gaming"):
+    for kind in ("bebe_heroe", "ninio_selectivo", "macrame", "gaming_news", "ninio_post", "macrame_post", "gaming"):
         assert "PILARES DE VALOR" not in bp._text_system_prompt(kind)

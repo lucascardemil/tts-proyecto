@@ -3851,10 +3851,10 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 attempted=_provider_attempts,
             )
             auto_pipeline.validate_prompts_english(auto_pipeline.load_story_from_text(story_text, story_id))
-            if text_kind == "macrame":
-                auto_pipeline.validate_macrame_story(auto_pipeline.load_story_from_text(story_text, story_id))
-            if text_kind == "ninio_selectivo":
-                auto_pipeline.validate_ninio_story(auto_pipeline.load_story_from_text(story_text, story_id))
+            if text_kind in batch_pipeline.AD_KINDS:
+                auto_pipeline.validate_ad_story(
+                    auto_pipeline.load_story_from_text(story_text, story_id), batch_pipeline.AD_KINDS[text_kind]["setting"],
+                    batch_pipeline.AD_KINDS[text_kind].get("subjects", ()))
             if bebe:
                 _, story_text = batch_pipeline._split_hook_text(story_text)
                 n_scenes = len(auto_pipeline.load_story_from_text(story_text, story_id)["prompts"])

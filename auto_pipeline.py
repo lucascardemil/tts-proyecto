@@ -717,8 +717,9 @@ def _parse_story(text: str, story_id: str = None) -> dict:
         if sheet and not _CHARACTER_TAG_RE.search(prompt):
             logger.warning("prompt de Imagen %s sin etiqueta de personaje: no se repite la descripcion", idx)
         expanded = _expand_characters(prompt, characters)
-        if "COCINA" in characters and "Cocina (" not in expanded:  # el set fijo va en TODAS las imagenes
-            expanded = expanded.rstrip() + f" Setting: Cocina ({characters['COCINA']})."
+        for set_tag in ("COCINA", "ESCENA"):  # el set fijo del anuncio va en TODAS las imagenes
+            if set_tag in characters and f"{set_tag.title()} (" not in expanded:
+                expanded = expanded.rstrip() + f" Setting: {set_tag.title()} ({characters[set_tag]})."
         if characters and expanded != prompt:  # lleva fichas: se pide mantener a los mismos personajes y el mismo set
             expanded = expanded.rstrip() + CONSISTENCY_TAIL
         prompts.append({
@@ -859,21 +860,19 @@ NINIO_SHEET_REQUEST = (
 )
 
 
-# Variante para macrame: la "ficha" es la pieza que se teje (mas las manos y la
-# escena), y los prompts muestran la MISMA pieza avanzando etapa por etapa.
+# Variante para el anuncio de Macramé: fichas de la creadora, de la pieza final y de la sala, iguales en
+# las 5 imagenes (misma ropa, misma pieza, misma sala).
 MACRAME_SHEET_REQUEST = (
-    "\n\nFORMATO DE IMAGENES (obligatorio): despues de IDEA y antes de \"Guion\", escribi un "
-    "bloque \"PERSONAJES:\" con exactamente tres lineas: [PIEZA] (50 a 70 palabras en ingles: "
-    "tipo de pieza, tamano en cm, cuerda con grosor, color con hex y textura, nudos y diseno "
-    "distintivos, flecos/borlas, accesorios y un rasgo unico reconocible), [MANOS] (15 a 25 "
-    "palabras) y [ESCENA] (30 a 45 palabras: superficie, fondo, luz, camara, objetos fijos). "
-    "Solo rasgos permanentes. En cada \"Prompt:\" escribi entre 60 y 90 palabras en ingles, "
-    "SIN corchetes envolventes, que indiquen la etapa (Stage N of M, % de avance), la accion "
-    "exacta de [MANOS] y las herramientas, el estado visible de [PIEZA] (lo que ya existe + "
-    "el unico cambio nuevo) y el encuadre, nombrando [PIEZA], [MANOS] y [ESCENA] solo con su "
-    "etiqueta: el sistema pega la ficha completa en cada prompt. Todas las imagenes muestran "
-    "la MISMA pieza (mismo color, grosor, tamano y diseno) en avance logico; la Imagen 1 es "
-    "el resultado final."
+    "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT y antes de \"Guion\", escribi un bloque "
+    "\"PERSONAJES:\" con estas lineas en ingles: la de la creadora (60 a 80 palabras: edad exacta, tono de "
+    "piel, color y largo exacto del pelo y su peinado, color de ojos, UN rasgo distintivo visible y UNA sola "
+    "ropa fija con colores exactos y hex, la misma en las 5 imagenes), [PIEZA] (50 a 70 palabras: tipo exacto "
+    "de pieza de macrame, tamano, cuerda con color y hex, nudos y diseno distintivos, flecos, aro o palito de "
+    "madera) y [ESCENA] (30 a 45 palabras: sala fija con color de paredes con hex, sofa beige, ventana a la "
+    "izquierda, tres plantas, luz calida de atardecer). En cada \"Prompt:\" escribi 70 a 100 palabras en ingles y "
+    "nombra SIEMPRE con su etiqueta, por ejemplo [CAMILA], a cada personaje o pieza que aparezca y a [ESCENA] "
+    "(todas las imagenes ocurren en esa misma sala), sin redescribirlos: el sistema pega las fichas completas en "
+    "cada prompt."
 )
 
 
@@ -895,21 +894,26 @@ def build_trigger_message(base_message: str, duration_seconds: Optional[int], ki
 _NINIO_AGE_RE = re.compile(r"\d+[- ]years?[- ]old", re.IGNORECASE)
 
 
-def validate_ninio_story(story: dict) -> None:
-    """Cada imagen del anuncio de Niño Selectivo debe llevar la ficha de la cocina (misma cocina en todas)
-    y, salvo la primera (plano del plato), la ficha de algun personaje: sin ellas el nino y el adulto
-    cambian de una imagen a otra. El mensaje lleva el marcador sanable para que el lote regenere."""
+def validate_ad_story(story: dict, setting: str = "Cocina", subjects: tuple = ()) -> None:
+    """Cada imagen de un anuncio (Niño Selectivo: "Cocina"; Macramé: "Escena") debe llevar la ficha del set
+    (mismo lugar en todas) y, desde la segunda, la ficha de algun personaje: sin ellas las personas cambian
+    de una imagen a otra. `subjects` son otras fichas validas en lugar de una persona (la pieza de macrame
+    colgada en la pared). El mensaje lleva el marcador sanable para que el lote regenere."""
     problems = []
     for p in sorted(story.get("prompts", []), key=lambda p: p["index"]):
-        if "Cocina (" not in p["prompt"]:
-            problems.append(f"Imagen {p['index']}: sin ficha de la cocina")
-        elif p["index"] > 1 and not _NINIO_AGE_RE.search(p["prompt"]):
+        if f"{setting} (" not in p["prompt"]:
+            problems.append(f"Imagen {p['index']}: sin ficha de {setting.lower()}")
+        elif p["index"] > 1 and not _NINIO_AGE_RE.search(p["prompt"]) and not any(
+                f"{t} (" in p["prompt"] for t in subjects):
             problems.append(f"Imagen {p['index']}: sin ficha de personaje")
     if problems:
         raise PipelineError(
-            "No se encontraron prompts de imagen validos de ninio selectivo (fichas incompletas): "
-            + "; ".join(problems[:4])
+            "No se encontraron prompts de imagen validos del anuncio (fichas incompletas): " + "; ".join(problems[:4])
         )
+
+
+def validate_ninio_story(story: dict) -> None:
+    validate_ad_story(story, "Cocina")
 
 
 MACRAME_MIN_PROMPT_WORDS = 70
