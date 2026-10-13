@@ -49,3 +49,44 @@ def test_script_after_last_image_is_not_part_of_its_prompt():
     story = ap._parse_story(text, "t_trailing_guion")
     assert "GUION" not in story["prompts"][-1]["prompt"] and "cuerda" not in story["prompts"][-1]["prompt"]
     ap.validate_prompts_english(story)
+
+
+def test_ninio_selectivo_is_a_14s_ebook_ad_with_fixed_length():
+    import batch_pipeline as bp
+    text = bp._text_system_prompt("ninio_selectivo")
+    assert "Comenta EBOOK" in text and "38 a 46 palabras" in text and "exactamente 5 imágenes" in text and "NO dibujes ningún celular" in text
+    assert "PILARES DE VALOR" not in text
+    assert bp._has_fixed_length("Niño Selectivo, Familia en Paz") and bp._has_fixed_length("Bebé Héroe")
+    assert not bp._has_fixed_length("HISTORIAS") and not bp._has_fixed_length("MACRAME CREATIVO")
+
+
+def test_ninio_selectivo_video_gets_the_ebook_phone_card(tmp_path, monkeypatch):
+    import batch_pipeline as bp
+    assert bp.NINIO_EBOOK_COVER.exists()
+    assert bp.phone_card_for_page("Niño Selectivo, Familia en Paz") == str(bp.NINIO_EBOOK_COVER)
+    assert bp.phone_card_for_page("HISTORIAS") is None and bp.phone_card_for_page("MACRAME CREATIVO") is None
+
+
+def test_ninio_selectivo_images_must_carry_the_character_and_kitchen_sheets():
+    import pytest
+    import auto_pipeline as ap
+    text = (
+        "HOOK_TEXT: No comía zapallo 🎃\n\nPERSONAJES:\n"
+        "[MATEO]: 4 years old boy, curly dark brown hair, brown eyes, freckles, mustard (#E1AD01) t-shirt\n"
+        "[LAURA]: 32 years old woman, long wavy black hair, brown eyes, white apron over a red dress\n"
+        "[COCINA]: warm kitchen, sage green (#B7C4A8) walls, window on the left, light wooden table\n\n"
+        "Guion\nMi hijo no comía zapallo. Comenta EBOOK y te envío las recetas, de verdad que sí lo recomiendo hoy.\n\n"
+        "Imagen 1\nFrase del guion: «Mi hijo no comía zapallo»\nPrompt: Vertical 9:16, a plate of pumpkin in [COCINA].\n\n"
+        "Imagen 2\nFrase del guion: «Comenta EBOOK»\nPrompt: Vertical 9:16, [MATEO] pushes the plate while [LAURA] waits in [COCINA].\n"
+    )
+    story = ap._parse_story(text, "t_ninio_sheets")
+    ap.validate_ninio_story(story)
+    assert "Cocina (warm kitchen" in story["prompts"][0]["prompt"]
+    assert story["prompts"][1]["prompt"].endswith(ap.CONSISTENCY_TAIL)
+    # la cocina se agrega sola aunque el modelo no use la etiqueta; lo que no se puede inventar es el personaje
+    no_kitchen = ap._parse_story(text.replace("in [COCINA]", "in a kitchen"), "t_ninio_sheets")
+    ap.validate_ninio_story(no_kitchen)
+    assert "Setting: Cocina (warm kitchen" in no_kitchen["prompts"][1]["prompt"]
+    bad = ap._parse_story(text.replace("[MATEO] pushes the plate while [LAURA] waits", "someone pushes the plate"), "t_ninio_sheets")
+    with pytest.raises(ap.PipelineError, match="(?i)no se encontraron prompts de imagen"):
+        ap.validate_ninio_story(bad)

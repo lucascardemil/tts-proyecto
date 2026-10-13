@@ -45,8 +45,8 @@ def _text_system_prompt(kind: str) -> str:
     return prompt
 
 # Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas). Bebe Heroe
-# queda fuera: su formato de 4 frases / 18 s es fijo.
-PILARES_KINDS = {"historias", "macrame", "ninio_selectivo"}
+# (4 frases / 18 s) y el anuncio de Niño Selectivo (~14 s) quedan fuera: su formato es fijo.
+PILARES_KINDS = {"historias", "macrame"}
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
 STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
@@ -385,6 +385,7 @@ _HEALABLE_EXTRA_MARKERS = (
     "no están en inglés",  # el modelo escribio los prompts de imagen en español: otro modelo suele cumplir
     "unknown ref",  # WhatsApp Web se redibujo entre el snapshot y el clic: pasa solo
     "no hay noticias de videojuegos", "ningun medio de videojuegos",  # sin noticias nuevas / sin internet: se reintenta mas tarde
+    "no cierra con comenta ebook",  # el modelo olvido el llamado a la accion: otro intento suele cumplir
     "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
 )
 
@@ -798,6 +799,23 @@ def _text_kind_for_page(page_name: str) -> str:
     if is_bebe_heroe_page(page_name):
         return BEBE_HEROE_KIND
     return "historias"
+
+
+# Portada del ebook que se muestra en un celular al final del anuncio de Niño Selectivo.
+NINIO_EBOOK_COVER = SCRIPT_DIR / "assets" / "ninio" / "ebook_cover.jpg"
+
+
+def phone_card_for_page(page_name: str) -> Optional[str]:
+    """Imagen para el celular del cierre del video de la pagina (solo Niño Selectivo), o None."""
+    if _text_kind_for_page(page_name) == "ninio_selectivo" and NINIO_EBOOK_COVER.exists():
+        return str(NINIO_EBOOK_COVER)
+    return None
+
+
+def _has_fixed_length(page_name: str) -> bool:
+    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s) y el anuncio de
+    ebook de Niño Selectivo (~14 s). La duracion elegida en el lote no les cambia el guion."""
+    return is_bebe_heroe_page(page_name) or _text_kind_for_page(page_name) == "ninio_selectivo"
 
 
 def is_bebe_heroe_page(page_name: str) -> bool:
@@ -1253,7 +1271,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     story_id = f"batch_{project_id}_{index:03d}"
     trigger_message = auto_pipeline.build_trigger_message(
         project.get("trigger_message", "dame una historia"),
-        None if is_bebe_heroe_page(_project_page_name(project)) else vs.get("duration_seconds"),  # el reel ya mide 18 s
+        None if _has_fixed_length(_project_page_name(project)) else vs.get("duration_seconds"),  # el reel ya mide 18 s / el anuncio 14 s
         kind=_text_kind_for_page(_project_page_name(project)),
     )
     rescue = _is_rescue_project(project)
@@ -1295,6 +1313,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         auto_pipeline.validate_prompts_english(story)
         if _text_kind_for_page(_project_page_name(project)) == "macrame":
             auto_pipeline.validate_macrame_story(story)
+        if _text_kind_for_page(_project_page_name(project)) == "ninio_selectivo":
+            auto_pipeline.validate_ninio_story(story)
         visual_style = vs.get("visual_style")
         if visual_style and visual_style != "realista":
             for p in story["prompts"]:
@@ -1320,7 +1340,9 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 len(story["prompts"]), len(script_text),
             )
         auto_pipeline.validate_script(script_text, min_words=BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
-        if not bebe:  # las 4 frases de Bebé Héroe ya son el reel completo (18 s): no se recorta
+        if _text_kind_for_page(_project_page_name(project)) == "ninio_selectivo" and "ebook" not in script_text.lower():
+            raise RuntimeError("el guion no cierra con Comenta EBOOK (llamado a la accion del anuncio)")
+        if not _has_fixed_length(_project_page_name(project)):  # Bebé Héroe (18 s) y el anuncio (14 s) ya miden lo justo: no se recortan
             script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:
             forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
@@ -1419,6 +1441,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                         ai_label=RESCUE_AI_LABEL if rescue else None,
                         mood=mood,
                         script_text=script_text,
+                        phone_card=phone_card_for_page(_project_page_name(project)),
+                        phone_card_cta="COMENTA EBOOK",
                     )
                 if not timeline:
                     return None
@@ -2121,29 +2145,50 @@ def _public_image_url(project_id: str, index: int) -> Optional[str]:
 _COPY_LABELS = re.compile(r"^(FACEBOOK|INSTAGRAM):[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
 
 
-def _story_copy_llm(script_text: str) -> Optional[dict]:
-    """Texto de Facebook/Instagram redactado por la IA para el video de Historias (prompts/
-    historias_copy_system.md), en vez de un extracto del guion. None si no hay IA o la respuesta
-    no sirve: el llamador usa entonces el texto deterministico."""
+def _story_copy_llm(script_text: str, kind: str = "historias") -> Optional[dict]:
+    """Texto de Facebook/Instagram redactado por la IA para el video (prompts/<kind>_copy_system.md),
+    en vez de un extracto del guion. None si no hay IA o la respuesta no sirve: el llamador usa
+    entonces el texto deterministico."""
     try:
         text, _ = text_provider.generate_text(
-            (_PROMPTS_DIR / "historias_copy_system.md").read_text(encoding="utf-8"),
+            (_PROMPTS_DIR / f"{kind}_copy_system.md").read_text(encoding="utf-8"),
             f"Guion del video:\n{script_text}", max_tokens=1200, temperature=0.8,
         )
     except Exception as e:
         logger.warning("batch: copy de historias por IA fallo (%s); texto deterministico", e)
         return None
     parts = _COPY_LABELS.split(text)  # ['', 'FACEBOOK', fb, 'INSTAGRAM', ig]
-    found = {parts[i].upper(): parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
+    found = {parts[i].upper(): re.sub(r"\s*-{3,}\s*$", "", parts[i + 1].strip()) for i in range(1, len(parts) - 1, 2)}
     copy = {k: found.get(k.upper(), "") for k in ("FACEBOOK", "INSTAGRAM")}
-    if all(120 <= len(v) <= 1200 and "[" not in v and "#" in v for v in copy.values()):
+    if all(120 <= len(v) <= 2000 and "[" not in v and "#" in v for v in copy.values()):
         return {"facebook": copy["FACEBOOK"], "instagram": copy["INSTAGRAM"]}
     logger.warning("batch: copy de historias por IA con formato invalido; texto deterministico")
     return None
 
 
+# Hashtags de Facebook/Instagram por nicho para los videos que no son de rescate: fijos y con sentido
+# (las palabras sueltas del guion, "#digo #metros #cuerda", no lo son).
+NICHE_HASHTAGS = {
+    "macrame": ["#macrame", "#macramefacil", "#macrameparaprincipiantes", "#diymacrame", "#hechoamano"],
+    "ninio_selectivo": ["#niñoselectivo", "#crianza", "#alimentacioninfantil", "#maternidad", "#comidaparaniños"],
+}
+
+
+# Texto de publicacion de Niño Selectivo si la IA no responde: el modelo de conversion de la pagina.
+NINIO_COPY_FALLBACK = (
+    "Mi hijo NO comía verduras hasta que probé ESTO 🥦👇\nNo fue obligarlo.\nNo fue esconderle la comida.\n"
+    "No fue negociar un bocado más.\nFue cambiar la receta.\n"
+    "Cuando entendí que un niño selectivo no necesita presión, necesita una receta que le haga sentir seguro... "
+    "todo cambió.\nPasamos de:\n❌ Peleas en cada comida\n❌ \"No me gusta\" antes de probar\n"
+    "❌ Yo estresada y con culpa\nA:\n✅ Un plato colorido que ÉL quiere probar\n✅ Yo celebrando, no rogando\n"
+    "✅ Paz en la mesa por fin\nPor eso creé 127 Recetas Sin Peleas — recetas fáciles, rápidas y pensadas para que "
+    "digan SÍ sin peleas.\n¿Quieres el link? Encuéntralo en mi bio.\nDe la lucha en la mesa a la paz en familia 🤎\n"
+    "👇 comenta EBOOK\n\n#niñoselectivo #crianzarespetuosa #alimentacioninfantil #recetasparaniños"
+)
+
+
 def _build_publish_content(script_text: str, fallback_title: str, rescue: bool = False,
-                           story_copy: bool = False) -> dict:
+                           copy_kind: Optional[str] = None, niche_tags: Optional[list] = None) -> dict:
     """Genera titulo/descripcion/tags igual que el flujo manual (mismas
     funciones que usan /api/seo/suggest y /api/seo/suggest-social) para que
     el lote nunca publique con esos campos vacios. El titulo se comparte
@@ -2157,15 +2202,19 @@ def _build_publish_content(script_text: str, fallback_title: str, rescue: bool =
         }
     script_text = re.sub(r"\[([^\]]+)\]", lambda m: m.group(1).title(), script_text)  # [LUNA] -> Luna
     seo = seo_optimizer.suggest_seo(script_text, rescue=rescue)
-    if rescue or story_copy:  # Historias: texto de la IA; si falla, el de rescate (hashtags validados)
-        written = _story_copy_llm(script_text) if story_copy else None
-        facebook_description = written["facebook"] if written else seo_optimizer.suggest_rescue_copy(script_text, "facebook")
-        instagram_description = written["instagram"] if written else seo_optimizer.suggest_rescue_copy(script_text, "instagram")
+    written = _story_copy_llm(script_text, copy_kind) if copy_kind else None
+    if written:  # Historias / Niño Selectivo: texto largo redactado por la IA
+        facebook_description, instagram_description = written["facebook"], written["instagram"]
+    elif copy_kind == "ninio_selectivo":
+        facebook_description = instagram_description = NINIO_COPY_FALLBACK
+    elif rescue or copy_kind:  # Historias sin IA: el de rescate (hashtags validados)
+        facebook_description = seo_optimizer.suggest_rescue_copy(script_text, "facebook")
+        instagram_description = seo_optimizer.suggest_rescue_copy(script_text, "instagram")
     else:
         social = seo_optimizer.suggest_social_caption(script_text)
         facebook_description = social["caption"]
-        if social["hashtags"]:
-            facebook_description += "\n\n" + " ".join(social["hashtags"])
+        if niche_tags:  # nunca palabras sueltas del guion como hashtags
+            facebook_description += "\n\n" + " ".join(niche_tags)
         instagram_description = facebook_description
     return {
         "title": seo["title"] or fallback_title,
@@ -2334,7 +2383,10 @@ def _publish_batch_video(project_id: str, index: int) -> None:
     video = project["videos"][index]
     kind = _text_kind_for_page(_project_page_name(project))
     content = _build_publish_content(
-        video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project), story_copy=_project_page_name(project).strip().upper() == RESCUE_PAGE_NAME,
+        video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project),
+        copy_kind="historias" if _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME
+        else "ninio_selectivo" if kind == "ninio_selectivo" else None,
+        niche_tags=NICHE_HASHTAGS.get(kind),
     )
     if kind == BEBE_HEROE_KIND:
         copy = _bebe_heroe_copy(video)

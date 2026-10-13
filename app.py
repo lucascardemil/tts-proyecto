@@ -3823,6 +3823,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
         tts_kwargs = {**tts_kwargs, "voice": batch_pipeline._bebe_heroe_voice(tts_kwargs.get("voice"))}
         duration_seconds = None
         generate_video_clips = False  # la composicion usa imagenes
+    elif page_name and batch_pipeline._has_fixed_length(page_name):  # anuncio de Niño Selectivo: ~14 s fijos
+        duration_seconds = None
     if page_name and not story_text:
         _pipeline_sub_update(job_id, "text", status="running",
                               message=f"Generando historia (proveedor de texto: {text_provider_pref or 'auto'})...")
@@ -3851,6 +3853,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             auto_pipeline.validate_prompts_english(auto_pipeline.load_story_from_text(story_text, story_id))
             if text_kind == "macrame":
                 auto_pipeline.validate_macrame_story(auto_pipeline.load_story_from_text(story_text, story_id))
+            if text_kind == "ninio_selectivo":
+                auto_pipeline.validate_ninio_story(auto_pipeline.load_story_from_text(story_text, story_id))
             if bebe:
                 _, story_text = batch_pipeline._split_hook_text(story_text)
                 n_scenes = len(auto_pipeline.load_story_from_text(story_text, story_id)["prompts"])
@@ -4063,6 +4067,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                     animate_images=animate_images,
                     on_progress=on_progress,
                     script_text=script_text,
+                    phone_card=batch_pipeline.phone_card_for_page(page_name) if page_name else None,
+                    phone_card_cta="COMENTA EBOOK",
                 )
             video_path = None
             if timeline:

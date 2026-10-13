@@ -11,6 +11,7 @@ import { Vignette } from "./Vignette";
 import { Fireflies } from "./Fireflies";
 import { TitleCard } from "./TitleCard";
 import { Subtitles } from "./Subtitles";
+import { PhoneCard } from "./PhoneCard";
 import { BebeHeroeVideo } from "./BebeHeroe";
 import type { StoryVideoProps } from "./schema";
 
@@ -61,6 +62,7 @@ const StandardStoryVideo: React.FC<StoryVideoProps> = ({
   subtitleStyle,
   aiLabel,
   mood,
+  phoneCard,
 }) => {
   const { fps } = useVideoConfig();
   const titleDurationInFrames = Math.round(fps * 3.5);
@@ -125,6 +127,9 @@ const StandardStoryVideo: React.FC<StoryVideoProps> = ({
           </div>
         </AbsoluteFill>
       ) : null}
+
+      {/* Celular con la portada del producto (ebook) sobre la última escena */}
+      {phoneCard ? <PhoneCard src={phoneCard.src} startFrame={phoneCard.startFrame} cta={phoneCard.cta} /> : null}
 
       {/* Subtítulos sincronizados con la narración */}
       <Subtitles words={subtitles} style={subtitleStyle} />

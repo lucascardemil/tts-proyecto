@@ -196,12 +196,12 @@ def test_story_copy_is_written_by_ai_not_a_script_extract(monkeypatch):
              "INSTAGRAM:\nNadie sabía su nombre 🐕 pero ella esperaba cada tarde en la misma esquina del pueblo con paciencia. "
              "Comenta AMOR si también crees en las segundas oportunidades de verdad.\n#RescateAnimal #PerrosRescatados #AdoptaNoCompres #AmorAnimal")
     monkeypatch.setattr(bp.text_provider, "generate_text", lambda *a, **k: (reply, "x"))
-    out = bp._build_publish_content("[LUNA] esperó siete meses. Marco la vio.", "t", story_copy=True)
+    out = bp._build_publish_content("[LUNA] esperó siete meses. Marco la vio.", "t", copy_kind="historias")
     assert out["facebook_description"].startswith("A veces una mirada") and "#RescateAnimal" in out["facebook_description"]
     assert out["instagram_description"] != out["facebook_description"]
     # sin IA: texto de rescate (hashtags validados) y sin corchetes
     monkeypatch.setattr(bp.text_provider, "generate_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
-    out = bp._build_publish_content("[LUNA] esperó siete meses. Marco la vio.", "t", story_copy=True)
+    out = bp._build_publish_content("[LUNA] esperó siete meses. Marco la vio.", "t", copy_kind="historias")
     assert "[" not in out["facebook_description"] and "#RescateAnimal" in out["facebook_description"]
     assert "#luna" not in out["facebook_description"]
 
@@ -227,3 +227,25 @@ def test_future_slot_keeps_todays_slot_at_night_and_ignores_other_pages(monkeypa
     # otro item de la MISMA pagina a menos de una hora si lo mueve un dia
     projects["same"]["videos"][0]["scheduled_at"] = "2026-10-09T13:30:00"
     assert bp._future_slot(projects, ("mine", 0), "2026-10-09T13:00:00") == datetime(2026, 10, 10, 13)
+
+
+def test_non_rescue_social_hashtags_are_niche_tags_not_script_words():
+    script = "¿Y si te digo que con 2 metros de cuerda puedes hacer esto? Un llavero listo en quince minutos."
+    macrame = bp._build_publish_content(script, "t", niche_tags=bp.NICHE_HASHTAGS["macrame"])
+    assert "#macramefacil" in macrame["facebook_description"] and "#metros" not in macrame["facebook_description"]
+    bare = bp._build_publish_content(script, "t")
+    assert "#" not in bare["facebook_description"]
+
+
+def test_ninio_selectivo_publication_text_uses_the_ebook_template(monkeypatch):
+    long_text = ("Mi hijo NO comía zapallo hasta que probé ESTO 🎃👇\nNo fue obligarlo.\nFue cambiar la receta.\n"
+                 + "Paz en la mesa. " * 12 + "\n👇 comenta EBOOK\n#niñoselectivo #crianzarespetuosa")
+    reply = f"FACEBOOK:\n{long_text}\nINSTAGRAM:\n{long_text.replace('obligarlo', 'rogarle')}"
+    monkeypatch.setattr(bp.text_provider, "generate_text", lambda *a, **k: (reply, "x"))
+    out = bp._build_publish_content("Mi hijo no probaba el zapallo.", "t", copy_kind="ninio_selectivo")
+    assert "comenta EBOOK" in out["facebook_description"] and out["facebook_description"] != out["instagram_description"]
+    # sin IA: la plantilla fija de la pagina
+    monkeypatch.setattr(bp.text_provider, "generate_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    out = bp._build_publish_content("Mi hijo no probaba el zapallo.", "t", copy_kind="ninio_selectivo")
+    assert out["facebook_description"] == bp.NINIO_COPY_FALLBACK and "127 Recetas Sin Peleas" in out["facebook_description"]
+    assert (bp._PROMPTS_DIR / "ninio_selectivo_copy_system.md").exists()

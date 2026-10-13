@@ -863,6 +863,8 @@ def build_props(
     mood: str = "warm_night",
     on_progress=None,
     script_text: Optional[str] = None,
+    phone_card: Optional[str] = None,
+    phone_card_cta: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Arma la edición: copia los assets al proyecto de Remotion, transcribe el
@@ -895,6 +897,9 @@ def build_props(
         on_progress: función opcional callback(str) para reportar avance.
         script_text: guion narrado; si se pasa, corrige con él las palabras mal
             transcritas de los subtítulos (ver correct_words_with_script).
+        phone_card: ruta de una imagen (p. ej. la portada del ebook) que se muestra dentro de un
+            celular sobre la última escena (ver video/src/PhoneCard.tsx); `phone_card_cta` es el botón
+            que lleva debajo (p. ej. "COMENTA EBOOK").
 
     Returns:
         El timeline (dict) escrito en props.json, o None si hubo error.
@@ -975,6 +980,12 @@ def build_props(
         frases=frases, animate_images=animate_images, ai_label=ai_label,
         mood=mood,
     )
+    if phone_card and Path(phone_card).exists() and timeline.get("scenes"):
+        card_name = f"phone_card{Path(phone_card).suffix.lower() or '.jpg'}"
+        shutil.copy(phone_card, VIDEO_PUBLIC_DIR / card_name)
+        timeline["phoneCard"] = {
+            "src": card_name, "startFrame": timeline["scenes"][-1]["startFrame"] + 6, "cta": phone_card_cta,
+        }
     props_path = VIDEO_DIR / "props.json"
     props_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 

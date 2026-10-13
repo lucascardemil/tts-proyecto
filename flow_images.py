@@ -105,6 +105,21 @@ def launch_browser() -> bool:
     return True
 
 
+def ensure_browser(wait_s: int = 45) -> None:
+    """Deja el navegador de Flow abierto: si estaba cerrado lo lanza (su perfil dedicado conserva la sesion
+    de Google) y espera a que su puerto de depuracion responda."""
+    if browser_up():
+        return
+    launch_browser()
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if browser_up():
+            time.sleep(3)  # el puerto abre antes de que la primera pestaña termine de cargar
+            return
+        time.sleep(1)
+    raise FlowError(f"No pude abrir {BROWSER['label']} para Flow: abrilo con «Abrir Flow» e iniciá sesión en Google.")
+
+
 def _ab(args: list, timeout: int = 90) -> str:
     """Corre un comando de agent-browser en la sesion de Flow y devuelve su stdout."""
     cmd = [AGENT_BROWSER, "--session", SESSION] + [str(a) for a in args]
@@ -174,8 +189,7 @@ def ensure_connected() -> str:
     """Se asegura de estar conectado a la pestaña PROPIA de Flow (abriendola si hace falta, sin tocar las
     de otros programas) y devuelve su URL actual."""
     global _attached_tab
-    if not browser_up():
-        raise FlowError("El navegador de Flow está cerrado: abrilo con «Abrir Flow» e iniciá sesión en Google.")
+    ensure_browser()
     tab = _own_tab()
     if tab is None:
         tab = _open_own_tab()
@@ -479,6 +493,7 @@ def generate_image(prompt: str, dest: Path) -> Path:
 def _begin_job() -> Optional[str]:
     """Trae al frente la pestaña propia (Flow solo responde bien en primer plano) y devuelve el id de la
     pestaña que estaba activa, para devolverle el foco al terminar."""
+    ensure_browser()  # si se cerro el navegador de Flow, se vuelve a abrir solo
     own_id = job_store.load(SETTINGS_STORE).get("tab_id")
     # ANTES de abrir la pestaña propia (que pasa a ser la activa): la ultima pestaña ajena usada
     prev = next((t["id"] for t in _pages() if t["id"] != own_id), None)

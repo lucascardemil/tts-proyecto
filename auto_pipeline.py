@@ -612,6 +612,14 @@ _CHARACTER_TAG_RE = re.compile(r"\[([^\]\n]+)\]")
 # CHARACTER_SHEET_REQUEST.)
 
 
+# Cola de cada prompt con fichas: el generador de imagenes no ve las otras escenas, asi que se le pide
+# explicitamente que repita personajes, ropa y set.
+CONSISTENCY_TAIL = (
+    " Keep the exact same characters (same faces, hair, skin tone and outfits) and the same setting as in "
+    "every other image of this series."
+)
+
+
 def _extract_characters(head: str) -> dict:
     """{ETIQUETA_EN_MAYUSCULAS: descripcion} de las lineas "[NOMBRE]: ..." del
     texto que precede a "Imagen 1". Vacio si no las trae."""
@@ -708,10 +716,15 @@ def _parse_story(text: str, story_id: str = None) -> dict:
         prompt = " ".join(prompt.split()).strip()
         if sheet and not _CHARACTER_TAG_RE.search(prompt):
             logger.warning("prompt de Imagen %s sin etiqueta de personaje: no se repite la descripcion", idx)
+        expanded = _expand_characters(prompt, characters)
+        if "COCINA" in characters and "Cocina (" not in expanded:  # el set fijo va en TODAS las imagenes
+            expanded = expanded.rstrip() + f" Setting: Cocina ({characters['COCINA']})."
+        if characters and expanded != prompt:  # lleva fichas: se pide mantener a los mismos personajes y el mismo set
+            expanded = expanded.rstrip() + CONSISTENCY_TAIL
         prompts.append({
             "index": int(idx),
             "frase": frase.strip(),
-            "prompt": _ensure_vertical(_soften_prompt(_expand_characters(prompt, characters))),
+            "prompt": _ensure_vertical(_soften_prompt(expanded)),
         })
 
     if not prompts:
@@ -831,6 +844,21 @@ CHARACTER_SHEET_REQUEST = (
 )
 
 
+# Variante para el anuncio de Niño Selectivo: fichas MUY concretas del niño, el adulto y la cocina, con ropa
+# fija, y todas las imagenes en la misma cocina. Sin esto los personajes cambian de una imagen a otra.
+NINIO_SHEET_REQUEST = (
+    "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT y antes de \"Guion\", escribi un bloque "
+    "\"PERSONAJES:\" con estas lineas en ingles: la del nino, la del adulto (cada una de 60 a 80 palabras: "
+    "edad exacta, genero, tono de piel, color y largo exacto del pelo y su peinado, color de ojos, UN rasgo "
+    "distintivo visible como pecas, hoyuelos o un mechon, y UNA sola ropa fija con colores exactos y hex, la "
+    "misma en las 5 imagenes) y una linea [COCINA]: la cocina fija (30 a 45 palabras: color de paredes con hex, "
+    "ventana a la izquierda, mesa de madera clara, 3 objetos fijos, luz calida). En cada \"Prompt:\" escribi 70 a "
+    "100 palabras en ingles y nombra SIEMPRE con su etiqueta, por ejemplo [MATEO], a cada personaje que aparezca "
+    "y a [COCINA] (todas las imagenes ocurren en esa misma cocina), sin redescribirlos: el sistema pega las "
+    "fichas completas en cada prompt."
+)
+
+
 # Variante para macrame: la "ficha" es la pieza que se teje (mas las manos y la
 # escena), y los prompts muestran la MISMA pieza avanzando etapa por etapa.
 MACRAME_SHEET_REQUEST = (
@@ -860,7 +888,28 @@ def build_trigger_message(base_message: str, duration_seconds: Optional[int], ki
     if duration_seconds:
         word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
         message += f" (el guion de narracion debe tener aproximadamente {word_target} palabras)"
-    return message + (MACRAME_SHEET_REQUEST if kind == "macrame" else CHARACTER_SHEET_REQUEST)
+    sheet = {"macrame": MACRAME_SHEET_REQUEST, "ninio_selectivo": NINIO_SHEET_REQUEST}.get(kind, CHARACTER_SHEET_REQUEST)
+    return message + sheet
+
+
+_NINIO_AGE_RE = re.compile(r"\d+[- ]years?[- ]old", re.IGNORECASE)
+
+
+def validate_ninio_story(story: dict) -> None:
+    """Cada imagen del anuncio de Niño Selectivo debe llevar la ficha de la cocina (misma cocina en todas)
+    y, salvo la primera (plano del plato), la ficha de algun personaje: sin ellas el nino y el adulto
+    cambian de una imagen a otra. El mensaje lleva el marcador sanable para que el lote regenere."""
+    problems = []
+    for p in sorted(story.get("prompts", []), key=lambda p: p["index"]):
+        if "Cocina (" not in p["prompt"]:
+            problems.append(f"Imagen {p['index']}: sin ficha de la cocina")
+        elif p["index"] > 1 and not _NINIO_AGE_RE.search(p["prompt"]):
+            problems.append(f"Imagen {p['index']}: sin ficha de personaje")
+    if problems:
+        raise PipelineError(
+            "No se encontraron prompts de imagen validos de ninio selectivo (fichas incompletas): "
+            + "; ".join(problems[:4])
+        )
 
 
 MACRAME_MIN_PROMPT_WORDS = 70

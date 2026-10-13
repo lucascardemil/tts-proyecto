@@ -68,8 +68,20 @@ def test_post_cover_uses_the_chosen_provider(monkeypatch, tmp_path):
 def test_status_when_the_flow_browser_is_closed(monkeypatch):
     monkeypatch.setattr(flow, "browser_up", lambda: False)
     assert flow.status()["state"] == "no_browser"
-    with pytest.raises(flow.FlowError, match="cerrado"):
-        flow.ensure_connected()
+    launched = []
+    monkeypatch.setattr(flow, "launch_browser", lambda: launched.append(1))  # nunca abre un navegador de verdad
+    with pytest.raises(flow.FlowError, match="No pude abrir"):
+        flow.ensure_browser(wait_s=0)
+    assert launched == [1]  # se cerro: lo intenta abrir solo
+
+
+def test_a_closed_flow_browser_is_relaunched_before_a_job(monkeypatch):
+    state = {"up": False}
+    monkeypatch.setattr(flow, "browser_up", lambda: state["up"])
+    monkeypatch.setattr(flow, "launch_browser", lambda: state.update(up=True))
+    monkeypatch.setattr(flow.time, "sleep", lambda s: None)
+    flow.ensure_browser(wait_s=5)
+    assert state["up"]
 
 
 def _fake_browser(monkeypatch, pages, store, browser="brave"):
