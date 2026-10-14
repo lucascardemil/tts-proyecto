@@ -138,10 +138,14 @@ def _rescue_hashtags(script_text: str, count: int) -> list:
 
 
 def _rescue_cta(script_text: str, offset: int = 0) -> str:
-    """Pregunta de cierre: la del propio guion si termina en una pregunta
-    corta (nace de la historia, §7.8); si no, una del set rotando por guion."""
+    """Cierre del guion (§7.8): pregunta corta, o petición de corazón solo en Facebook.
+
+    Si no aplica, devuelve una pregunta del set rotando (Instagram usa offset 1).
+    """
     last = (_sentences(script_text) or [""])[-1]
     if last.endswith("?") and len(last) <= 90:
+        return last
+    if offset == 0 and "corazón" in last.lower() and "deja" in last.lower() and len(last) <= 130:
         return last
     return _RESCUE_CTA_QUESTIONS[(sum(map(ord, script_text)) + offset) % len(_RESCUE_CTA_QUESTIONS)]
 

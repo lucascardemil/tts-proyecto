@@ -4386,6 +4386,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                 auto_pipeline.validate_ad_story(
                     auto_pipeline.load_story_from_text(story_text, story_id), batch_pipeline.AD_KINDS[text_kind]["setting"],
                     batch_pipeline.AD_KINDS[text_kind].get("subjects", ()))
+            if text_kind == "historias":
+                auto_pipeline.validate_historia_story_text(story_text, story_id)
             if bebe:
                 _, story_text = batch_pipeline._split_hook_text(story_text)
                 n_scenes = len(auto_pipeline.load_story_from_text(story_text, story_id)["prompts"])

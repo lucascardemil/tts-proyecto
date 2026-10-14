@@ -57,7 +57,7 @@ def test_ninio_selectivo_is_a_14s_ebook_ad_with_fixed_length():
     assert "Comenta EBOOK" in text and "38 a 46 palabras" in text and "exactamente 5 imágenes" in text and "NO dibujes ningún celular" in text
     assert "PILARES DE VALOR" not in text
     assert bp._has_fixed_length("Niño Selectivo, Familia en Paz") and bp._has_fixed_length("Bebé Héroe")
-    assert not bp._has_fixed_length("HISTORIAS") and bp._has_fixed_length("MACRAME CREATIVO")
+    assert bp._has_fixed_length("HISTORIAS") and bp._has_fixed_length("MACRAME CREATIVO")
 
 
 def test_ninio_selectivo_video_gets_the_ebook_phone_card(tmp_path, monkeypatch):

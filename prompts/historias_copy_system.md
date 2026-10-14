@@ -14,8 +14,10 @@ saludos ni markdown.
 - Después, 2-3 frases cálidas que dejan ver el conflicto y el giro emocional, sin
   contar toda la historia. Sin etiquetas entre corchetes: usa los nombres tal cual
   ("Luna"), nunca "[LUNA]".
-- Cierra con UNA petición simple de reacción o comentario (ej: "¿Me dejas un
-  corazoncito?", "Cuéntame en los comentarios si lo habrías adoptado").
+- Cierra con UNA petición simple de reacción dirigida al animal: un corazón
+  para él o ella, con su nombre (ej: "¿Me dejas un ❤️ para Nuri?", "Deja un ❤️
+  para Nuri si crees que merecía un final feliz"). No pidas una palabra clave
+  ni que comenten una palabra en mayúsculas.
 - Historia recreada: no inventes cifras ni organizaciones reales. Español neutro
   LATAM, sin voseo ("Seguime"), sin "suscríbete".
 - Hashtags en una línea aparte: Facebook 2-3, Instagram 4-5. Siempre

@@ -228,3 +228,17 @@ def test_chain_rotates_models_on_quota_or_reasoning(monkeypatch):
 def test_model_chain_has_no_duplicates_and_starts_with_primary():
     chain = text_provider.model_chain()
     assert chain[0] == text_provider.FREELLM_MODEL and len(chain) == len(set(chain))
+
+
+@pytest.mark.parametrize("msg", [
+    "Tras 3 intentos automáticos: tras 1 intento(s): Sin proveedor de texto disponible "
+    "(freellm: respuesta truncada por max_tokens (el modelo se quedo razonando))",
+    "Sin proveedor de texto disponible (freellm(mistral-large-3): rate limit / cuota agotada (429). Reintenta mas tarde.)",
+    "Sin proveedor de texto disponible (freellm: la respuesta no trae bloques Imagen/Frase/Prompt (razonamiento o formato roto))",
+])
+def test_text_provider_outages_are_healable(msg):
+    assert batch_pipeline._is_healable_error(msg)
+
+
+def test_missing_text_provider_config_is_not_healable():
+    assert not batch_pipeline._is_healable_error("Sin proveedor de texto disponible (text_provider: system prompt historias no encontrado)")

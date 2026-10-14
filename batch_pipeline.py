@@ -44,9 +44,9 @@ def _text_system_prompt(kind: str) -> str:
         prompt += "\n\n" + (_PROMPTS_DIR / "_pilares_de_valor.md").read_text(encoding="utf-8")
     return prompt
 
-# Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas). Bebe Heroe
-# (4 frases / 18 s) y el anuncio de Niño Selectivo (~14 s) quedan fuera: su formato es fijo.
-PILARES_KINDS = {"historias"}
+# Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas).
+# Hoy ninguno: HISTORIAS usa un formato fijo de ~42 s con su propia estructura (prompts/historias_system.md).
+PILARES_KINDS: set = set()
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
 STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
@@ -176,7 +176,7 @@ def _generate_text_with_chain(
                     text, backend = text_provider.generate_text(
                         system,
                         trigger_message,
-                        max_tokens=4096,
+                        max_tokens=8192,  # el router "auto" razona ~3000 tokens antes de contestar
                         temperature=0.8,
                         model=models[(attempt - 1) % len(models)],
                     )
@@ -185,8 +185,18 @@ def _generate_text_with_chain(
                     if kind in STORY_TEXT_KINDS and not auto_pipeline.has_image_blocks(text):
                         raise text_provider.TextProviderError(
                             "freellm: la respuesta no trae bloques Imagen/Frase/Prompt (razonamiento o formato roto)")
+                    # HISTORIAS dura ~42 s: un guion fuera de rango se reintenta ya con el
+                    # siguiente modelo, sin esperar al reintento de etapa (no escribe scratch).
+                    if kind == "historias":
+                        script = auto_pipeline.extract_script(text)
+                        if script.strip():
+                            try:
+                                auto_pipeline.validate_historia_script(script)
+                            except auto_pipeline.PipelineError as ve:
+                                raise text_provider.TextProviderError(
+                                    "freellm: formato de historia fuera de rango: " + str(ve))
                 except text_provider.TextProviderError as e:
-                    retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "rate limit"))
+                    retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "formato de historia", "rate limit"))
                     if not retryable or attempt == attempts:
                         raise
                     logger.warning("batch: %s; reintento %d/%d con otro modelo", e, attempt, attempts)
@@ -386,7 +396,11 @@ _HEALABLE_EXTRA_MARKERS = (
     "unknown ref",  # WhatsApp Web se redibujo entre el snapshot y el clic: pasa solo
     "no hay noticias de videojuegos", "ningun medio de videojuegos",  # sin noticias nuevas / sin internet: se reintenta mas tarde
     "no cierra con comenta ebook",  # el modelo olvido el llamado a la accion: otro intento suele cumplir
+    "guion de historia fuera de formato",  # largo o cierre fuera del formato de ~42 s: otro intento suele cumplir
     "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
+    "respuesta truncada por max_tokens",  # modelo de razonamiento que no alcanzo a contestar: otro modelo/momento suele
+    "cuota agotada (429)",  # limite por minuto del proveedor de texto: se repone en minutos
+    "no trae bloques imagen",  # razonamiento volcado o formato roto: otra respuesta suele traerlos
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -474,29 +488,41 @@ STORY_PATTERNS = {
     "promesa_cumplida": (8, "Promesa cumplida: al inicio el narrador promete algo concreto y pequeno (un dia en la playa, correr en un campo, dormir en una cama) a un animal muy debil; la recuperacion se narra con avances graduales naturales (sin contar dia por dia) y la ultima escena cumple la promesa."),
     "condenado_vuelve": (5, "El que nadie esperaba: todos decian que ya no habia esperanza para el animal; el rescatista no se rindio; el final salta anos adelante y lo muestra sano y feliz. Nunca uses palabras como dormir, sacrificar o eutanasia."),
     "espera_diaria": (15, "Espera diaria: cada dia a la misma hora espera en el mismo lugar (una parada, una puerta, una ventana); esperaba a alguien; final de reencuentro o nuevo hogar."),
+    "mascota_perdida": (18, "Mascota perdida: el animal espera cada dia en un mismo lugar (un banco, una puerta, una parada) despues de que su dueno se mudo o lo perdio; alguien del lugar nota que no es callejero (un cartel, un collar, una costumbre) y encuentra a su persona; final de reencuentro."),
 }
 STORY_PATTERN_COOLDOWN = 2  # no repite un patron usado en los ultimos N videos
 
 RESCUE_STORY_CRAFT = (
-    "\n\nESTRUCTURA (obligatoria): 1) Gancho: la primera frase lleva un numero o plazo concreto "
-    "(\"Durante nueve dias no comio\", \"Le quedaban tres dias\"). "
-    "2) Contexto: lugar especifico y DIFERENTE en cada historia, internacional (rota pais y "
-    "continente: una costa de Portugal, un pueblo de montana en Nepal, un puerto de Japon, un "
-    "desierto de Mexico, una aldea en los Andes, una ciudad europea, etc.; NUNCA siempre el mismo "
-    "pais) y el juicio de la gente (\"todos pensaban que era...\"). 3) Escalada con referencias temporales "
-    "VARIADAS y naturales (esa manana, varios dias despues, semanas mas tarde, tras una tormenta, "
-    "al llegar el invierno); evita el conteo mecanico repetitivo de dias. "
-    "4) Giro antes de la mitad: el rescatista descubre la razon emocional oculta (duelo, crias, "
-    "proteger algo): no era lo que todos creian. "
-    "5) Rescate con una accion concreta y una transformacion visible (flaco a sano, solo a "
-    "acompanado, sucio a limpio); el final puede ser agridulce pero siempre esperanzador. 6) Cierre: moraleja de una linea y pregunta final que invita a "
-    "comentar una palabra clave en mayusculas (ej. \"Comenta CABALLO si...\"); no prometas Parte 2. "
-    "El rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y ocupacion (nunca "
-    "reuses el nombre de una historia anterior). Incluye su ficha completa en PERSONAJES y usa su "
-    "etiqueta en los prompts. La ultima "
-    "imagen muestra la transformacion (antes y despues, o feliz en su hogar). Si la historia no "
-    "tiene una transformacion visible o un misterio resuelto, cambia la idea."
+    "\n\nESTRUCTURA (obligatoria, 5 pasos, video de unos 42 segundos): 1) Gancho de espera: la primera frase "
+    "lleva un numero o plazo concreto y una consecuencia (\"Nuri esperó siete meses en el mismo banco. Todos "
+    "pasaban... nadie la veía.\"). 2) Conflicto y adversidad: que cambio y como lo soporta con el tiempo y el "
+    "clima (con frio, con lluvia, semanas mas tarde); lugar especifico y DIFERENTE en cada historia, "
+    "internacional (rota pais y continente: un pueblo de España, un puerto de Japón, una aldea en los Andes, "
+    "una ciudad de México, etc.; NUNCA siempre el mismo pais) y el juicio de la gente (\"todos pensaban "
+    "que era...\"). 3) Giro con personaje bondadoso: alguien (panadero, vecina, guardia, niño, cartero) nota lo "
+    "que los demas ignoraban (un cartel viejo, un collar, una costumbre diaria) y entiende quien es el animal "
+    "o que espera: no era lo que todos creian. 4) Reencuentro o rescate emotivo con una accion concreta y una "
+    "transformacion visible (su persona lo reconoce y el animal la reconoce al instante, o llega a su hogar); "
+    "final esperanzador. 5) Cierre: una frase de esperanza con el nombre del animal y la invitacion a dejar un "
+    "corazón (\"Hoy Nuri ya no espera sola... deja un corazón para Nuri\"); escribe la palabra corazón, nunca el "
+    "emoji, y no pidas una palabra clave ni prometas Parte 2. El guion de narracion tiene de 100 a 120 "
+    "palabras, escritas con los acentos y la ñ correctos (esperó, veía, niño). El personaje bondadoso o rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y "
+    "ocupacion (nunca reuses el nombre de una historia anterior). Incluye su ficha completa en PERSONAJES y "
+    "usa su etiqueta en los prompts. La ultima imagen muestra la transformacion (feliz en su hogar o ya "
+    "reunido). Si la historia no tiene una transformacion visible o un misterio resuelto, cambia la idea."
 )
+
+
+def _uses_story_pattern(project: dict) -> bool:
+    """Los lotes de la pagina HISTORIAS (con o sin perfil de rescate/YouTube) llevan patron de historia."""
+    return _is_rescue_project(project) or _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME
+
+
+def _story_trigger_addition(project: dict, pattern: "str | None") -> str:
+    """Lo que el lote agrega al mensaje de HISTORIAS: estructura + patron + anti-fatiga."""
+    if not pattern or not _uses_story_pattern(project):
+        return ""
+    return rescue_story_block(pattern) + _rescue_history_block()
 
 
 def _pick_story_pattern(recent: list) -> str:
@@ -507,10 +533,10 @@ def _pick_story_pattern(recent: list) -> str:
 
 
 def _recent_story_patterns(projects: dict) -> list:
-    """Patrones de los ultimos videos de rescate, del mas viejo al mas nuevo."""
+    """Patrones de los ultimos videos de rescate (o de la pagina HISTORIAS), del mas viejo al mas nuevo."""
     seen = []
     for project in projects.values():
-        if _is_rescue_project(project):
+        if _uses_story_pattern(project):
             seen += [(v.get("scheduled_at", ""), v["story_pattern"])
                      for v in project.get("videos", []) if v.get("story_pattern")]
     return [pattern for _, pattern in sorted(seen)]
@@ -825,9 +851,11 @@ def phone_card_for_page(page_name: str) -> Optional[str]:
 
 
 def _has_fixed_length(page_name: str) -> bool:
-    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s) y los anuncios de
-    ebook de Niño Selectivo (~14 s) y Macramé (~17 s). La duracion elegida en el lote no les cambia el guion."""
-    return is_bebe_heroe_page(page_name) or ad_kind_for_page(page_name) is not None
+    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s), los anuncios de
+    ebook de Niño Selectivo (~14 s) y Macramé (~17 s), e HISTORIAS (~42 s; cualquier pagina que use el
+    prompt de historias). La duracion elegida en el lote no les cambia el guion."""
+    return (is_bebe_heroe_page(page_name) or ad_kind_for_page(page_name) is not None
+            or _text_kind_for_page(page_name) == "historias")
 
 
 def is_bebe_heroe_page(page_name: str) -> bool:
@@ -1274,7 +1302,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         project["videos"][index]["stage"] = "guion"
         project["videos"][index]["error"] = None
         pattern = None
-        if _is_rescue_project(project):
+        if _uses_story_pattern(project):
             pattern = _pick_story_pattern(_recent_story_patterns(projects))
             project["videos"][index]["story_pattern"] = pattern
         _save(projects)
@@ -1289,10 +1317,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     rescue = _is_rescue_project(project)
     bebe = _text_kind_for_page(_project_page_name(project)) == BEBE_HEROE_KIND
     bebe_idea = bebe_tag = None
-    if rescue:
-        trigger_message += rescue_story_block(pattern) + _rescue_history_block()
-    elif _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME:  # Historias sin YouTube: igual sin repetir nombres
-        trigger_message += _rescue_history_block()
+    if _uses_story_pattern(project):  # Historias (con o sin YouTube): patron + sin repetir nombres
+        trigger_message += _story_trigger_addition(project, pattern)
     elif bebe:
         bebe_idea, bebe_tag, extra = bebe_trigger_block()
         trigger_message += extra
@@ -1353,6 +1379,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         auto_pipeline.validate_script(script_text, min_words=BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
         if ad_kind and "ebook" not in script_text.lower():
             raise RuntimeError("el guion no cierra con Comenta EBOOK (llamado a la accion del anuncio)")
+        if _text_kind_for_page(_project_page_name(project)) == "historias":
+            auto_pipeline.validate_historia_script(script_text)
         if not _has_fixed_length(_project_page_name(project)):  # Bebé Héroe (18 s) y el anuncio (14 s) ya miden lo justo: no se recortan
             script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:

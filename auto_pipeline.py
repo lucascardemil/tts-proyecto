@@ -31,6 +31,7 @@ import tempfile
 from typing import Optional
 import threading
 import time
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -876,6 +877,25 @@ MACRAME_SHEET_REQUEST = (
 )
 
 
+# Variante para HISTORIAS: fichas largas y concretas (colores hex, posicion de cada mancha, ropa fija) del
+# animal, de cada humano y del lugar principal. El generador de imagenes solo ve un prompt por escena, asi
+# que la ficha pegada en cada uno es lo unico que mantiene a los personajes iguales entre imagenes.
+HISTORIAS_SHEET_REQUEST = (
+    "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT y antes de Guion, escribe un bloque "
+    "PERSONAJES: con una linea por ficha, en ingles y solo con rasgos permanentes (el estado de cada momento "
+    "va en la accion de cada imagen): la del animal (90 a 120 palabras: especie o raza, edad, tamano y "
+    "proporciones, color del pelaje con hex y la ubicacion exacta de cada mancha, ojos, orejas, cola, largo y "
+    "textura del pelo, UN rasgo distintivo y UN accesorio fijo), la de cada humano que aparezca (80 a 100 "
+    "palabras: edad exacta, genero, tono de piel, color y largo exacto del pelo y peinado, ojos, UN rasgo "
+    "visible y UNA sola ropa fija con colores y hex, la misma en todas las imagenes) y una linea [LUGAR] "
+    "(30 a 45 palabras: el lugar principal de la espera con colores con hex, luz y 3 objetos fijos). En cada "
+    "Prompt: escribe 90 a 130 palabras en ingles (plano y angulo, hora del dia y clima, luz, accion, postura "
+    "y expresion, estado visible del animal, fondo con detalles concretos) y nombra a cada personaje SOLO con "
+    "su etiqueta, por ejemplo [LUNA], y a [LUGAR] cuando la escena ocurre ahi, sin redescribirlos: el sistema "
+    "pega las fichas completas en cada prompt."
+)
+
+
 def build_trigger_message(base_message: str, duration_seconds: Optional[int], kind: Optional[str] = None) -> str:
     """Arma el mensaje disparador de un Project de historias: agrega el pedido
     de ficha de personajes y, si hay una duracion objetivo, un pedido de
@@ -887,11 +907,44 @@ def build_trigger_message(base_message: str, duration_seconds: Optional[int], ki
     if duration_seconds:
         word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
         message += f" (el guion de narracion debe tener aproximadamente {word_target} palabras)"
-    sheet = {"macrame": MACRAME_SHEET_REQUEST, "ninio_selectivo": NINIO_SHEET_REQUEST}.get(kind, CHARACTER_SHEET_REQUEST)
+    sheet = {"macrame": MACRAME_SHEET_REQUEST, "ninio_selectivo": NINIO_SHEET_REQUEST,
+             "historias": HISTORIAS_SHEET_REQUEST}.get(kind, CHARACTER_SHEET_REQUEST)
     return message + sheet
 
 
 _NINIO_AGE_RE = re.compile(r"\d+[- ]years?[- ]old", re.IGNORECASE)
+
+
+HISTORIA_MIN_WORDS = 90   # el prompt pide 100-120 (~42 s); margen a los lados
+HISTORIA_MAX_WORDS = 130
+
+
+def validate_historia_script(script: str) -> None:
+    """El guion de HISTORIAS mide ~42 s (100-120 palabras), cierra pidiendo un corazon para el animal
+    y no usa "Comenta PALABRA". El mensaje lleva el marcador sanable "guion de historia fuera de
+    formato" para que el lote regenere."""
+    text = script.strip()
+    plain = unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode().lower()
+    words = len(text.split())
+    problems = []
+    if not HISTORIA_MIN_WORDS <= words <= HISTORIA_MAX_WORDS:
+        problems.append(f"{words} palabras (deben ser {HISTORIA_MIN_WORDS}-{HISTORIA_MAX_WORDS})")
+    if "corazon" not in " ".join(plain.split()[-30:]):
+        problems.append("no cierra pidiendo un corazon para el animal")
+    if re.search(r"\bcomenta\b", plain):  # palabra completa: "comentaban" no cuenta
+        problems.append("usa 'comenta' en vez de pedir un corazon")
+    if problems:
+        raise PipelineError("Guion de historia fuera de formato: " + "; ".join(problems))
+
+
+def validate_historia_story_text(story_text: str, story_id: str) -> None:
+    """Valida el guion dentro de la respuesta completa del modelo (ruta manual): el bloque "Guion" o,
+    si no viene separado, las frases de cada imagen en orden."""
+    script = extract_script(story_text)
+    if not script.strip():
+        story = load_story_from_text(story_text, story_id)
+        script = " ".join(p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"]))
+    validate_historia_script(script)
 
 
 def validate_ad_story(story: dict, setting: str = "Cocina", subjects: tuple = ()) -> None:
