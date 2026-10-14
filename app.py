@@ -8,6 +8,7 @@ import atexit
 import os
 import json
 import logging
+import mimetypes
 import re
 import secrets
 import shutil
@@ -77,6 +78,9 @@ from tts_engine import (
 GDRIVE_VIDEOS_DIR = Path(os.environ.get("GDRIVE_VIDEOS_DIR", r"G:\Mi unidad\VIDEOS DE FACEBOOK"))
 PORT = int(os.environ.get("PORT", 5000))
 
+# Los módulos ES exigen un MIME de JavaScript; en Windows el registro a veces devuelve text/plain.
+mimetypes.add_type("text/javascript", ".js")
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB: tope de subida (imágenes/clips del pipeline manual)
 
@@ -120,6 +124,13 @@ HTML = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@400&family=Playfair+Display:wght@700&family=Poppins:wght@500&family=Montserrat:wght@600&family=Bebas+Neue&family=Anton&family=Bangers&display=swap" rel="stylesheet">
+<script>
+(function () {
+  var t = "matrix";
+  try { t = localStorage.getItem("uiTheme") || "matrix"; } catch (e) { /* sin localStorage */ }
+  document.documentElement.setAttribute("data-theme", t === "classic" ? "classic" : "matrix");
+})();
+</script>
 <style>
   :root {
     --bg-main: #080808;
@@ -592,10 +603,84 @@ HTML = r"""<!DOCTYPE html>
   .office-finding-text { flex: 1; font-size: 14px; }
   .office-views { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   @media (max-width: 520px) { .office-finding { flex-wrap: wrap; } .office-finding-text { flex-basis: 100%; } }
+  #office-3d { width: 100%; aspect-ratio: 16 / 9; max-height: 440px; border-radius: var(--radius-md); overflow: hidden; background: #000; border: 1px solid var(--border); }
+  #office-3d canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; }
+  #office-3d[hidden], .office-agent-row[hidden] { display: none; }
+  .office-agent-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .office-agent-btn.selected { border-color: var(--red-light); }
+  .office-agent-btn.status-warn { color: #fbbf24; }
+  .office-agent-btn.status-error { color: #f87171; }
+  @media (max-width: 520px) { #office-3d { aspect-ratio: 4 / 3; } }
+  @media (max-width: 520px) { .office-agent-row { display: grid; grid-template-columns: 1fr 1fr; } }
   /* OFFICE:END */
+  /* MATRIX:START */
+  #matrix-rain { display: none; position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: .3; }
+  html[data-theme="matrix"] #matrix-rain { display: block; }
+  .theme-toggle { margin-top: auto; width: 100%; font-family: inherit; text-align: left; }
+  html[data-theme="matrix"] {
+    --bg-main: #000000;
+    --bg-sidebar: #010a03;
+    --surface-1: #041006;
+    --surface-2: #07180a;
+    --surface-3: #0b2210;
+    --border: #0f4a1c;
+    --border-hover: #1a7a31;
+    --text-primary: #c8ffd6;
+    --text-secondary: #7fd99a;
+    --text-muted: #55a96d;
+    --red-dark: #04440f;
+    --red-primary: #00a828;
+    --red-light: #00ff41;
+    --gradient-red: linear-gradient(110deg, #04440f 0%, #00a828 45%, #00ff41 100%);
+    --gradient-red-hover: linear-gradient(110deg, #066016 0%, #00c032 45%, #4dff77 100%);
+    --gradient-red-active: linear-gradient(110deg, #04440f, #00a828, #00d636);
+    --gradient-red-subtle: linear-gradient(135deg, #041006, rgba(0, 168, 40, 0.22));
+    --success: #00ff41;
+    --error: #f87171;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+    color-scheme: dark;
+  }
+  html[data-theme="matrix"] body,
+  html[data-theme="matrix"] button,
+  html[data-theme="matrix"] input,
+  html[data-theme="matrix"] select,
+  html[data-theme="matrix"] textarea { font-family: var(--mono); }
+  html[data-theme="matrix"] .card { background: rgba(4, 16, 6, .9); box-shadow: 0 0 18px rgba(0, 255, 65, .08); }
+  html[data-theme="matrix"] .card h2 { color: var(--red-light); text-shadow: 0 0 8px rgba(0, 255, 65, .55); letter-spacing: .03em; }
+  html[data-theme="matrix"] .nav-item.active,
+  html[data-theme="matrix"] .btn-primary,
+  html[data-theme="matrix"] .voice-card .gentle-badge,
+  html[data-theme="matrix"] .ring.done::after,
+  html[data-theme="matrix"] .ring.error::after { color: #00200a; font-weight: 700; }
+  html[data-theme="matrix"] .nav-item.active { box-shadow: 0 0 14px rgba(0, 255, 65, .35); }
+  html[data-theme="matrix"] .btn-primary { box-shadow: 0 0 22px rgba(0, 255, 65, .25); }
+  html[data-theme="matrix"] .tab-btn.active {
+    color: var(--red-light); background: rgba(0, 255, 65, .12);
+    box-shadow: inset 0 -2px 0 var(--red-light), 0 0 14px rgba(0, 255, 65, .2);
+  }
+  html[data-theme="matrix"] .voice-card.active { border-color: var(--red-light); }
+  /* tinte verde solo en fondo y mobiliario; las pantallas (.screen) conservan su color de estado */
+  html[data-theme="matrix"] .office-scene > rect,
+  html[data-theme="matrix"] .office-scene > line,
+  html[data-theme="matrix"] .office-agent > :not(.screen):not(.office-focus) {
+    filter: grayscale(.4) sepia(1) hue-rotate(75deg) saturate(2) brightness(.75);
+  }
+  html[data-theme="matrix"] { scrollbar-color: #0f4a1c #000; }
+  /* rojos fijos del tema clasico que no pasan por variables */
+  html[data-theme="matrix"] .tab-btn.active { border-color: rgba(0, 255, 65, .35); }
+  html[data-theme="matrix"] textarea:focus { box-shadow: 0 0 0 3px rgba(0, 255, 65, .16); }
+  html[data-theme="matrix"] .subtitle-preset-card.active { border-color: var(--red-light); box-shadow: 0 0 0 1px var(--red-light); }
+  html[data-theme="matrix"] .btn-outline-danger { color: #f87171; border-color: #f87171; }
+  html[data-theme="matrix"] .btn-outline-danger:hover:not(:disabled) { background: rgba(248, 113, 113, .12); }
+  html[data-theme="matrix"] .table-best-row { background: rgba(0, 255, 65, .06); }
+  @media (prefers-reduced-motion: reduce) { #matrix-rain { opacity: .15; } }
+  /* MATRIX:END */
 </style>
 </head>
 <body>
+<!-- MATRIX:START -->
+<canvas id="matrix-rain" aria-hidden="true"></canvas>
+<!-- MATRIX:END -->
 
 <button class="menu-toggle" id="menu-toggle" aria-label="Abrir menú" aria-expanded="false">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -637,6 +722,9 @@ HTML = r"""<!DOCTYPE html>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.32c-.77.3-1.4.98-1.4 1.68v.3"/><path d="M12 17h.01"/></svg>
     Soporte
   </a>
+  <!-- MATRIX:START -->
+  <button type="button" class="nav-item theme-toggle" id="theme-toggle" aria-pressed="true">Tema: Matrix</button>
+  <!-- MATRIX:END -->
 </nav>
 
 <main>
@@ -697,6 +785,13 @@ HTML = r"""<!DOCTYPE html>
           <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Revisor</text>
         </g>
       </svg>
+      <div id="office-3d" hidden></div>
+      <div class="office-agent-row" id="office-agent-row" hidden>
+        <button type="button" class="btn-sm office-agent-btn" id="office-btn-videos">Videos</button>
+        <button type="button" class="btn-sm office-agent-btn" id="office-btn-publica">Publica</button>
+        <button type="button" class="btn-sm office-agent-btn" id="office-btn-metricas">Métricas</button>
+        <button type="button" class="btn-sm office-agent-btn" id="office-btn-revisor">Revisor</button>
+      </div>
     </div>
     <div class="card" id="office-panel"></div>
   </div>
@@ -1422,6 +1517,8 @@ let officeOffline = false;
 let officeSelected = "revisor";
 let officeLastSig = "";
 let officeInFlight = false;
+let office3d = null;
+let office3dTried = false;
 const officeDismissedMem = new Set();
 try {
   JSON.parse(localStorage.getItem("officeDismissed") || "[]").forEach(id => officeDismissedMem.add(id));
@@ -1564,6 +1661,74 @@ function officeRenderPanel(force) {
   }
 }
 
+function officeSelect(id) {
+  officeSelected = id;
+  officeRenderPanel(true);
+  if (office3d) office3d.setSelected(id);
+  Object.keys(OFFICE_AGENTS).forEach(k => {
+    const b = $("office-btn-" + k);
+    if (b) b.classList.toggle("selected", k === id);
+  });
+}
+
+function officeRender3D() {
+  if (!office3d) return;
+  const agents = {};
+  Object.keys(OFFICE_AGENTS).forEach(id => {
+    const v = officeAgentView(id);
+    agents[id] = { status: v.status, bubble: v.bubble };
+    const text = officeOffline ? "Sin conexión" : v.bubble;
+    const b = $("office-btn-" + id);
+    b.textContent = OFFICE_AGENTS[id].title + " · " + text;
+    b.setAttribute("aria-label", OFFICE_AGENTS[id].title + ": " + text);
+    b.className = "btn-sm office-agent-btn status-" + (officeOffline ? "idle" : v.status) +
+      (id === officeSelected ? " selected" : "");
+  });
+  office3d.update(agents, officeOffline);
+}
+
+function officeFallbackToSvg() {
+  if (office3d) {
+    try { office3d.dispose(); } catch (e) { /* ya liberada */ }
+    office3d = null;
+  }
+  $("office-3d").hidden = true;
+  $("office-agent-row").hidden = true;
+  document.querySelector(".office-scene").style.display = "";
+}
+
+function officeWebGL() {
+  try {
+    const c = document.createElement("canvas");
+    return !!(c.getContext("webgl2") || c.getContext("webgl"));
+  } catch (e) {
+    return false;
+  }
+}
+
+async function officeInit3D() {
+  if (office3dTried) return;
+  office3dTried = true;
+  if (!officeWebGL()) return;  // sin WebGL ni se descarga three.js: queda el SVG
+  try {
+    const mod = await import("/static/office3d.js");
+    const box = $("office-3d");
+    box.hidden = false;
+    $("office-agent-row").hidden = false;
+    office3d = mod.mountOffice3D(box, {
+      onSelect: officeSelect,
+      onLost: officeFallbackToSvg,
+      reducedMotion: !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
+    });
+    document.querySelector(".office-scene").style.display = "none";
+    office3d.setSelected(officeSelected);
+    officeRender(true);
+  } catch (e) {
+    console.warn("Oficina 3D no disponible, se usa la escena SVG:", e);
+    officeFallbackToSvg();
+  }
+}
+
 function officeRender(force) {
   Object.keys(OFFICE_AGENTS).forEach(id => {
     const v = officeAgentView(id);
@@ -1574,6 +1739,7 @@ function officeRender(force) {
     $("office-agent-" + id).setAttribute("aria-label", OFFICE_AGENTS[id].title + ": " + text);
   });
   officeRenderPanel(force);
+  officeRender3D();
 }
 
 async function officePoll() {
@@ -1601,18 +1767,84 @@ function officeStop() {
 function officeStart() {
   officeStop();
   officePoll();
+  officeInit3D();
   officeTimer = setInterval(() => { if (!document.hidden) officePoll(); }, OFFICE_POLL_MS);
 }
 
 Object.keys(OFFICE_AGENTS).forEach(id => {
   const g = $("office-agent-" + id);
-  const select = () => { officeSelected = id; officeRenderPanel(true); };
+  const select = () => officeSelect(id);
   g.addEventListener("click", select);
   g.addEventListener("keydown", e => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
   });
+  $("office-btn-" + id).addEventListener("click", select);
 });
 /* OFFICE:END */
+
+/* MATRIX:START */
+const RAIN_CELL = 16;
+const RAIN_GLYPHS = (() => {
+  let s = "";
+  for (let c = 0xFF66; c <= 0xFF9D; c++) s += String.fromCharCode(c);
+  return s + "0123456789";
+})();
+let rainTimer = null;
+let rainWidth = 0;
+let rainDrops = [];
+
+function themeCurrent() {
+  return document.documentElement.getAttribute("data-theme") === "classic" ? "classic" : "matrix";
+}
+
+function themeApply(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem("uiTheme", t); } catch (e) { /* sin localStorage: el tema vive en memoria */ }
+  const b = $("theme-toggle");
+  b.textContent = t === "matrix" ? "Tema: Matrix" : "Tema: Clásico";
+  b.setAttribute("aria-pressed", String(t === "matrix"));
+  rainSync();
+}
+
+function rainResize() {
+  const c = $("matrix-rain");
+  c.width = window.innerWidth;
+  c.height = window.innerHeight;
+  rainDrops = Array.from({ length: Math.ceil(c.width / RAIN_CELL) }, () => -Math.floor(Math.random() * 50));
+}
+
+function rainFrame() {
+  const c = $("matrix-rain");
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = "#00ff41";
+  ctx.font = RAIN_CELL + "px monospace";
+  rainDrops.forEach((y, i) => {
+    ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL, y * RAIN_CELL);
+    rainDrops[i] = (y * RAIN_CELL > c.height && Math.random() > 0.975) ? 0 : y + 1;
+  });
+}
+
+function rainSync() {
+  rainWidth = window.innerWidth;
+  if (rainTimer) { clearInterval(rainTimer); rainTimer = null; }
+  const c = $("matrix-rain");
+  if (themeCurrent() !== "matrix" || document.hidden) return;
+  rainResize();
+  c.getContext("2d").clearRect(0, 0, c.width, c.height);
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (let i = 0; i < 60; i++) rainFrame();  // un cuadro estático
+    return;
+  }
+  rainTimer = setInterval(rainFrame, 50);
+}
+
+$("theme-toggle").addEventListener("click", () => themeApply(themeCurrent() === "matrix" ? "classic" : "matrix"));
+document.addEventListener("visibilitychange", rainSync);
+window.addEventListener("resize", () => { if (themeCurrent() === "matrix" && window.innerWidth !== rainWidth) rainSync(); });
+themeApply(themeCurrent());
+/* MATRIX:END */
 
 // ── Navegación por pestañas (tabs superiores + sidebar) ──
 function activateTab(tab) {
