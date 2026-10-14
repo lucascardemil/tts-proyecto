@@ -51,6 +51,7 @@ import job_store
 import seo_optimizer
 import thumbnail_maker
 import batch_pipeline
+import office_state
 import gaming_clip
 import cloudflare_tunnel
 import text_provider
@@ -569,6 +570,29 @@ HTML = r"""<!DOCTYPE html>
   .hist-item-body { padding: 10px; }
   .hist-item-name { font-size: 11.5px; color: var(--text-secondary); word-break: break-all; margin: 0 0 8px; }
   .hist-item.selected { outline: 2px solid var(--red-light); }
+  /* OFFICE:START */
+  .office-scene { width: 100%; height: auto; display: block; border-radius: var(--radius-md); }
+  .office-agent { cursor: pointer; outline: none; }
+  .office-focus { fill: transparent; stroke: transparent; }
+  .office-agent:focus-visible .office-focus { stroke: var(--red-light); stroke-width: 2; }
+  .office-agent .screen { fill: #9a9a9a; }
+  .office-agent.status-ok .screen, .office-agent.status-busy .screen { fill: #4ade80; }
+  .office-agent.status-warn .screen { fill: #fbbf24; }
+  .office-agent.status-error .screen { fill: #f87171; }
+  .office-agent.offline .screen { fill: #9a9a9a; }
+  .office-agent.status-busy .screen { animation: officeBlink 1.2s ease-in-out infinite; }
+  @keyframes officeBlink { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .office-agent.status-busy .screen { animation: none; } }
+  .office-agent:hover .bubble-bg { stroke: #8a7f6a; }
+  .office-finding { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+  .office-sev { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+  .office-sev.error { background: rgba(248,113,113,.18); color: #fca5a5; }
+  .office-sev.warn { background: rgba(251,191,36,.18); color: #fcd34d; }
+  .office-sev.info { background: rgba(96,165,250,.18); color: #93c5fd; }
+  .office-finding-text { flex: 1; font-size: 14px; }
+  .office-views { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  @media (max-width: 520px) { .office-finding { flex-wrap: wrap; } .office-finding-text { flex-basis: 100%; } }
+  /* OFFICE:END */
 </style>
 </head>
 <body>
@@ -580,7 +604,11 @@ HTML = r"""<!DOCTYPE html>
 
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-version">v1.0</div>
-  <a class="nav-item active" id="nav-video" data-tab="video">
+  <a class="nav-item active" data-tab="oficina">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
+    Oficina
+  </a>
+  <a class="nav-item" id="nav-video" data-tab="video">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 8l5-3v14l-5-3"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
     Crear video
   </a>
@@ -613,7 +641,68 @@ HTML = r"""<!DOCTYPE html>
 
 <main>
 
-  <div id="tab-video">
+  <!-- OFFICE:START -->
+  <div id="tab-oficina">
+    <div class="card">
+      <h2>Oficina</h2>
+      <p class="card-desc">Los agentes trabajan con lo que ya hace el sistema. Hacé clic en uno para ver su detalle y sus sugerencias.</p>
+      <svg class="office-scene" viewBox="0 0 320 176" role="group" aria-label="Oficina con cuatro agentes">
+        <rect width="320" height="176" fill="#f4efe6"/>
+        <rect y="132" width="320" height="44" fill="#cdbfa6"/>
+        <rect x="133" y="10" width="54" height="34" fill="#bfe3f5" stroke="#9a9a9a"/>
+        <line x1="160" y1="10" x2="160" y2="44" stroke="#9a9a9a"/>
+        <line x1="133" y1="27" x2="187" y2="27" stroke="#9a9a9a"/>
+        <g class="office-agent status-idle" id="office-agent-videos" role="button" tabindex="0" aria-label="Videos">
+          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
+          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
+          <text id="office-bubble-videos" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
+          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
+          <rect x="30" y="107" width="20" height="20" rx="6" fill="#D85A30"/>
+          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
+          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
+          <rect class="screen" x="32" y="114" width="16" height="8"/>
+          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Videos</text>
+        </g>
+        <g class="office-agent status-idle" id="office-agent-publica" role="button" tabindex="0" aria-label="Publica" transform="translate(80 0)">
+          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
+          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
+          <text id="office-bubble-publica" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
+          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
+          <rect x="30" y="107" width="20" height="20" rx="6" fill="#378ADD"/>
+          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
+          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
+          <rect class="screen" x="32" y="114" width="16" height="8"/>
+          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Publica</text>
+        </g>
+        <g class="office-agent status-idle" id="office-agent-metricas" role="button" tabindex="0" aria-label="Métricas" transform="translate(160 0)">
+          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
+          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
+          <text id="office-bubble-metricas" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
+          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
+          <rect x="30" y="107" width="20" height="20" rx="6" fill="#1D9E75"/>
+          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
+          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
+          <rect class="screen" x="32" y="114" width="16" height="8"/>
+          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Métricas</text>
+        </g>
+        <g class="office-agent status-idle" id="office-agent-revisor" role="button" tabindex="0" aria-label="Revisor" transform="translate(240 0)">
+          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
+          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
+          <text id="office-bubble-revisor" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
+          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
+          <rect x="30" y="107" width="20" height="20" rx="6" fill="#7F77DD"/>
+          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
+          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
+          <rect class="screen" x="32" y="114" width="16" height="8"/>
+          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Revisor</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card" id="office-panel"></div>
+  </div>
+  <!-- OFFICE:END -->
+
+  <div id="tab-video" style="display:none">
 
     <div class="video-layout">
     <div class="video-layout-main">
@@ -1318,10 +1407,219 @@ menuToggle.addEventListener("click", () => {
 });
 backdrop.addEventListener("click", closeSidebar);
 
+/* OFFICE:START */
+const OFFICE_POLL_MS = 3000;
+const OFFICE_AGENTS = {
+  videos:   { title: "Videos",   views: [["video", "Crear video"], ["lote", "Generación en lote"]] },
+  publica:  { title: "Publica",  views: [["historial", "Historial"], ["lote", "Lotes"]] },
+  metricas: { title: "Métricas", views: [] },
+  revisor:  { title: "Revisor",  views: [["ajustes", "Ajustes"]] },
+};
+const OFFICE_SEVERITY_LABEL = { error: "Error", warn: "Aviso", info: "Info" };
+let officeTimer = null;
+let officeState = null;
+let officeOffline = false;
+let officeSelected = "revisor";
+let officeLastSig = "";
+let officeInFlight = false;
+const officeDismissedMem = new Set();
+try {
+  JSON.parse(localStorage.getItem("officeDismissed") || "[]").forEach(id => officeDismissedMem.add(id));
+} catch (e) { /* sin localStorage: los descartes viven solo en memoria */ }
+
+function officeEl(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function officeDismiss(id) {
+  officeDismissedMem.add(id);
+  try { localStorage.setItem("officeDismissed", JSON.stringify([...officeDismissedMem])); } catch (e) { /* idem */ }
+}
+
+function officePrune(findings) {
+  // un descarte vale "hasta que se resuelva": si la alerta ya no esta, se olvida (y si vuelve, se muestra)
+  const live = new Set(findings.map(f => f.id));
+  let changed = false;
+  [...officeDismissedMem].forEach(id => { if (!live.has(id)) { officeDismissedMem.delete(id); changed = true; } });
+  if (!changed) return;
+  try { localStorage.setItem("officeDismissed", JSON.stringify([...officeDismissedMem])); } catch (e) { /* idem */ }
+}
+
+function officeVisibleFindings() {
+  return ((officeState && officeState.findings) || []).filter(f => !officeDismissedMem.has(f.id));
+}
+
+function officeAgentView(id) {
+  const a = officeState && officeState.agents[id];
+  if (!a) return { status: "idle", bubble: officeState ? "Sin datos" : "Cargando…", detail: {} };
+  if (id !== "revisor") return a;
+  const list = officeVisibleFindings();
+  if (!list.length) return Object.assign({}, a, { status: "ok", bubble: "Todo en orden" });
+  const worst = list.some(f => f.severity === "error") ? "error" : "warn";
+  return Object.assign({}, a, { status: worst, bubble: list.length + (list.length === 1 ? " alerta" : " alertas") });
+}
+
+function officeMetricLines(d) {
+  const lines = [];
+  ["facebook", "instagram"].forEach(net => {
+    const n = d[net];
+    if (!n) return;
+    const name = net === "facebook" ? "Facebook" : "Instagram";
+    const bt = n.best_time || {};
+    lines.push(bt.insufficient_data
+      ? name + ": datos insuficientes (" + (bt.sample_size || 0) + " posts con vistas)"
+      : name + ": mejor franja " + bt.best_daypart + " (" + bt.sample_size + " posts)");
+    const p = n.patterns || {};
+    if (!p.insufficient_data && p.best_title_length) {
+      const kw = p.top_keywords && p.top_keywords.length ? ", palabras que funcionan: " + p.top_keywords.join(", ") : "";
+      lines.push(name + ": títulos " + p.best_title_length + kw);
+    }
+    (n.top || []).forEach(t => lines.push(name + " · más visto: " + t.title + " (" + t.views + " vistas)"));
+  });
+  return lines;
+}
+
+function officeDetailLines(id) {
+  const a = officeState && officeState.agents[id];
+  if (!a || !a.detail) return [];
+  const d = a.detail;
+  if (id === "videos") {
+    return (d.projects || []).map(p => p.page_name + " · " + p.name + ": " + p.done + " de " + p.total + " listos");
+  }
+  if (id === "publica") {
+    const lines = [];
+    if (d.next_post) lines.push("Próximo post: " + new Date(d.next_post).toLocaleString("es"));
+    Object.keys(d.per_page || {}).forEach(k => lines.push(k + ": " + d.per_page[k] + " programados"));
+    return lines;
+  }
+  if (id === "metricas") return officeMetricLines(d);
+  return [];
+}
+
+async function officeRunAction(f, btn) {
+  const a = f.action;
+  if (a.kind === "open_view") { activateTab(a.target); return; }
+  if (a.kind !== "call" || !window.confirm(a.label + ": " + f.text + "\n\n¿Continuar?")) return;
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(a.url, { method: a.method || "POST" });
+    const data = await res.json();
+    if (!data.ok) alert(data.error || "No se pudo completar la acción.");
+  } catch (e) {
+    alert("No se pudo completar la acción.");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  officePoll();
+}
+
+function officeFindingRow(f) {
+  const row = officeEl("div", "office-finding");
+  row.appendChild(officeEl("span", "office-sev " + f.severity, OFFICE_SEVERITY_LABEL[f.severity] || f.severity));
+  row.appendChild(officeEl("span", "office-finding-text", f.text));
+  if (f.action) {
+    const run = officeEl("button", "btn-sm", f.action.label);
+    run.type = "button";
+    run.addEventListener("click", () => officeRunAction(f, run));
+    row.appendChild(run);
+  }
+  const dismiss = officeEl("button", "btn-sm", "Descartar");
+  dismiss.type = "button";
+  dismiss.addEventListener("click", () => { officeDismiss(f.id); officeRender(true); });
+  row.appendChild(dismiss);
+  return row;
+}
+
+function officeRenderPanel(force) {
+  const cfg = OFFICE_AGENTS[officeSelected];
+  const view = officeAgentView(officeSelected);
+  const details = officeDetailLines(officeSelected);
+  const findings = officeSelected === "revisor"
+    ? officeVisibleFindings()
+    : officeVisibleFindings().filter(f => f.agent === officeSelected);
+  const sig = JSON.stringify([officeSelected, officeOffline, view.bubble, details, findings.map(f => f.id + f.text)]);
+  if (!force && sig === officeLastSig) return;
+  officeLastSig = sig;
+  const box = $("office-panel");
+  box.textContent = "";
+  box.appendChild(officeEl("h2", "", cfg.title));
+  box.appendChild(officeEl("p", "card-desc", officeOffline ? "Sin conexión con el servidor. Reintentando…" : view.bubble));
+  details.forEach(t => box.appendChild(officeEl("p", "card-desc", t)));
+  findings.forEach(f => box.appendChild(officeFindingRow(f)));
+  if (!findings.length && officeSelected === "revisor" && officeState && !officeOffline) {
+    box.appendChild(officeEl("p", "card-desc", "Sin alertas por ahora."));
+  }
+  if (cfg.views.length) {
+    const row = officeEl("div", "office-views");
+    cfg.views.forEach(pair => {
+      const b = officeEl("button", "btn-sm", pair[1]);
+      b.type = "button";
+      b.addEventListener("click", () => activateTab(pair[0]));
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+  }
+}
+
+function officeRender(force) {
+  Object.keys(OFFICE_AGENTS).forEach(id => {
+    const v = officeAgentView(id);
+    const text = officeOffline ? "Sin conexión" : v.bubble;
+    $("office-agent-" + id).setAttribute("class",
+      "office-agent status-" + (officeOffline ? "idle" : v.status) + (officeOffline ? " offline" : ""));
+    $("office-bubble-" + id).textContent = text;
+    $("office-agent-" + id).setAttribute("aria-label", OFFICE_AGENTS[id].title + ": " + text);
+  });
+  officeRenderPanel(force);
+}
+
+async function officePoll() {
+  if (officeInFlight) return;
+  officeInFlight = true;
+  try {
+    const res = await fetch("/api/office/state");
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "estado no disponible");
+    officeState = data;
+    officeOffline = false;
+    if (Array.isArray(data.findings)) officePrune(data.findings);
+  } catch (e) {
+    officeOffline = true;
+  } finally {
+    officeInFlight = false;
+  }
+  officeRender(false);
+}
+
+function officeStop() {
+  if (officeTimer) { clearInterval(officeTimer); officeTimer = null; }
+}
+
+function officeStart() {
+  officeStop();
+  officePoll();
+  officeTimer = setInterval(() => { if (!document.hidden) officePoll(); }, OFFICE_POLL_MS);
+}
+
+Object.keys(OFFICE_AGENTS).forEach(id => {
+  const g = $("office-agent-" + id);
+  const select = () => { officeSelected = id; officeRenderPanel(true); };
+  g.addEventListener("click", select);
+  g.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+  });
+});
+/* OFFICE:END */
+
 // ── Navegación por pestañas (tabs superiores + sidebar) ──
 function activateTab(tab) {
   document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".nav-item[data-tab]").forEach(a => a.classList.toggle("active", a.dataset.tab === tab));
+  $("tab-oficina").style.display = tab === "oficina" ? "" : "none";
+  if (tab === "oficina") officeStart(); else officeStop();
   $("tab-video").style.display = tab === "video" ? "" : "none";
   $("tab-historial").style.display = tab === "historial" ? "" : "none";
   $("tab-ajustes").style.display = tab === "ajustes" ? "" : "none";
@@ -1351,6 +1649,7 @@ function activateTab(tab) {
 document.querySelectorAll(".tab-btn, .nav-item[data-tab]").forEach(el => {
   el.addEventListener("click", () => activateTab(el.dataset.tab));
 });
+officeStart();
 
 // ── Historial: listar videos generados y elegir uno para publicar ──
 async function loadHistorialVideos() {
@@ -5632,6 +5931,70 @@ def api_instagram_best_time():
     rows = _analytics_rows(_PUBLISHED_IG_PATH, "media_id", instagram_publisher.get_media_stats, multi_page=True)
     result = feedback_analyzer.best_posting_hour(rows)
     return jsonify({"ok": True, **result})
+
+
+# ─────────────────────────────────────────────
+# Oficina de agentes (solo lectura, ver office_state.py)
+# ─────────────────────────────────────────────
+
+def _office_flow() -> dict:
+    import flow_images
+    return flow_images.status()
+
+
+def _office_tokens() -> list:
+    """Estado de cada token sin la clave access_token: la oficina nunca la maneja."""
+    return [
+        {**{k: v for k, v in meta_auth.validate(p["page_id"]).items() if k != "access_token"}, "page_name": p["name"]}
+        for p in meta_auth.list_pages()
+    ]
+
+
+def _office_remote_times() -> dict:
+    """{nombre de pagina: horarios (datetime) de sus posts recientes y programados en Facebook}.
+    Las paginas que no se pudieron consultar quedan afuera (list_post_times devuelve None)."""
+    out = {}
+    for page in meta_auth.list_pages():
+        times = facebook_publisher.list_post_times(page["page_id"])
+        if times is not None:
+            out[page["name"]] = times
+    return out
+
+
+def _office_read_published(path) -> list:
+    """Lee un registro de publicados tal cual esta en disco (sin Graph, sin escribir). [] si falta o esta roto."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [r for r in data if isinstance(r, dict)] if isinstance(data, list) else []
+
+
+def _office_metrics_rows() -> dict:
+    return {
+        "facebook": _office_read_published(_PUBLISHED_FB_PATH),
+        "instagram": _office_read_published(_PUBLISHED_IG_PATH),
+    }
+
+
+def _office_readers() -> dict:
+    return {
+        "projects": batch_pipeline.list_projects,
+        "flow": _office_flow,
+        "text_backends": text_provider.available_backends,
+        "tokens": _office_tokens,
+        "remote_times": _office_remote_times,
+        "metrics_rows": _office_metrics_rows,
+    }
+
+
+@app.route("/api/office/state")
+def api_office_state():
+    try:
+        return jsonify(office_state.collect_state(_office_readers()))
+    except Exception as exc:
+        logger.exception("oficina: no se pudo armar el estado")
+        return jsonify({"ok": False, "error": office_state._redact(f"{type(exc).__name__}: {exc}")})
 
 
 # ─────────────────────────────────────────────
