@@ -8,6 +8,7 @@ cada vez que un job cambia de estado se vuelca a JSON.
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -20,8 +21,18 @@ def _path(name: str) -> Path:
     return _STATE_DIR / f"{name}.json"
 
 
-def save(name: str, jobs: dict) -> None:
-    """Vuelca el diccionario completo de jobs (name -> jobs dict) a disco."""
+def save(name: str, jobs: dict, *, strict: bool = False) -> None:
+    """Vuelca el diccionario completo de jobs (name -> jobs dict) a disco.
+
+    strict=True: escribe a un temporal del mismo directorio y lo mueve con os.replace (atomico), y
+    deja pasar cualquier excepcion (para estado de seguridad que no puede perderse en silencio)."""
+    if strict:
+        with _write_lock:
+            path = _path(name)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(jobs, ensure_ascii=False, default=str), encoding="utf-8")
+            os.replace(tmp, path)
+        return
     try:
         with _write_lock:
             _path(name).write_text(json.dumps(jobs, ensure_ascii=False, default=str), encoding="utf-8")

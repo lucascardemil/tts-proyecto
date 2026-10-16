@@ -53,6 +53,7 @@ import seo_optimizer
 import thumbnail_maker
 import batch_pipeline
 import office_state
+import office_agents
 import gaming_clip
 import cloudflare_tunnel
 import text_provider
@@ -612,6 +613,17 @@ HTML = r"""<!DOCTYPE html>
   .office-agent-btn.status-error { color: #f87171; }
   @media (max-width: 520px) { #office-3d { aspect-ratio: 4 / 3; } }
   @media (max-width: 520px) { .office-agent-row { display: grid; grid-template-columns: 1fr 1fr; } }
+  .office-rule { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+  .office-rule-text { flex: 1; font-size: 14px; }
+  .office-rule-text small { display: block; opacity: .7; }
+  .office-prop { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px; }
+  .office-prop-text { flex: 1; }
+  .office-log-row { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
+  .office-log-time { flex-shrink: 0; opacity: .6; font-variant-numeric: tabular-nums; }
+  .office-log-text { flex: 1; }
+  .office-log-row.failed .office-log-text { color: #f87171; }
+  #office-automation[hidden], #office-log[hidden] { display: none; }
+  @media (max-width: 520px) { .office-rule { flex-wrap: wrap; } .office-rule-text { flex-basis: 100%; } }
   /* OFFICE:END */
   /* MATRIX:START */
   #matrix-rain { display: none; position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: .3; }
@@ -794,6 +806,8 @@ HTML = r"""<!DOCTYPE html>
       </div>
     </div>
     <div class="card" id="office-panel"></div>
+    <div class="card" id="office-automation" hidden></div>
+    <div class="card" id="office-log" hidden></div>
   </div>
   <!-- OFFICE:END -->
 
@@ -1661,9 +1675,134 @@ function officeRenderPanel(force) {
   }
 }
 
+const OFFICE_MODE_LABEL = { off: "No", propose: "Propone", auto: "Automático" };
+const OFFICE_STATUS_LABEL = { ok: "ok", busy: "trabajando", idle: "en reposo", warn: "aviso", error: "error" };
+let officeAutoSig = "";
+let officeLogSig = "";
+
+async function officePost(url, body) {
+  let ok = false;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json();
+    if (!data.ok) alert(data.error || "No se pudo completar la acción.");
+    ok = !!data.ok;
+  } catch (e) {
+    alert("No se pudo completar la acción.");
+  }
+  if (!ok) officeRenderAutomation(true);  // una elección rechazada vuelve a lo que dice el servidor
+  officePoll();
+  return ok;
+}
+
+function officeLogText(e) {
+  const who = OFFICE_AGENTS[e.agent] ? OFFICE_AGENTS[e.agent].title : e.agent;
+  if (e.kind === "action") {
+    return who + " · " + e.label + " · " + (e.mode === "approved" ? "aprobado" : "automático") + " · " +
+      (e.ok ? "" : "falló: ") + e.message;
+  }
+  if (e.kind === "exhausted") return who + " · " + e.label + " · intentos agotados";
+  if (e.kind === "alert_open") return who + " · Alerta: " + e.label;
+  if (e.kind === "alert_resolved") return who + " · Resuelta: " + e.label;
+  if (e.kind === "info") return who + " · " + e.label;
+  if (e.kind === "status") {
+    const msg = String(e.message || "").split(" → ").map(s => OFFICE_STATUS_LABEL[s] || s).join(" → ");
+    return who + " · " + e.label + " (" + msg + ")";
+  }
+  return who + " · " + e.label + " (" + e.message + ")";
+}
+
+function officeRenderLog(force) {
+  const auto = officeState && officeState.automation;
+  const box = $("office-log");
+  const rows = (auto && auto.log) || [];
+  box.hidden = !rows.length;
+  const sig = JSON.stringify(rows);
+  if (!force && sig === officeLogSig) return;
+  officeLogSig = sig;
+  box.textContent = "";
+  if (!rows.length) return;
+  box.appendChild(officeEl("h2", "", "Bitácora"));
+  rows.forEach(e => {
+    const ts = String(e.ts || "");
+    const row = officeEl("div", "office-log-row" + (e.kind === "action" && !e.ok ? " failed" : ""));
+    row.appendChild(officeEl("span", "office-log-time", ts.slice(8, 10) + "/" + ts.slice(5, 7) + " " + ts.slice(11, 16)));
+    row.appendChild(officeEl("span", "office-log-text", officeLogText(e)));
+    box.appendChild(row);
+  });
+}
+
+function officeRenderAutomation(force) {
+  const auto = officeState && officeState.automation;
+  const box = $("office-automation");
+  box.hidden = !auto;
+  const sig = JSON.stringify([auto && { paused: auto.paused, rules: auto.rules, proposals: auto.proposals, brake: auto.brake }, officeSelected]);
+  if (!force && sig === officeAutoSig) return;
+  officeAutoSig = sig;
+  box.textContent = "";
+  if (!auto) return;
+  box.appendChild(officeEl("h2", "", "Agentes automáticos"));
+  const braked = auto.brake.used >= auto.brake.limit;
+  const line = auto.paused ? "Agentes en pausa" : braked ? "Límite por hora alcanzado" : "Agentes activos";
+  box.appendChild(officeEl("p", "card-desc", line + " · " + auto.brake.used + "/" + auto.brake.limit + " acciones esta hora"));
+  const pause = officeEl("button", "btn-sm", auto.paused ? "Reanudar agentes" : "Pausar agentes");
+  pause.type = "button";
+  pause.addEventListener("click", () => {
+    pause.disabled = true;
+    officePost("/api/office/automation/pause", { paused: !auto.paused });
+  });
+  box.appendChild(pause);
+  auto.proposals.forEach(p => {
+    const rule = auto.rules.find(r => r.id === p.rule);
+    const row = officeEl("div", "office-prop");
+    row.appendChild(officeEl("span", "office-prop-text", (rule ? rule.label : p.rule) + " · " + p.label));
+    const yes = officeEl("button", "btn-sm", "Aprobar");
+    yes.type = "button";
+    yes.addEventListener("click", () => {
+      if (!window.confirm("Aprobar: " + p.label + "\n\n¿Continuar?")) return;
+      yes.disabled = true;
+      no.disabled = true;
+      officePost("/api/office/automation/proposals/" + encodeURIComponent(p.id) + "/approve");
+    });
+    const no = officeEl("button", "btn-sm", "Rechazar");
+    no.type = "button";
+    no.addEventListener("click", () => {
+      yes.disabled = true;
+      no.disabled = true;
+      officePost("/api/office/automation/proposals/" + encodeURIComponent(p.id) + "/reject");
+    });
+    row.appendChild(yes);
+    row.appendChild(no);
+    box.appendChild(row);
+  });
+  auto.rules.filter(r => officeSelected === "revisor" || r.agent === officeSelected).forEach(r => {
+    const row = officeEl("div", "office-rule");
+    const text = officeEl("span", "office-rule-text", r.label);
+    text.appendChild(officeEl("small", "", r.description));
+    row.appendChild(text);
+    const select = document.createElement("select");
+    ["off", "propose", "auto"].forEach(mode => {
+      const option = document.createElement("option");
+      option.value = mode;
+      option.textContent = OFFICE_MODE_LABEL[mode];
+      option.selected = mode === r.mode;
+      select.appendChild(option);
+    });
+    select.setAttribute("aria-label", r.label);
+    select.addEventListener("change", () => officePost("/api/office/automation/mode", { rule: r.id, mode: select.value }));
+    row.appendChild(select);
+    box.appendChild(row);
+  });
+}
+
 function officeSelect(id) {
   officeSelected = id;
   officeRenderPanel(true);
+  officeRenderAutomation(true);
   if (office3d) office3d.setSelected(id);
   Object.keys(OFFICE_AGENTS).forEach(k => {
     const b = $("office-btn-" + k);
@@ -1739,6 +1878,8 @@ function officeRender(force) {
     $("office-agent-" + id).setAttribute("aria-label", OFFICE_AGENTS[id].title + ": " + text);
   });
   officeRenderPanel(force);
+  officeRenderAutomation(force);
+  officeRenderLog(force);
   officeRender3D();
 }
 
@@ -6225,10 +6366,60 @@ def _office_readers() -> dict:
 @app.route("/api/office/state")
 def api_office_state():
     try:
-        return jsonify(office_state.collect_state(_office_readers()))
+        now = datetime.now()
+        try:
+            brake = office_agents.brake(now)
+        except Exception:
+            logger.exception("oficina: no se pudo leer el freno de los agentes")
+            brake = None
+        state = office_state.collect_state(_office_readers(), now, extra={"brake": brake} if brake else None)
+        try:
+            state["automation"] = office_agents.automation_block(now)
+        except Exception:
+            logger.exception("oficina: no se pudo leer la automatizacion")
+            state["automation"] = None
+        return jsonify(state)
     except Exception as exc:
         logger.exception("oficina: no se pudo armar el estado")
         return jsonify({"ok": False, "error": office_state._redact(f"{type(exc).__name__}: {exc}")})
+
+
+def _office_automation(fn, *args):
+    """Acciones de los agentes: nunca 500; el error de validacion es 400 y el texto sale sin secretos."""
+    try:
+        result = fn(*args)
+    except Exception as exc:
+        logger.exception("oficina: fallo una accion de los agentes")
+        return jsonify({"ok": False, "error": office_state._redact(f"{type(exc).__name__}: {exc}")})
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/office/automation/pause", methods=["POST"])
+def api_office_automation_pause():
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    if not isinstance(body.get("paused"), bool):
+        return jsonify({"ok": False, "error": "Falta 'paused' (true o false)."}), 400
+    return _office_automation(office_agents.set_paused, body["paused"])
+
+
+@app.route("/api/office/automation/mode", methods=["POST"])
+def api_office_automation_mode():
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    if not isinstance(body.get("rule"), str) or not isinstance(body.get("mode"), str):
+        return jsonify({"ok": False, "error": "Regla o modo inválido."}), 400
+    return _office_automation(office_agents.set_mode, body["rule"], body["mode"])
+
+
+@app.route("/api/office/automation/proposals/<proposal_id>/approve", methods=["POST"])
+def api_office_automation_approve(proposal_id):
+    return _office_automation(lambda: office_agents.approve(proposal_id, _office_readers()))
+
+
+@app.route("/api/office/automation/proposals/<proposal_id>/reject", methods=["POST"])
+def api_office_automation_reject(proposal_id):
+    return _office_automation(office_agents.reject, proposal_id)
 
 
 # ─────────────────────────────────────────────
@@ -6374,6 +6565,11 @@ if __name__ == "__main__":
     # ese import arrancaria un segundo scheduler de 60s (con generacion de
     # video incluida) sin que nadie lo pida.
     batch_pipeline.start_scheduler()
+
+    # Los agentes actuan solos solo en el proceso dueño del programador (un unico proceso decide).
+    if batch_pipeline.holds_scheduler_lock():
+        threading.Thread(target=office_agents.run_forever, args=(_office_readers, threading.Event()),
+                         daemon=True, name="office-agents").start()
 
     print("\n" + "=" * 55)
     print("   🎙️  SERVIDOR TTS INICIADO")

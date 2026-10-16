@@ -1199,6 +1199,28 @@ def retry_publish_video(project_id: str, index: int) -> bool:
     return True
 
 
+def release_stuck_item(project_id: str, index: int, expected_status: str) -> bool:
+    """Suelta UN item trabado, igual que _recover_stuck_videos hace con todos al arrancar:
+    "generating" -> "pending" (stage None) y "publishing" -> "ready". Solo actua si el item
+    sigue en `expected_status` (puede haber terminado mientras alguien decidia soltarlo)."""
+    target = {"generating": "pending", "publishing": "ready"}.get(expected_status)
+    if target is None:
+        return False
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return False
+        video = next((v for v in project.get("videos", []) if v["index"] == index), None)
+        if not video or video["status"] != expected_status:
+            return False
+        video["status"] = target
+        if expected_status == "generating":
+            video["stage"] = None
+        _save(projects)
+    return True
+
+
 def _set_stage(project_id: str, index: int, stage: "str | None") -> None:
     """Guarda la etapa actual de generacion de un video (guion/imagenes/audio/
     render) para que el front pueda mostrar un desglose de avance por video,
@@ -2743,6 +2765,11 @@ def _recover_stuck_videos() -> None:
 
 _SCHEDULER_LOCK_PATH = Path("output/job_state/.scheduler.lock")
 _scheduler_lock_file = None  # referencia global: mantener el handle abierto sostiene el lock
+
+
+def holds_scheduler_lock() -> bool:
+    """True si ESTE proceso es el dueño del scheduler (y por lo tanto el unico que puede actuar solo)."""
+    return _scheduler_lock_file is not None
 
 
 def _acquire_scheduler_lock() -> bool:

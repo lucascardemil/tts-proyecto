@@ -1,14 +1,27 @@
 # -*- coding: utf-8 -*-
 """Estado de la oficina de agentes: pura sobre datos falsos, sin red ni disco."""
+import copy
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import office_agents
 import office_state as os_
 
 NOW = datetime(2026, 10, 13, 15, 0)
+
+
+@pytest.fixture(autouse=True)
+def memory_agents_store(monkeypatch):
+    """Los endpoints de la oficina leen el estado de los agentes: se aisla del archivo real."""
+    saved = {}
+    monkeypatch.setattr(office_agents.job_store, "load", lambda name: copy.deepcopy(saved.get(name, {})))
+    monkeypatch.setattr(office_agents.job_store, "save", lambda name, d, **kw: saved.__setitem__(name, copy.deepcopy(d)))
+    return saved
 
 
 def vid(status, when=None, error=None):
@@ -338,6 +351,25 @@ def test_collect_state_feeds_the_stuck_tracker():
     assert any(f["id"].startswith("stuck:") for f in later["findings"])
 
 
+def test_brake_finding_appears_only_when_the_hourly_limit_is_reached():
+    full = os_.build_state(data(brake={"used": 20, "limit": 20}), NOW)
+    finding = next(f for f in full["findings"] if f["id"] == "automation-brake")
+    assert finding["severity"] == "warn" and finding["agent"] == "revisor"
+    assert "20 acciones por hora" in finding["text"]
+    assert "automation-brake" not in ids(os_.build_state(data(brake={"used": 19, "limit": 20}), NOW))
+    assert "automation-brake" not in ids(os_.build_state(data(), NOW))
+
+
+def test_collect_data_merges_extra_and_collect_state_is_build_state_over_it():
+    os_.reset()
+    readers = {"projects": lambda: []}
+    got = os_.collect_data(readers, NOW, extra={"brake": {"used": 1, "limit": 20}})
+    assert got["projects"] == [] and got["seen"] == {} and got["errors"] == {}
+    assert got["brake"] == {"used": 1, "limit": 20}
+    os_.reset()
+    assert os_.collect_state(readers, NOW) == os_.build_state(os_.collect_data(readers, NOW), NOW)
+
+
 import base64
 
 
@@ -380,6 +412,57 @@ def test_office_endpoint_error_does_not_leak_tokens(monkeypatch):
     body = app_module.app.test_client().get("/api/office/state", headers=_auth()).get_json()
     assert body["ok"] is False
     assert "SECRET9" not in body["error"] and "access_token=***" in body["error"]
+
+
+def _client(monkeypatch, readers=None):
+    import app as app_module
+    monkeypatch.setenv("DASHBOARD_USER", "u")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "p")
+    monkeypatch.setattr(app_module, "_office_readers", lambda: readers or {"projects": lambda: []})
+    os_.reset()
+    return app_module.app.test_client()
+
+
+def test_office_state_includes_the_automation_block(monkeypatch):
+    body = _client(monkeypatch).get("/api/office/state", headers=_auth()).get_json()
+    auto = body["automation"]
+    assert auto["paused"] is False and auto["proposals"] == [] and auto["log"] == []
+    assert [r["id"] for r in auto["rules"]] == ["retry_cause_resolved", "republish", "release_stuck"]
+    assert auto["brake"]["limit"] == 20
+
+
+def test_automation_endpoints_require_auth_and_validate_input(monkeypatch):
+    client = _client(monkeypatch)
+    assert client.post("/api/office/automation/pause", json={"paused": True}).status_code == 401
+    assert client.post("/api/office/automation/pause", json={"paused": "x"}, headers=_auth()).status_code == 400
+    ok = client.post("/api/office/automation/pause", json={"paused": True}, headers=_auth())
+    assert ok.status_code == 200 and ok.get_json() == {"ok": True}
+    assert client.get("/api/office/state", headers=_auth()).get_json()["automation"]["paused"] is True
+    assert client.post("/api/office/automation/mode", json={"rule": "republish", "mode": "off"}, headers=_auth()).get_json() == {"ok": True}
+    bad = client.post("/api/office/automation/mode", json={"rule": "nope", "mode": "off"}, headers=_auth())
+    assert bad.status_code == 400 and bad.get_json()["ok"] is False
+    for action in ("approve", "reject"):
+        missing = client.post(f"/api/office/automation/proposals/zzzz/{action}", headers=_auth())
+        assert missing.status_code == 400 and missing.get_json()["ok"] is False
+
+
+def test_automation_endpoint_errors_never_500_and_do_not_leak_tokens(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setattr(office_agents, "set_paused",
+                        lambda paused: (_ for _ in ()).throw(RuntimeError("access_token=SECRET")))
+    response = client.post("/api/office/automation/pause", json={"paused": True}, headers=_auth())
+    assert response.status_code == 200 and response.get_json()["ok"] is False
+    assert "SECRET" not in response.get_data(as_text=True)
+
+
+def test_automation_endpoints_reject_non_object_json_bodies_without_500(monkeypatch):
+    import json as _json
+    client = _client(monkeypatch)
+    for body in ([1], "x", 5, None):
+        for path in ("/api/office/automation/pause", "/api/office/automation/mode"):
+            response = client.post(path, data=_json.dumps(body), content_type="application/json", headers=_auth())
+            assert response.status_code == 400, (path, body)
+            assert response.get_json()["ok"] is False, (path, body)
 
 
 def test_office_read_published_degrades_to_empty_list(tmp_path):
@@ -522,6 +605,7 @@ def test_home_page_renders_with_the_office_scene_as_default_tab(monkeypatch):
     for agent in AGENT_IDS:
         assert f'id="office-agent-{agent}"' in html and f'id="office-bubble-{agent}"' in html
     assert 'id="office-panel"' in html
+    assert 'id="office-automation"' in html and 'id="office-log"' in html
     assert '<div id="tab-oficina">' in html
     assert '<div id="tab-video" style="display:none">' in html
     assert 'class="nav-item active" data-tab="oficina"' in html
@@ -532,9 +616,42 @@ def test_office_script_is_wired_and_free_of_unsafe_sinks():
     script_blocks = [b for b in _office_blocks() if "officePoll" in b]
     assert script_blocks, "falta el JS de la oficina entre los marcadores"
     js = "\n".join(script_blocks)
-    for name in ("officeStart", "officeStop", "officePoll", "officeRender", "officeRenderPanel", "officeRunAction"):
+    for name in ("officeStart", "officeStop", "officePoll", "officeRender", "officeRenderPanel", "officeRunAction",
+                 "officePost", "officeRenderAutomation", "officeRenderLog", "officeLogText"):
         assert f"function {name}" in js or f"async function {name}" in js
     assert "innerHTML" not in js  # todo el texto del servidor entra con textContent
     assert "\nofficeStart();" in app_module.HTML  # arranque al cargar (la oficina es la pestaña por defecto)
     assert "officeInFlight" in js and "officePrune" in js  # sin sondeos solapados; descartes podados
     assert "document.hidden" in js  # el polling se pausa con la pestaña oculta
+
+
+def test_collect_data_ttl_overrides_replace_the_per_source_ttl():
+    os_.reset()
+    calls = []
+
+    def reader():
+        calls.append(1)
+        return []
+    os_.collect_data({"projects": reader}, NOW)
+    os_.collect_data({"projects": reader}, NOW)
+    assert len(calls) == 2  # READ_TTL de "projects" es 0: lee siempre
+    os_.reset()
+    calls.clear()
+    os_.collect_data({"projects": reader}, NOW, ttl_overrides={"projects": 900})
+    os_.collect_data({"projects": reader}, NOW, ttl_overrides={"projects": 900})
+    assert len(calls) == 1
+
+
+def test_office_state_survives_a_failing_automation_block_and_brake(monkeypatch):
+    client = _client(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("access_token=SECRET")
+    monkeypatch.setattr(office_agents, "brake", boom)
+    monkeypatch.setattr(office_agents, "automation_block", boom)
+    response = client.get("/api/office/state", headers=_auth())
+    body = response.get_json()
+    assert response.status_code == 200 and body["ok"] is True
+    assert body["automation"] is None
+    assert set(body["agents"]) == set(AGENT_IDS)
+    assert "SECRET" not in response.get_data(as_text=True)

@@ -267,11 +267,19 @@ def _stuck_findings(data: dict, now: datetime) -> list:
     return findings
 
 
+def _brake_findings(data: dict) -> list:
+    brake = data.get("brake") or {}
+    if brake.get("limit") and brake.get("used", 0) >= brake["limit"]:
+        return [_finding("automation-brake", "revisor", "warn",
+                         f"Los agentes alcanzaron su límite de {brake['limit']} acciones por hora")]
+    return []
+
+
 def _revisor_findings(data: dict, now: datetime) -> list:
     errors = data.get("errors") or {}
     # sin lotes leidos, los horarios remotos solos darian falsos huecos: se omiten (sale 'read:projects')
     findings = [] if "projects" in errors else _gap_findings(data, now)
-    findings += _token_findings(data, now) + _flow_findings(data) + _stuck_findings(data, now)
+    findings += _token_findings(data, now) + _flow_findings(data) + _stuck_findings(data, now) + _brake_findings(data)
     backends = data.get("text_backends")
     if backends is not None and not backends:
         findings.append(_finding("text-provider", "revisor", "error", "Sin proveedor de texto disponible",
@@ -379,14 +387,24 @@ def reset() -> None:
     _TRACKER = StuckTracker()
 
 
-def collect_state(readers: dict, now: Optional[datetime] = None) -> dict:
+def collect_data(readers: dict, now: Optional[datetime] = None, extra: Optional[dict] = None,
+                 ttl_overrides: Optional[dict] = None) -> dict:
+    """Lee todas las fuentes (con cache) y devuelve los datos crudos que consume `build_state`.
+    `extra` se mezcla al final: lo usa quien tenga datos propios que el Revisor deba ver (el freno).
+    `ttl_overrides` cambia el TTL de la cache de algunas fuentes (el ciclo de agentes lee Graph con menos frecuencia)."""
     now = now or datetime.now()
     data: dict = {"errors": {}}
     for name, fn in readers.items():
-        value, error = _CACHE.get(name, READ_TTL.get(name, 60), fn)
+        value, error = _CACHE.get(name, (ttl_overrides or {}).get(name, READ_TTL.get(name, 60)), fn)
         if error:
             data["errors"][name] = error
         else:
             data[name] = value
     data["seen"] = _TRACKER.update(data.get("projects") or [], now)
-    return build_state(data, now)
+    data.update(extra or {})
+    return data
+
+
+def collect_state(readers: dict, now: Optional[datetime] = None, extra: Optional[dict] = None) -> dict:
+    now = now or datetime.now()
+    return build_state(collect_data(readers, now, extra), now)
