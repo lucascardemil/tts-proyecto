@@ -9,6 +9,7 @@ Reparar y las ejecuta o las propone. Todo el estado vive en job_store ("office_a
 import logging
 import re
 import threading
+import traceback
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ REJECT_SILENCE = timedelta(hours=24)
 ATTEMPTS_TTL = timedelta(days=7)
 LOG_MAX = 400
 LOG_SHOWN = 20
+STATUS_SHOWN = 5  # de las 20 filas de la bitacora, a lo mas 5 son cambios de estado: no tapan las acciones
 MODES = ("off", "propose", "auto")
 # El ciclo de agentes no necesita los datos de Graph tan frescos como la pantalla: menos trafico a Meta.
 AGENT_READ_TTL = {"remote_times": 900, "tokens": 900, "metrics_rows": 900}
@@ -68,6 +70,11 @@ def _save_state(state: dict) -> None:
     job_store.save(STORE, state, strict=True)
 
 
+def _log_error(message: str, *args) -> None:
+    """Como logger.exception pero con el traceback sin secretos (las excepciones de requests traen el token en la URL)."""
+    logger.error(message + "\n%s", *args, office_state._redact(traceback.format_exc()))
+
+
 def _iso(moment: datetime) -> str:
     return moment.isoformat(timespec="seconds")
 
@@ -78,6 +85,17 @@ def _log(state: dict, now: datetime, **entry) -> None:
 
 
 # ---- eventos pasivos --------------------------------------------------------------------------
+
+def _expired_gap(fid: str, now: datetime) -> bool:
+    """Un hallazgo `gap:<pagina>:<fecha>` caduca solo cuando su dia ya pasó, o cuando ya pasó la hora tope de hoy."""
+    if not fid.startswith("gap:"):
+        return False
+    try:
+        day = datetime.strptime(fid.rsplit(":", 1)[-1], "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return day < now.date() or (day == now.date() and now.hour >= office_state.TODAY_CUTOFF_HOUR)
+
 
 def record_events(state: dict, snapshot: dict, now: datetime) -> None:
     """Anota lo que cambio desde el ciclo anterior: alerta abierta, alerta resuelta, cambio de estado
@@ -94,6 +112,8 @@ def record_events(state: dict, snapshot: dict, now: datetime) -> None:
     if not any(fid.startswith("read:") for fid in findings):
         for fid in [k for k in state["open_findings"] if k not in findings]:
             known = state["open_findings"].pop(fid)
+            if _expired_gap(fid, now):  # el hueco de "hoy" deja de chequearse a las 21 h: no es una resolucion real
+                continue
             _log(state, now, kind="alert_resolved", agent=known["agent"], key=fid,
                  label=known["text"], message="resuelta")
     for agent, view in snapshot.get("agents", {}).items():
@@ -206,6 +226,8 @@ def _exec_republish(target: Target):
 def _exec_release(target: Target):
     ok = batch_pipeline.release_stuck_item(target.payload["project_id"], target.payload["index"],
                                            target.payload["status"])
+    if ok:
+        office_state.forget_stuck(target.payload["project_id"], target.payload["index"], target.payload["status"])
     return ok, "Ítem soltado" if ok else "El ítem ya no estaba trabado"
 
 
@@ -230,7 +252,7 @@ def _scan(data: dict, now: datetime) -> list:
         try:
             found.extend((rule, target) for target in rule.find(data, now))
         except Exception:
-            logger.exception("oficina: fallo la regla '%s'", rule.id)
+            _log_error("oficina: fallo la regla '%s'", rule.id)
     return found
 
 
@@ -245,7 +267,7 @@ def _run(rule: Rule, target: Target):
     try:
         return rule.execute(target)
     except Exception as exc:
-        logger.exception("oficina: fallo el ejecutor de '%s'", rule.id)
+        _log_error("oficina: fallo el ejecutor de '%s'", rule.id)
         return False, office_state._redact(f"{type(exc).__name__}: {exc}")
 
 
@@ -358,7 +380,7 @@ def run_forever(readers_fn: Callable, stop: threading.Event, interval: float = C
         try:
             run_cycle(readers_fn())
         except Exception:
-            logger.exception("oficina: fallo un ciclo de agentes")
+            _log_error("oficina: fallo un ciclo de agentes")
         if stop.wait(interval):
             return
 
@@ -407,7 +429,7 @@ def approve(proposal_id: str, readers: dict, now: Optional[datetime] = None) -> 
     rule = RULES_BY_ID.get(proposal["rule"])
     if rule is None:
         return {"ok": False, "error": "La regla de esa propuesta ya no existe."}
-    data = office_state.collect_data(readers, now)
+    data = office_state.collect_data(readers, now, ttl_overrides=AGENT_READ_TTL)
     if "projects" in data["errors"]:
         return {"ok": False, "error": "No pude leer los lotes: no se ejecuta con datos incompletos."}
     with _LOCK:
@@ -430,6 +452,21 @@ def approve(proposal_id: str, readers: dict, now: Optional[datetime] = None) -> 
     return {"ok": True, "message": message} if ok else {"ok": False, "error": message}
 
 
+def _recent_log(state: dict) -> list:
+    """Las ultimas LOG_SHOWN filas, mas nueva primero; los cambios de estado ocupan a lo mas STATUS_SHOWN
+    para que una racha de idle/busy no empuje fuera las acciones y alertas."""
+    shown, statuses = [], 0
+    for entry in reversed(state["log"]):
+        if entry.get("kind") == "status":
+            if statuses >= STATUS_SHOWN:
+                continue
+            statuses += 1
+        shown.append(entry)
+        if len(shown) >= LOG_SHOWN:
+            break
+    return shown
+
+
 def automation_block(now: Optional[datetime] = None) -> dict:
     """Lo que la oficina muestra de la automatizacion; se lee del archivo (sin Graph ni lotes)."""
     now = now or datetime.now()
@@ -440,6 +477,6 @@ def automation_block(now: Optional[datetime] = None) -> dict:
         "rules": [{"id": r.id, "agent": r.agent, "label": r.label, "description": r.description,
                    "mode": _mode(state, r), "default_mode": r.default_mode} for r in RULES],
         "proposals": state["proposals"],
-        "log": list(reversed(state["log"][-LOG_SHOWN:])),
+        "log": _recent_log(state),
         "brake": {"used": _auto_used(state, now), "limit": AUTO_ACTIONS_PER_HOUR},
     }

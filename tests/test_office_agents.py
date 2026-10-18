@@ -488,7 +488,7 @@ def test_automation_block_lists_rules_proposals_newest_log_first_and_the_brake()
     state = office_agents._default_state()
     state["modes"]["republish"] = "off"
     for i in range(25):
-        office_agents._log(state, NOW, kind="status", agent="videos", key="videos", label=str(i), message="")
+        office_agents._log(state, NOW, kind="alert_open", agent="videos", key=f"k{i}", label=str(i), message="warn")
     office_agents._save_state(state)
     block = office_agents.automation_block(NOW)
     assert block["paused"] is False and block["proposals"] == []
@@ -652,3 +652,70 @@ def test_load_state_drops_open_findings_without_agent_and_text(memory_store):
     assert office_agents._load_state()["open_findings"] == {"f3": {"agent": "videos", "text": "t"}}
     memory_store["office_agents"] = {"open_findings": {"f1": {}}}
     office_agents.run_cycle({"projects": lambda: []}, NOW)
+
+
+# ---- pulidos finales -----------------------------------------------------------------------------
+
+def test_gap_alerts_that_expire_with_the_day_are_dropped_without_a_false_resolved():
+    gap_today = "gap:MACRAME CREATIVO:2026-10-15"
+    state = office_agents._default_state()
+    office_agents.record_events(state, snapshot([(gap_today, "revisor", "error", "Hoy sin posts en MACRAME CREATIVO")]), NOW)
+    office_agents.record_events(state, snapshot(), NOW.replace(hour=21, minute=30))  # pasadas las 21 ya no se chequea "hoy"
+    assert not [e for e in state["log"] if e["kind"] == "alert_resolved"]
+    assert gap_today not in state["open_findings"]
+    yesterday = "gap:MACRAME CREATIVO:2026-10-14"
+    state = office_agents._default_state()
+    office_agents.record_events(state, snapshot([(yesterday, "revisor", "error", "Hoy sin posts en MACRAME CREATIVO")]), NOW - timedelta(days=1))
+    office_agents.record_events(state, snapshot(), NOW)
+    assert not [e for e in state["log"] if e["kind"] == "alert_resolved"] and yesterday not in state["open_findings"]
+    state = office_agents._default_state()  # durante el dia, que desaparezca SI es una resolucion real
+    office_agents.record_events(state, snapshot([(gap_today, "revisor", "error", "Hoy sin posts en MACRAME CREATIVO")]), NOW)
+    office_agents.record_events(state, snapshot(), NOW + timedelta(minutes=1))
+    assert [e["key"] for e in state["log"] if e["kind"] == "alert_resolved"] == [gap_today]
+
+
+def test_releasing_an_item_restarts_its_stuck_count(batch_calls):
+    readers = stuck_readers()
+    key = office_state.stuck_key("p1", 0, "generating")
+    office_state.collect_data(readers, NOW)  # primer avistamiento
+    assert office_state.collect_data(readers, NOW + timedelta(minutes=50))["seen"][key] == NOW
+    target = office_agents.Target("k", "l", {"project_id": "p1", "index": 0, "status": "generating"})
+    assert office_agents._exec_release(target)[0] is True
+    assert office_state.collect_data(readers, NOW + timedelta(minutes=51))["seen"][key] == NOW + timedelta(minutes=51)
+
+
+def test_automation_block_keeps_actions_visible_among_many_status_flips():
+    state = office_agents._default_state()
+    office_agents._log(state, NOW, kind="action", rule="republish", agent="publica", key="k", label="FOO: ítem 1",
+                       mode="auto", ok=True, message="Publicación reintentada")
+    for i in range(30):
+        office_agents._log(state, NOW, kind="status", agent="videos", key="videos", label=str(i), message="idle → busy")
+    office_agents._save_state(state)
+    shown = office_agents.automation_block(NOW)["log"]
+    assert len(shown) <= office_agents.LOG_SHOWN
+    assert any(e["kind"] == "action" for e in shown)
+    assert sum(1 for e in shown if e["kind"] == "status") == office_agents.STATUS_SHOWN
+    assert [e["ts"] for e in shown] == sorted((e["ts"] for e in shown), reverse=True)
+
+
+def test_approve_reads_graph_sources_with_the_long_agent_ttl(monkeypatch):
+    pid = make_proposal()
+    seen = {}
+
+    def fake_collect(readers, now=None, extra=None, ttl_overrides=None):
+        seen["ttl"] = ttl_overrides
+        return {"errors": {"projects": "x"}}
+    monkeypatch.setattr(office_agents.office_state, "collect_data", fake_collect)
+    assert office_agents.approve(pid, {}, NOW)["ok"] is False
+    assert seen["ttl"] == office_agents.AGENT_READ_TTL
+
+
+def test_exception_logs_do_not_leak_tokens(caplog, monkeypatch):
+    import logging
+
+    def boom(pid, i):
+        raise RuntimeError("access_token=SECRET fallo")
+    monkeypatch.setattr(office_agents.batch_pipeline, "retry_video", boom)
+    with caplog.at_level(logging.ERROR, logger="office_agents"):
+        run_once(office_agents._default_state(), flow_error_data())
+    assert "RuntimeError" in caplog.text and "SECRET" not in caplog.text

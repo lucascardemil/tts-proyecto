@@ -614,7 +614,8 @@ HTML = r"""<!DOCTYPE html>
   @media (max-width: 520px) { #office-3d { aspect-ratio: 4 / 3; } }
   @media (max-width: 520px) { .office-agent-row { display: grid; grid-template-columns: 1fr 1fr; } }
   .office-rule { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
-  .office-rule-text { flex: 1; font-size: 14px; }
+  .office-rule-text { flex: 1 1 220px; min-width: 0; font-size: 14px; }
+  .office-rule select { flex: 0 0 auto; max-width: 45%; }
   .office-rule-text small { display: block; opacity: .7; }
   .office-prop { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px; }
   .office-prop-text { flex: 1; }

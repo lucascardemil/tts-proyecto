@@ -216,6 +216,10 @@ class StuckTracker:
             self._seen = {key: self._seen.get(key, now) for key in current}
             return dict(self._seen)
 
+    def forget(self, key: str) -> None:
+        with self._lock:
+            self._seen.pop(key, None)
+
 
 def _token_findings(data: dict, now: datetime) -> list:
     findings = []
@@ -370,6 +374,11 @@ def build_state(data: dict, now: datetime) -> dict:
         agent["bubble"] = _short(agent["bubble"])
     findings.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], f["id"]))
     return {"ok": True, "generated_at": now.isoformat(timespec="seconds"), "agents": agents, "findings": findings}
+
+
+def forget_stuck(project_id: str, index: int, status: str) -> None:
+    """Olvida desde cuando se vio trabado un item (se soltó: la cuenta de 'lleva N min' debe reiniciar)."""
+    _TRACKER.forget(stuck_key(project_id, index, status))
 
 
 class _Cache:
