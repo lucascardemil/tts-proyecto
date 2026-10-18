@@ -216,6 +216,7 @@ def _generate_text_with_chain(
 
 import auto_pipeline
 import video_maker
+import slideshow_risk
 import facebook_publisher
 import instagram_publisher
 import youtube_publisher
@@ -1312,6 +1313,13 @@ def _requeue_healable_errors() -> None:
             _save(projects)
 
 
+def _slideshow_summary(timeline: dict, vs: dict) -> dict:
+    """Puntaje de slideshow del video recien armado, en la forma compacta que se guarda en el item."""
+    risk = slideshow_risk.score_timeline(timeline, expects_motion=slideshow_risk.expects_motion(vs))
+    return {"average": risk["average"], "verdict": risk["verdict"],
+            "dimensions": {name: d["score"] for name, d in risk["dimensions"].items()}}
+
+
 def _generate_batch_video(project_id: str, index: int) -> None:
     import app
 
@@ -1486,6 +1494,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         # ya corriendo sin que se elija explícitamente.
         mood = vs.get("mood", "warm_night")
 
+        risk_box: dict = {}
+
         def _do_render():
             with app._video_render_lock:
                 if bebe:  # reel de 18 s con tiempos fijos (ver video_maker.build_bebe_heroe_props)
@@ -1507,6 +1517,10 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                     )
                 if not timeline:
                     return None
+                try:
+                    risk_box["risk"] = _slideshow_summary(timeline, vs)
+                except Exception:
+                    logger.exception("batch %s video %d: no se pudo puntuar el riesgo de slideshow", project_id, index)
                 return video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
                     orientation="vertical" if bebe else vs.get("orientation", "vertical"),
@@ -1536,6 +1550,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         v["story_id"] = story_id
         v["video_path"] = str(video_path)
         v["audio_path"] = str(audio_path)
+        if risk_box.get("risk"):
+            v["slideshow_risk"] = risk_box["risk"]
         v["narration_check"] = {
             "ok": narration.get("ok"), "similarity": narration.get("similarity"),
             "attempt": narration.get("attempt"), "skipped": narration.get("skipped", False),

@@ -370,6 +370,38 @@ def test_collect_data_merges_extra_and_collect_state_is_build_state_over_it():
     assert os_.collect_state(readers, NOW) == os_.build_state(os_.collect_data(readers, NOW), NOW)
 
 
+def _risky(verdict, **scores):
+    dims = {"static_scenes": 0.0, "low_motion": 0.0, "long_hold": 0.0, "slow_cuts": 0.0, **scores}
+    return {"average": 3.5, "verdict": verdict, "dimensions": dims}
+
+
+def test_slideshow_finding_for_a_ready_item_with_a_bad_verdict():
+    v = vid("ready")
+    v["slideshow_risk"] = _risky("revise", static_scenes=5.0)
+    state = os_.build_state(data(projects=[proj([v])]), NOW)
+    finding = next(f for f in state["findings"] if f["id"] == "slideshow:p1:0")
+    assert finding["agent"] == "revisor" and finding["severity"] == "warn"
+    assert finding["text"] == "MACRAME CREATIVO: ítem 1 se ve como slideshow (riesgo medio — escenas sin movimiento)"
+    assert finding["action"] == {"label": "Abrir lotes", "kind": "open_view", "target": "lote"}
+    v["slideshow_risk"] = _risky("fail", slow_cuts=5.0)
+    text = next(f for f in os_.build_state(data(projects=[proj([v])]), NOW)["findings"] if f["id"] == "slideshow:p1:0")["text"]
+    assert "riesgo alto — cortes muy lentos" in text
+
+
+def test_no_slideshow_finding_for_good_verdicts_other_statuses_or_missing_data():
+    for verdict in ("strong", "acceptable"):
+        v = vid("ready")
+        v["slideshow_risk"] = _risky(verdict)
+        assert "slideshow:p1:0" not in ids(os_.build_state(data(projects=[proj([v])]), NOW))
+    published = vid("published")
+    published["slideshow_risk"] = _risky("fail", static_scenes=5.0)
+    assert "slideshow:p1:0" not in ids(os_.build_state(data(projects=[proj([published])]), NOW))
+    assert "slideshow:p1:0" not in ids(os_.build_state(data(projects=[proj([vid("ready")])]), NOW))
+    broken = vid("ready")
+    broken["slideshow_risk"] = "mal"
+    assert "slideshow:p1:0" not in ids(os_.build_state(data(projects=[proj([broken])]), NOW))
+
+
 import base64
 
 

@@ -250,6 +250,28 @@ def _flow_findings(data: dict) -> list:
     return []
 
 
+SLIDESHOW_CAUSES = {"static_scenes": "escenas sin movimiento", "low_motion": "pocos clips con movimiento",
+                    "long_hold": "escenas muy largas", "slow_cuts": "cortes muy lentos"}
+
+
+def _slideshow_findings(data: dict) -> list:
+    """Videos listos que el puntaje de slideshow (ver slideshow_risk) marco 'revise' o 'fail'."""
+    findings = []
+    for project, video in _items(data.get("projects", [])):
+        risk = video.get("slideshow_risk")
+        if video.get("status") != "ready" or not isinstance(risk, dict) or risk.get("verdict") not in ("revise", "fail"):
+            continue
+        dims = risk.get("dimensions") if isinstance(risk.get("dimensions"), dict) else {}
+        scored = {k: v for k, v in dims.items() if k in SLIDESHOW_CAUSES and isinstance(v, (int, float))}
+        cause = f" — {SLIDESHOW_CAUSES[max(scored, key=scored.get)]}" if scored else ""
+        level = "alto" if risk["verdict"] == "fail" else "medio"
+        findings.append(_finding(
+            f"slideshow:{project['id']}:{video['index']}", "revisor", "warn",
+            f"{_page(project)}: ítem {video['index'] + 1} se ve como slideshow (riesgo {level}{cause})",
+            _view("Abrir lotes", "lote")))
+    return findings
+
+
 def _stuck_findings(data: dict, now: datetime) -> list:
     findings = []
     seen = data.get("seen") or {}
@@ -279,7 +301,7 @@ def _revisor_findings(data: dict, now: datetime) -> list:
     errors = data.get("errors") or {}
     # sin lotes leidos, los horarios remotos solos darian falsos huecos: se omiten (sale 'read:projects')
     findings = [] if "projects" in errors else _gap_findings(data, now)
-    findings += _token_findings(data, now) + _flow_findings(data) + _stuck_findings(data, now) + _brake_findings(data)
+    findings += _token_findings(data, now) + _flow_findings(data) + _stuck_findings(data, now) + _brake_findings(data) + _slideshow_findings(data)
     backends = data.get("text_backends")
     if backends is not None and not backends:
         findings.append(_finding("text-provider", "revisor", "error", "Sin proveedor de texto disponible",
