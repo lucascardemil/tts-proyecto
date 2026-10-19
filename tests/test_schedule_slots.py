@@ -67,3 +67,35 @@ def test_existing_slots_survives_a_network_failure(monkeypatch):
 
     monkeypatch.setattr(bp.facebook_publisher, "list_post_times", boom)
     assert bp.existing_slots("X", {"facebook": {"page_id": "1"}}) == []
+
+
+def _et_hour(local_dt):
+    from zoneinfo import ZoneInfo
+    return local_dt.astimezone(ZoneInfo(bp.US_AUDIENCE_TZ)).hour
+
+
+def test_us_audience_uses_two_eastern_time_slots_every_day():
+    schedule = [datetime.fromisoformat(s) for s in bp._compute_schedule(6, 2, None, taken=[], us_audience=True)]
+    assert len(schedule) == 6
+    assert sorted({_et_hour(s) for s in schedule}) == [12, 19]
+    assert all(bp.BATCH_HOUR_START <= s.hour <= bp.BATCH_HOUR_END for s in schedule)
+
+
+def test_us_audience_adds_extra_eastern_slots_after_the_two_main_ones():
+    first_day = [datetime.fromisoformat(s) for s in bp._compute_schedule(3, 3, None, taken=[], us_audience=True)]
+    assert [_et_hour(s) for s in first_day][:2] == [12, 19]
+    assert _et_hour(first_day[2]) in bp.US_SLOT_HOURS_ET
+
+
+def test_us_hours_follow_each_countrys_daylight_saving():
+    from datetime import date
+    for day in (date(2026, 10, 20), date(2026, 11, 10), date(2027, 5, 10)):
+        hours = bp.us_hours_for_date(day)
+        assert hours and all(bp.BATCH_HOUR_START <= h <= bp.BATCH_HOUR_END for h in hours)
+        local = datetime(day.year, day.month, day.day, hours[0])
+        assert _et_hour(local) == 12
+
+
+def test_default_schedule_without_us_audience_is_unchanged():
+    schedule = bp._compute_schedule(3, 3, None, taken=[])
+    assert sorted(datetime.fromisoformat(s).hour for s in schedule[:3]) == [9, 15, 20]

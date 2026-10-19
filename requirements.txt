@@ -84,3 +84,5 @@ google-auth-httplib2>=0.2.0
 # Requiere: requests, python-dotenv (ya listos arriba)
 # No necesita bitsandbytes ni transformers — el modelo corre en el servidor FreeLLM
 # ─────────────────────────────────────────────
+
+tzdata; sys_platform == "win32"

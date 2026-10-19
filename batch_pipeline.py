@@ -21,7 +21,8 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -716,10 +717,28 @@ def existing_slots(page_name: str, networks: dict, exclude_project: Optional[str
     return taken
 
 
+# Publico objetivo: hispanos de EE. UU. Dos franjas (mediodia y noche, hora del Este) y despues horas extra
+# para per_day > 2. Se convierten a la hora local del sistema dia por dia (los horarios de verano de EE. UU. y de
+# Chile cambian en fechas distintas) y se descartan las que quedan fuera de BATCH_HOUR_START-BATCH_HOUR_END.
+US_AUDIENCE_TZ = "America/New_York"
+US_SLOT_HOURS_ET = (12, 19, 15, 17, 10, 21)
+
+
+def us_hours_for_date(day: date) -> list:
+    """Horas locales (en el orden de US_SLOT_HOURS_ET) que corresponden a las franjas del Este de EE. UU. ese dia."""
+    tz = ZoneInfo(US_AUDIENCE_TZ)
+    hours = []
+    for et_hour in US_SLOT_HOURS_ET:
+        local = datetime(day.year, day.month, day.day, et_hour, tzinfo=tz).astimezone().replace(tzinfo=None)
+        if local.date() == day and BATCH_HOUR_START <= local.hour <= BATCH_HOUR_END:
+            hours.append(local.hour)
+    return hours
+
+
 def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False,
                       fixed_hours: Optional[list] = None, skip_days: int = 0,
                       taken: Optional[list] = None, hours_for_date: Optional[Callable] = None,
-                      hour_end: int = BATCH_HOUR_END) -> list:
+                      hour_end: int = BATCH_HOUR_END, us_audience: bool = False) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -741,6 +760,8 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     que `taken` ya tiene en esa fecha; un dia lleno se salta, y las horas a menos de BATCH_MIN_GAP_SECONDS de un
     horario ocupado no se usan); `per_day`/`skip_days`/`fixed_hours` no se usan. `hour_end` es
     el tope horario de _free_slot (How Big Really publica hasta las 22:00).
+    Con `us_audience` las horas del dia son las franjas del Este de EE. UU. (us_hours_for_date) en vez de los
+    DAYPARTS/best_hour/rescate.
     Devuelve `total` timestamps ISO."""
     if hours_for_date is not None:
         now = datetime.now()
@@ -778,12 +799,15 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
         base_hours = [20, 19, 18, 17, 16]
     elif best_hour is not None:
         base_hours = sorted(base_hours, key=lambda h: min(abs(h - best_hour), 24 - abs(h - best_hour)))
-    hours_for_day = list(base_hours)
-    while len(hours_for_day) < per_day:
-        next_hour = hours_for_day[-1] + 1
-        if next_hour > BATCH_HOUR_END:
-            next_hour = BATCH_HOUR_START
-        hours_for_day.append(next_hour)
+
+    def hours_of_day(day_date: date) -> list:
+        hours = (us_hours_for_date(day_date) if us_audience else []) or list(base_hours)
+        while len(hours) < per_day:
+            next_hour = hours[-1] + 1
+            if next_hour > BATCH_HOUR_END:
+                next_hour = BATCH_HOUR_START
+            hours.append(next_hour)
+        return hours
 
     now = datetime.now()
     days_needed = -(-total // per_day)
@@ -800,7 +824,7 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     desired = []
     for i in range(total):
         day_date = publish_days[i // per_day]
-        hour = hours_for_day[i % per_day] % 24
+        hour = hours_of_day(day_date)[i % per_day] % 24
         desired.append(datetime(day_date.year, day_date.month, day_date.day, hour))
     if taken is None:
         return [d.isoformat() for d in desired]
@@ -933,6 +957,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
             fixed_hours=fixed_hours,
             skip_days=skip_days,
             taken=existing_slots(page_name, networks),
+            us_audience=fixed_hours is None,  # los perfiles con horas fijas (gaming...) mantienen las suyas
         )
 
     project = {
