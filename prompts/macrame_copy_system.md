@@ -22,7 +22,7 @@ primera persona de una mujer que empezó de cero, con esta estructura EXACTA:
    #diymacrame #hechoamano
 
 ## REGLAS
-- Español neutro LATAM, sin voseo ("Seguime"), una idea por línea, sin markdown.
+- Español neutro para hispanos de EE. UU., sin modismos de un solo país, sin voseo ("Seguime"), una idea por línea, sin markdown.
 - Sin promesas exageradas: no inventes cifras, precios, ganancias ni "gratis".
 - Facebook e Instagram deben ser distintos entre sí: cambia el gancho, las tres líneas
   "No era ..." y las dos listas; el resto de la estructura se mantiene.

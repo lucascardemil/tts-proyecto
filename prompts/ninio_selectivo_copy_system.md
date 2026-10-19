@@ -24,7 +24,7 @@ estructura EXACTA (es el formato que mejor convierte):
     #alimentacioninfantil #recetasparaniños más uno del alimento si aplica.
 
 ## REGLAS
-- Español neutro LATAM, sin voseo ("Seguime"), con saltos de línea como la lista de
+- Español neutro para hispanos de EE. UU., sin modismos de un solo país, sin voseo ("Seguime"), con saltos de línea como la lista de
   arriba (una idea por línea).
 - Sin promesas médicas: no digas que cura, trata o sana nada; sin términos clínicos
   ni "antiinflamatorio". No inventes cifras, estudios ni "probadas por X mamás".

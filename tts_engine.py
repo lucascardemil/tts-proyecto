@@ -107,7 +107,7 @@ VOICE_LIBRARY = {
         "lang": "es",
     },
     "es_us_mujer": {
-        "label": "Español (Latinoamérica neutro) — Mujer",
+        "label": "Español (EE. UU.) — Mujer",
         "gentle": True,
         "bootstrap_voice": "es-US-PalomaNeural",
         "lang": "es",
@@ -150,7 +150,7 @@ VOICE_LIBRARY = {
     },
 }
 
-DEFAULT_VOICE = "es_es_mujer"
+DEFAULT_VOICE = "es_us_mujer"  # español de EE. UU.: el público de todas las paginas es hispano de EE. UU.
 
 # Ajuste para que cualquier voz suene más calmada y contenida; ideal para
 # historias para dormir. exaggeration bajo = menos intensidad emocional,

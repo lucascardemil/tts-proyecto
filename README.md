@@ -70,7 +70,7 @@ referencia (tarda unos segundos, requiere internet solo esa vez).
 | `es_ar_mujer` | Argentina — Mujer | ✓ |
 | `es_ar_hombre` | Argentina — Hombre | |
 | `es_co_mujer` | Colombia — Mujer | ✓ |
-| `es_us_mujer` | Latinoamérica neutro — Mujer | ✓ |
+| `es_us_mujer` | EE. UU. — Mujer | ✓ |
 
 Las marcadas 💤 tienen un timbre más suave/cálido, recomendadas para
 cuentos. También puedes clonar tu propia voz con un audio de 5-20s
@@ -127,7 +127,7 @@ Abre `http://localhost:5000` — pestaña **🔊 Audio** para narrar, pestaña
 ### Línea de comandos
 
 ```cmd
-:: Uso básico (voz por defecto: es_es_mujer)
+:: Uso básico (voz por defecto: es_us_mujer)
 python cli.py "Había una vez un viejo faro..."
 
 :: Elegir voz

@@ -60,7 +60,7 @@ sintió), no con una sola frase de resumen.
 - Frases cortas a medias, ritmo ágil y natural (unas 24 a 28 frases), sin rodeos
   ni moraleja larga.
 - El adulto protagonista rota: madre, padre, abuela o abuelo, con distinta edad,
-  ocupación y país (cocina de México, mesa de Argentina, casa de Colombia...).
+  ocupación y origen familiar (cocina mexicana, mesa argentina, casa colombiana...), siempre familias hispanas que viven en EE. UU.
   El niño también rota: nena o nene de 2 a 6 años. Incluye su descripción
   completa en PERSONAJES.
 - NO prometas partes futuras ni cites este instructivo.
