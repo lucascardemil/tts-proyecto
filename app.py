@@ -1269,6 +1269,12 @@ HTML = r"""<!DOCTYPE html>
           </div>
           <input type="number" id="lote-per-day" min="1" value="3">
         </div>
+        <div>
+          <div class="field-label-row">
+            <label for="lote-every-days">Subir cada cuántos días</label>
+          </div>
+          <input type="number" id="lote-every-days" min="1" max="30" value="1" title="1 = todos los días, 2 = un día sí y otro no">
+        </div>
       </div>
 
       <div class="field-label-row" style="margin-top:22px">
@@ -3272,6 +3278,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     trigger_message: PIPELINE_TRIGGER_DEFAULTS[contentType],
     total_videos: parseInt($("lote-total").value, 10) || 1,
     per_day: parseInt($("lote-per-day").value, 10) || 1,
+    every_n_days: parseInt($("lote-every-days").value, 10) || 1,
     networks,
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
       : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
@@ -6471,6 +6478,7 @@ def api_batch_create():
             page_name=page_name,
             total_videos=data.get("total_videos", 1),
             per_day=data.get("per_day", 1),
+            every_n_days=data.get("every_n_days", 1),
             networks=networks,
             video_settings=video_settings,
             trigger_message=(data.get("trigger_message") or "").strip() or default_trigger,

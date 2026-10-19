@@ -956,7 +956,7 @@ def _next_project_name(projects: dict, page_name: str) -> str:
 def create_project(page_name: str, total_videos: int, per_day: int,
                     networks: dict, video_settings: dict,
                     trigger_message: str = "dame una historia",
-                    content_type: str = "video") -> dict:
+                    content_type: str = "video", every_n_days: int = 1) -> dict:
     """page_name es el nombre de la pagina elegida (define el nicho del
     lote); el nombre del lote se genera solo (_next_project_name).
 
@@ -974,6 +974,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     _generate_batch_clip) -- YouTube solo para el clip (canal de gaming)."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
+    every_n_days = min(30, max(1, int(every_n_days or 1)))
     mixed = MIXED_TYPES.get(content_type)
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
@@ -1002,7 +1003,8 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     )
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
-    skip_days = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
+    rescue_skip = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
+    skip_days = max(rescue_skip, every_n_days - 1)  # cada N dias = N-1 dias vacios entre publicaciones
     schedule = _compute_schedule(
         total_videos, per_day, best_hour, rescue=rescue,
         fixed_hours=fixed_hours,
@@ -1018,6 +1020,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         "trigger_message": trigger_message,
         "total_videos": total_videos,
         "per_day": per_day,
+        "every_n_days": every_n_days,
         "networks": networks,
         # Desfase (segundos) del horario real de cada red respecto de
         # scheduled_at; solo las redes sin scheduling nativo lo aplican al
