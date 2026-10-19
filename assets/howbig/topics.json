@@ -997,5 +997,113 @@
     "fact": "Jupiter is more than twice as massive as all the other planets in our solar system combined.",
     "source": "NASA",
     "question": "How many Earths do you think Jupiter weighs?"
+  },
+  {
+    "id": "a073",
+    "template": "A",
+    "big": "American football field",
+    "reference": "Statue of Liberty",
+    "fact": "An American football field is 360 feet long including the end zones, longer than the Statue of Liberty is tall (305 feet from the ground to the torch).",
+    "source": null,
+    "question": "What landmark should we lay next to a football field?"
+  },
+  {
+    "id": "a074",
+    "template": "A",
+    "big": "Washington Monument",
+    "reference": "American football field",
+    "fact": "The Washington Monument is about 555 feet tall, taller than an American football field (360 feet including the end zones) stood on its end.",
+    "source": null,
+    "question": "What monument should we scale next?"
+  },
+  {
+    "id": "a075",
+    "template": "A",
+    "big": "Michigan Stadium",
+    "reference": "Madison Square Garden",
+    "fact": "Michigan Stadium seats about 107,000 fans, more than five times as many as Madison Square Garden holds for a basketball game (about 20,000).",
+    "source": null,
+    "question": "What stadium should we scale next?"
+  },
+  {
+    "id": "a076",
+    "template": "A",
+    "big": "Indianapolis Motor Speedway",
+    "reference": "Michigan Stadium",
+    "fact": "The Indianapolis Motor Speedway can seat more than 250,000 fans, more than twice as many as Michigan Stadium (about 107,000).",
+    "source": null,
+    "question": "Which venue do you think holds the biggest crowd?"
+  },
+  {
+    "id": "a077",
+    "template": "A",
+    "big": "NHL hockey rink",
+    "reference": "NBA basketball court",
+    "fact": "An NHL hockey rink is 200 feet long, more than twice the length of an NBA basketball court (94 feet).",
+    "source": null,
+    "question": "Which sport has the biggest playing surface?"
+  },
+  {
+    "id": "a078",
+    "template": "A",
+    "big": "pitcher's mound to home plate",
+    "reference": "bowling lane",
+    "fact": "A baseball pitcher throws from 60 feet, 6 inches away from home plate, almost exactly the length of a bowling lane (60 feet from the foul line to the head pin).",
+    "source": null,
+    "question": "What sports distance should we scale next?"
+  },
+  {
+    "id": "a079",
+    "template": "A",
+    "big": "Eiffel Tower",
+    "reference": "three football fields end to end",
+    "fact": "The Eiffel Tower is about 1,083 feet tall, almost exactly the length of three American football fields (1,080 feet) placed end to end.",
+    "source": null,
+    "question": "What tower should we scale next?"
+  },
+  {
+    "id": "a080",
+    "template": "A",
+    "big": "golf hole",
+    "reference": "golf ball",
+    "fact": "A golf hole is 4.25 inches wide, only about two and a half times wider than the ball (1.68 inches) that has to fit into it.",
+    "source": null,
+    "question": "What sports equipment should we scale next?"
+  },
+  {
+    "id": "a081",
+    "template": "A",
+    "big": "marathon",
+    "reference": "length of Manhattan",
+    "fact": "A marathon covers 26.2 miles, about twice the length of Manhattan, which is roughly 13 miles from tip to tip.",
+    "source": null,
+    "question": "What city should we measure a marathon against next?"
+  },
+  {
+    "id": "a082",
+    "template": "A",
+    "big": "Fenway Park's Green Monster",
+    "reference": "giraffe",
+    "fact": "The left-field wall at Fenway Park, the Green Monster, is 37 feet tall, about twice as tall as a giraffe (up to 18 feet).",
+    "source": null,
+    "question": "Which ballpark wall should we scale next?"
+  },
+  {
+    "id": "b027",
+    "template": "B",
+    "big": "Alaska",
+    "reference": "contiguous United States",
+    "fact": "Alaska covers about 665,000 square miles, roughly one-fifth the size of the contiguous United States (about 3.1 million).",
+    "source": null,
+    "question": "Which map comparison should we do next?"
+  },
+  {
+    "id": "b028",
+    "template": "B",
+    "big": "Texas",
+    "reference": "United Kingdom",
+    "fact": "Texas covers about 269,000 square miles, nearly three times the size of the United Kingdom (about 94,000).",
+    "source": null,
+    "question": "Which state should we compare next?"
   }
 ]
