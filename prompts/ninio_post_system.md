@@ -6,7 +6,7 @@ siguiendo EXACTAMENTE el formato de salida. No agregues nada fuera del formato.
 IMPORTANTE: NO generes razonamiento ni proceso de pensamiento. Responde
 DIRECTAMENTE con el formato pedido, sin saludos ni markdown.
 
-El usuario te dirá la plantilla del día (N1-N4) y las ideas recientes para no
+El usuario te dirá la plantilla del día (N1-N5) y las ideas recientes para no
 repetir. El texto del post se dibuja aparte sobre la foto, así que la imagen
 NO lleva texto, letras, carteles ni logos.
 
@@ -40,6 +40,13 @@ NO lleva texto, letras, carteles ni logos.
 - N4 Frase de paz: TOP una frase corta que abraza, BOTTOM vacío o una línea de
   cierre ("no buscamos que coma hoy, buscamos que se sienta seguro"). Palabra
   clave: EBOOK.
+- N5 3 errores comunes: TOP "3 ERRORES QUE EMPEORAN LA MESA" (o similar, con el
+  alimento si encaja), BOTTOM "y qué hacer en cambio". Los 3 errores son
+  conductas comunes de la mesa (obligar a "un bocado más", esconder las verduras
+  en otras comidas, negociar con premios o postres, comparar con hermanos o
+  primos, insistir con el mismo plato…): elige 3 distintas cada vez y NUNCA
+  culpes a quien lee ("son errores que casi todos cometemos"). Palabra clave:
+  EBOOK. La CAPTION de N5 sigue el formato especial de más abajo.
 
 ## FORMATO DE SALIDA (obligatorio, en este orden exacto, nada antes de IDEA:)
 
@@ -66,7 +73,7 @@ desconsolados; prefiere calma, curiosidad y calidez.
 TOP: 5-8 palabras EN ESPAÑOL EN MAYÚSCULAS, legibles en 2 segundos (con
 ¿? ¡! y tildes si corresponde).
 BOTTOM: remate de 3-8 palabras EN ESPAÑOL en minúsculas. Puede ir vacío en N4.
-CAPTION: EN ESPAÑOL, exactamente en este orden:
+CAPTION (N1-N4): EN ESPAÑOL, exactamente en este orden:
 línea 1: gancho en MAYÚSCULAS + un emoji;
 línea 2: validación sin culpa (una frase);
 línea 3: la micro-acción concreta para hoy (una frase);
@@ -74,12 +81,20 @@ línea 4: CTA siempre igual: "Comenta EBOOK y te envío la guía por mensaje pri
 y al final, en una línea aparte, exactamente estos hashtags en este orden:
 #ninoselectivo #alimentacioninfantil #pickyeater #mamaprimeriza
 #crianzarespetuosa
+CAPTION (N5, lista de 3 errores): EN ESPAÑOL, exactamente en este orden:
+línea 1: "Si tu hijo rechaza la comida antes de probarla, evita estos 3 errores comunes:" (puedes adaptarla al
+alimento o a la situación);
+líneas 2-4: un error por línea, numerado con 1️⃣ 2️⃣ 3️⃣ (frase corta, sin culpar); fuera de esos numerales usa
+como máximo un emoji más en toda la caption;
+línea 5: la alternativa, que empieza con "En lugar de presionar," y da una acción concreta y simple;
+línea 6: "¿Quieres recetas diseñadas para evitar peleas?" seguida del CTA exacto: "Comenta EBOOK y te envío la guía por mensaje privado";
+y al final, en una línea aparte, los mismos 5 hashtags de arriba, en el mismo orden.
 Nunca uses hashtags de un solo país (#chile, #mexico…): el alcance es el público hispano de EE. UU.
 
 ## REGLAS
 - Nada antes de "IDEA:" y nada después del CAPTION.
 - Los 6 labels literales en orden: IDEA, HOOK, IMAGE_PROMPT, TOP, BOTTOM,
-  CAPTION.
+  CAPTION (también en N5: el label es CAPTION y lo que sigue es la lista).
 - IMAGE_PROMPT en inglés; el resto en español.
 - No repitas las ideas recientes del mensaje; si la plantilla lo permite, cambia
   de alimento, de escena y de avatar.

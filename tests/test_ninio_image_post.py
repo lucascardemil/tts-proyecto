@@ -108,3 +108,30 @@ def test_food_hint_not_added_to_other_kinds(monkeypatch):
     monkeypatch.setattr(text_provider, "generate_text", lambda system, user, **k: (sent.append(user) or NINIO_REPLY, "freellm"))
     batch_pipeline._generate_text_with_chain("gaming", "P", "dame un post", "s")
     assert "Alimento protagonista" not in sent[0]
+
+
+N5_CAPTION = """Si tu hijo rechaza la comida antes de probarla, evita estos 3 errores comunes:
+1️⃣ Obligarlo a dar 'solo un bocado más'.
+2️⃣ Esconder las verduras en otros alimentos.
+3️⃣ Negociar con premios o postres.
+En lugar de presionar, adapta la receta para que se sienta seguro en la mesa. 🤎
+¿Quieres recetas diseñadas para evitar peleas? Comenta EBOOK y te envío la guía por mensaje privado
+#ninoselectivo #alimentacioninfantil #pickyeater #mamaprimeriza #crianzarespetuosa"""
+
+
+def test_n5_three_errors_template_is_in_the_week_and_the_prompt():
+    p = batch_pipeline.IMAGE_POST_PROFILES["ninio_image"]
+    assert p["templates"]["N5"] == "3 errores comunes"
+    thursday_noon = datetime(2026, 10, 8, 12).isoformat()
+    assert batch_pipeline._image_post_template("ninio_image", thursday_noon) == "N5"
+    text = (batch_pipeline._PROMPTS_DIR / "ninio_post_system.md").read_text(encoding="utf-8")
+    assert "N5" in text and "1️⃣ 2️⃣ 3️⃣" in text and "En lugar de presionar," in text
+    assert text.count("Comenta EBOOK y te envío la guía por mensaje privado") >= 2  # CTA exacto en ambos formatos
+
+
+def test_n5_caption_keeps_its_list_and_trims_hashtags_per_network():
+    caption = N5_CAPTION
+    tags = batch_pipeline.IMAGE_POST_PROFILES["ninio_image"]["max_hashtags"]
+    facebook = batch_pipeline._limit_hashtags(caption, tags["facebook"])
+    assert "1️⃣" in facebook and "3️⃣" in facebook and "Comenta EBOOK" in facebook
+    assert facebook.rstrip().endswith("#pickyeater") and "#crianzarespetuosa" not in facebook

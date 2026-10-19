@@ -225,17 +225,18 @@ GAMING_WEEK = [("T1", "T2"), ("T1", "T4"), ("T2", "T3"), ("T1", "T2"), ("T1", "T
 GAMING_MAX_HASHTAGS = {"instagram": 8, "facebook": 3, "youtube": 5}
 # Posts de imagen de "Niño Selectivo, Familia en Paz": un post antes del almuerzo
 # (12:00) y otro antes de la cena (19:00), a la misma hora en Facebook e Instagram.
-# Plantillas N1-N4 y semana tipo (mediodia, noche) por dia, lunes=0: mito, error y
-# ritual rotan al mediodia (3 formatos/semana del plan de mejoras); la noche es
-# casi siempre una frase de paz.
+# Plantillas N1-N5 y semana tipo (mediodia, noche) por dia, lunes=0: mito, error, ritual
+# y lista de 3 errores rotan al mediodia (3 formatos/semana del plan de mejoras); la noche
+# es casi siempre una frase de paz.
 NINIO_SLOT_HOURS = [12, 19]
 NINIO_TEMPLATES = {
     "N1": "Mito vs Realidad",
     "N2": "El error que empeora todo",
     "N3": "Ritual de 1 minuto",
     "N4": "Frase de paz",
+    "N5": "3 errores comunes",
 }
-NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N1", "N4"), ("N3", "N4"), ("N2", "N4"), ("N1", "N4")]
+NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N5", "N4"), ("N3", "N4"), ("N2", "N4"), ("N1", "N4")]
 # Posts de imagen de "MACRAME CREATIVO": uno al mediodia (12:00) y otro por la tarde (19:00), misma
 # hora en Facebook e Instagram. Plantillas M1-M4 y semana tipo (mediodia, tarde) por dia, lunes=0.
 # Posts de imagen de "HISTORIAS" (rescates de animales): uno a media mañana y otro a la tarde, igual en
