@@ -457,7 +457,7 @@ RESCUE_STORY_CRAFT = (
     "transformacion visible (su persona lo reconoce y el animal la reconoce al instante, o llega a su hogar); "
     "final esperanzador. 5) Cierre: una frase de esperanza con el nombre del animal y la invitacion a dejar un "
     "corazón (\"Hoy Nuri ya no espera sola... deja un corazón para Nuri\"); escribe la palabra corazón, nunca el "
-    "emoji, y no pidas una palabra clave ni prometas Parte 2. El guion de narracion tiene de 260 a 290 "
+    "emoji, y no pidas una palabra clave ni prometas Parte 2. El guion de narracion tiene de 270 a 290 "
     "palabras (unas 24 a 28 frases: desarrolla el conflicto con varias adversidades y el reencuentro con una escena concreta), escritas con los acentos y la ñ correctos (esperó, veía, niño). El personaje bondadoso o rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y "
     "ocupacion (nunca reuses el nombre de una historia anterior). Incluye su ficha completa en PERSONAJES y "
     "usa su etiqueta en los prompts. La ultima imagen muestra la transformacion (feliz en su hogar o ya "

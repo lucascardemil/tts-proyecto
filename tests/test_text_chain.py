@@ -13,7 +13,7 @@ import text_provider
 import batch_pipeline
 
 
-# Historia valida de ~90 s: guion de 260-290 palabras (cierra con un corazon) y 16 imagenes.
+# Historia valida de ~90 s: guion de 270-290 palabras (cierra con un corazon) y 16 imagenes.
 STORY_OK = (
     "Guion\n" + " ".join(["palabra"] * 270) + " deja un corazón para Nuri.\n\n"
     + "".join(f"Imagen {i}\nFrase del guion: «Hola mundo {i}.»\nPrompt: a calm scene {i}\n\n" for i in range(1, 17))

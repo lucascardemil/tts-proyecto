@@ -18,7 +18,7 @@ def test_historias_prompt_names_the_five_steps_and_the_fixed_length():
     text = PROMPT.read_text(encoding="utf-8")
     for step in ("Gancho de espera", "Conflicto", "Giro", "Reencuentro", "Cierre"):
         assert step in text, step
-    assert "260 a 290 palabras" in text
+    assert "270 a 290 palabras" in text
     assert "corazón" in text
     assert "Comenta" not in text and "comenta" not in text  # el cierre ya no pide palabra clave
     for kept in ("HOOK_TEXT:", "PERSONAJES:", "NUNCA en español", "16 a 20 imágenes"):
@@ -28,7 +28,7 @@ def test_historias_prompt_names_the_five_steps_and_the_fixed_length():
 def test_rescue_story_craft_matches_the_prompt():
     craft = bp.RESCUE_STORY_CRAFT
     assert "corazón" in craft and "omenta" not in craft
-    assert "260 a 290 palabras" in craft
+    assert "270 a 290 palabras" in craft
     assert "giro" in craft.lower() and "reencuentro" in craft.lower()
 
 

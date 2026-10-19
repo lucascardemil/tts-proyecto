@@ -934,7 +934,7 @@ HISTORIAS_SHEET_REQUEST = (
 
 
 LONG_FORMAT_REQUEST = (
-    "\n\nFORMATO LARGO (obligatorio): el video dura unos 90 segundos. La narracion tiene entre 260 y 290 "
+    "\n\nFORMATO LARGO (obligatorio): el video dura unos 90 segundos. La narracion tiene entre 270 y 290 "
     "palabras (cuenta las palabras antes de responder: si te quedas corto, desarrolla mas las escenas del "
     "medio de la historia, nunca rellenes con repeticiones) y la historia lleva entre 16 y 20 imagenes (un bloque "
     "Imagen N por cada una, una cada 1 o 2 frases)."
@@ -964,7 +964,7 @@ _NINIO_AGE_RE = re.compile(r"\b(?:\d+|[a-z]+(?:-[a-z]+)?)[- ]years?[- ]old", re.
 
 
 def validate_historia_script(script: str) -> None:
-    """El guion de HISTORIAS mide ~90 s (260-290 palabras), cierra pidiendo un corazon para el animal
+    """El guion de HISTORIAS mide ~90 s (270-290 palabras), cierra pidiendo un corazon para el animal
     y no usa "Comenta PALABRA". El mensaje lleva el marcador sanable "guion de historia fuera de
     formato" para que el lote regenere."""
     text = script.strip()

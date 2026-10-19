@@ -45,8 +45,8 @@ sintió), no con una sola frase de resumen.
    (siempre la palabra EBOOK en mayúsculas).
 
 ## REGLAS DEL GUION (se lee en voz alta y se verifica contra el audio)
-- 260 a 290 palabras en total (≈ 90 segundos; nunca menos de 270), en un solo bloque,
-  en español. Cuenta las palabras antes de responder: si quedas por debajo de 260,
+- 270 a 290 palabras en total (≈ 90 segundos; nunca menos de 270), en un solo bloque,
+  en español. Cuenta las palabras antes de responder: si quedas por debajo de 270,
   desarrolla más el problema, lo que ya intentaste o el primer intento; nunca
   rellenes con repeticiones.
 - Solo palabras en español: sin palabras en inglés ("YouTube", "boho", "DIY", "tips",
@@ -76,7 +76,7 @@ de paredes con hex, sofá beige, ventana a la izquierda, tres plantas, luz cáli
 atardecer, estilo boho acogedor.
 
 Guion
-Narración completa, 260 a 290 palabras, en un solo bloque, siguiendo los 9 beats.
+Narración completa, 270 a 290 palabras, en un solo bloque, siguiendo los 9 beats.
 
 Imagen 1
 Frase del guion: «excerpt EXACTO de una frase de la narración»

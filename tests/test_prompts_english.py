@@ -54,7 +54,7 @@ def test_script_after_last_image_is_not_part_of_its_prompt():
 def test_ninio_selectivo_is_a_90s_long_ebook_ad():
     import batch_pipeline as bp
     text = bp._text_system_prompt("ninio_selectivo")
-    assert "Comenta EBOOK" in text and "260 a 290 palabras" in text and "16 a 20 imágenes" in text and "NO dibujes ningún celular" in text
+    assert "Comenta EBOOK" in text and "270 a 290 palabras" in text and "16 a 20 imágenes" in text and "NO dibujes ningún celular" in text
     assert "PILARES DE VALOR" not in text
     for kind in ("historias", "macrame", "ninio_selectivo"):
         assert "aproximadamente" not in ap.build_trigger_message("x", 30, kind=kind), kind
@@ -97,7 +97,7 @@ def test_macrame_video_is_a_90s_long_ebook_ad_with_the_same_guarantees():
     import auto_pipeline as ap
     import batch_pipeline as bp
     text = bp._text_system_prompt("macrame")
-    assert "Comenta EBOOK" in text and "260 a 290 palabras" in text and "16 a 20 imágenes" in text
+    assert "Comenta EBOOK" in text and "270 a 290 palabras" in text and "16 a 20 imágenes" in text
     assert "NO dibujes ningún celular" in text and "PILARES DE VALOR" not in text
     assert bp.ad_kind_for_page("MACRAME CREATIVO") == "macrame" and bp.ad_kind_for_page("HISTORIAS") is None
     sheet = ap.build_trigger_message("dame una historia", None, kind="macrame")

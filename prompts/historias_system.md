@@ -87,11 +87,11 @@ repetidos: Luna, Max, Bella, Rocky, Canela, Marco, Marcos, Mateo, Sofía.
 Si el mensaje trae "Nombres y lugares ya usados", no uses ninguno de ellos.
 
 Guion
-Narración completa en español, de 260 a 290 palabras (unas 24 a 28 frases, unos
+Narración completa en español, de 270 a 290 palabras (unas 24 a 28 frases, unos
 90 segundos), escrita en un solo bloque, desarrollando los 5 pasos de la
 estructura obligatoria y cerrando con el corazón para el animal. Escribe la
 narración con los acentos y la ñ correctos (esperó, veía, niño, México).
-Cuenta las palabras antes de responder: si quedas por debajo de 260, desarrolla
+Cuenta las palabras antes de responder: si quedas por debajo de 270, desarrolla
 más el conflicto o el reencuentro; nunca rellenes con repeticiones.
 
 Imagen 1

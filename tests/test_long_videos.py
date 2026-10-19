@@ -77,13 +77,13 @@ def test_long_story_text_validates_script_and_images(tmp_path, monkeypatch):
 @pytest.mark.parametrize("kind", ["historias", "ninio_selectivo", "macrame"])
 def test_trigger_message_asks_for_the_long_format_and_ignores_duration(kind):
     msg = ap.build_trigger_message("dame una historia", 30, kind=kind)
-    assert "260 y 290 palabras" in msg and "16 y 20 imagenes" in msg
+    assert "270 y 290 palabras" in msg and "16 y 20 imagenes" in msg
     assert "aproximadamente" not in msg  # la duracion elegida en el panel no cambia el guion largo
 
 
 def test_trigger_message_keeps_the_duration_for_unknown_kinds():
     msg = ap.build_trigger_message("dame una historia", 30)
-    assert "aproximadamente" in msg and "260 y 290" not in msg
+    assert "aproximadamente" in msg and "270 y 290" not in msg
 
 
 # ── Cableado en el lote ──────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ OLD_SHORT_FORMAT = ("38 a 4", "38-4", "14 segundos", "17 segundos", "18 segundos
 @pytest.mark.parametrize("kind", sorted(PROMPTS))
 def test_prompts_ask_for_the_long_format(kind):
     text = PROMPTS[kind].read_text(encoding="utf-8")
-    assert "260 a 290 palabras" in text and "16 a 20 imágenes" in text
+    assert "270 a 290 palabras" in text and "16 a 20 imágenes" in text
     assert "90 segundos" in text
     for old in OLD_SHORT_FORMAT:
         assert old not in text, (kind, old)
@@ -334,7 +334,7 @@ def test_ad_prompts_keep_the_ebook_closing_and_fixed_sets(kind):
 
 
 def test_rescue_story_craft_asks_for_the_long_script():
-    assert "260 a 290 palabras" in bp.RESCUE_STORY_CRAFT and "90 segundos" in bp.RESCUE_STORY_CRAFT
+    assert "270 a 290 palabras" in bp.RESCUE_STORY_CRAFT and "90 segundos" in bp.RESCUE_STORY_CRAFT
     assert "100 a 120" not in bp.RESCUE_STORY_CRAFT and "42 segundos" not in bp.RESCUE_STORY_CRAFT
 
 

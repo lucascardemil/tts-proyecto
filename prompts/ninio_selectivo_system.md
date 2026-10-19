@@ -51,9 +51,9 @@ sintió), no con una sola frase de resumen.
    recetas." (siempre la palabra EBOOK en mayúsculas).
 
 ## REGLAS DEL GUION (se lee en voz alta y se verifica contra el audio)
-- 260 a 290 palabras en total (≈ 90 segundos; nunca menos de 270), en un solo
+- 270 a 290 palabras en total (≈ 90 segundos; nunca menos de 270), en un solo
   bloque, en español. Cuenta las palabras antes de responder: si quedas por
-  debajo de 260, desarrolla más el dolor, lo que ya intentaste o el primer
+  debajo de 270, desarrolla más el dolor, lo que ya intentaste o el primer
   resultado; nunca rellenes con repeticiones.
 - Solo palabras en español: sin palabras en inglés, abreviaturas ni símbolos
   (nada de "mm", "%", "USD", "DIY", "tips"). Los números pueden ir con cifras.
@@ -84,7 +84,7 @@ fijos (frutero, tabla de cortar, plantita), luz cálida de la mañana.
 El plato se describe dentro del prompt de cada imagen.
 
 Guion
-Narración completa, 260 a 290 palabras, en un solo bloque, siguiendo los 9 beats.
+Narración completa, 270 a 290 palabras, en un solo bloque, siguiendo los 9 beats.
 
 Imagen 1
 Frase del guion: «excerpt EXACTO de una frase de la narración»
