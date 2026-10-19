@@ -51,13 +51,13 @@ def test_script_after_last_image_is_not_part_of_its_prompt():
     ap.validate_prompts_english(story)
 
 
-def test_ninio_selectivo_is_a_14s_ebook_ad_with_fixed_length():
+def test_ninio_selectivo_is_a_90s_long_ebook_ad():
     import batch_pipeline as bp
     text = bp._text_system_prompt("ninio_selectivo")
-    assert "Comenta EBOOK" in text and "38 a 46 palabras" in text and "exactamente 5 imágenes" in text and "NO dibujes ningún celular" in text
+    assert "Comenta EBOOK" in text and "260 a 290 palabras" in text and "16 a 20 imágenes" in text and "NO dibujes ningún celular" in text
     assert "PILARES DE VALOR" not in text
-    assert bp._has_fixed_length("Niño Selectivo, Familia en Paz") and bp._has_fixed_length("Bebé Héroe")
-    assert bp._has_fixed_length("HISTORIAS") and bp._has_fixed_length("MACRAME CREATIVO")
+    for kind in ("historias", "macrame", "ninio_selectivo"):
+        assert "aproximadamente" not in ap.build_trigger_message("x", 30, kind=kind), kind
 
 
 def test_ninio_selectivo_video_gets_the_ebook_phone_card(tmp_path, monkeypatch):
@@ -92,16 +92,16 @@ def test_ninio_selectivo_images_must_carry_the_character_and_kitchen_sheets():
         ap.validate_ninio_story(bad)
 
 
-def test_macrame_video_is_a_17s_ebook_ad_with_the_same_guarantees():
+def test_macrame_video_is_a_90s_long_ebook_ad_with_the_same_guarantees():
     import pytest
     import auto_pipeline as ap
     import batch_pipeline as bp
     text = bp._text_system_prompt("macrame")
-    assert "Comenta EBOOK" in text and "38 a 48 palabras" in text and "exactamente 5 imágenes" in text
+    assert "Comenta EBOOK" in text and "260 a 290 palabras" in text and "16 a 20 imágenes" in text
     assert "NO dibujes ningún celular" in text and "PILARES DE VALOR" not in text
     assert bp.ad_kind_for_page("MACRAME CREATIVO") == "macrame" and bp.ad_kind_for_page("HISTORIAS") is None
     sheet = ap.build_trigger_message("dame una historia", None, kind="macrame")
-    assert "[ESCENA]" in sheet and "la misma en las 5 imagenes" in sheet
+    assert "[ESCENA]" in sheet and "la misma en todas las imagenes" in sheet
     story_text = (
         "HOOK_TEXT: Mi tercer proyecto 🧶\n\nPERSONAJES:\n"
         "[CAMILA]: 28 years old woman, long wavy brown hair, hazel eyes, freckles, cream (#F2E8D5) knit sweater\n"

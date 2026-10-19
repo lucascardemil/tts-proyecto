@@ -12,7 +12,6 @@ import { Fireflies } from "./Fireflies";
 import { TitleCard } from "./TitleCard";
 import { Subtitles } from "./Subtitles";
 import { PhoneCard } from "./PhoneCard";
-import { BebeHeroeVideo } from "./BebeHeroe";
 import type { StoryVideoProps } from "./schema";
 
 const TRANSITION_FRAMES = 20;
@@ -50,11 +49,7 @@ const pickTransition = (i: number): TransitionPresentation<any> => {
   return slide({ direction: dir });
 };
 
-// Tema de la página Bebé Héroe: composición propia (cortes secos, tiempos fijos de 18 s).
-export const StoryVideo: React.FC<StoryVideoProps> = (props) =>
-  props.theme === "bebe_heroe" ? <BebeHeroeVideo {...props} /> : <StandardStoryVideo {...props} />;
-
-const StandardStoryVideo: React.FC<StoryVideoProps> = ({
+export const StoryVideo: React.FC<StoryVideoProps> = ({
   title,
   audioSrc,
   scenes,

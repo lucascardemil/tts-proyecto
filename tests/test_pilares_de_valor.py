@@ -10,5 +10,5 @@ import batch_pipeline as bp
 
 def test_no_niche_gets_the_value_pillars_anymore():
     assert bp.PILARES_KINDS == set()
-    for kind in ("historias", "bebe_heroe", "ninio_selectivo", "macrame", "gaming_news", "ninio_post", "macrame_post", "gaming"):
+    for kind in ("historias", "ninio_selectivo", "macrame", "gaming_news", "ninio_post", "macrame_post", "gaming"):
         assert "PILARES DE VALOR" not in bp._text_system_prompt(kind)

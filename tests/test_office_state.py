@@ -192,13 +192,13 @@ def test_token_that_could_not_be_checked_is_a_warning_without_the_error_text():
 
 
 def test_token_close_to_expiry_is_a_warning_and_healthy_token_is_silent():
-    soon = {"page_name": "Bebé Héroe", "ok": True, "expires_at": (NOW + timedelta(days=3)).isoformat()}
+    soon = {"page_name": "Cuentos", "ok": True, "expires_at": (NOW + timedelta(days=3)).isoformat()}
     fine = {"page_name": "HISTORIAS", "ok": True, "expires_at": (NOW + timedelta(days=40)).isoformat()}
     never = {"page_name": "Niño", "ok": True, "expires_at": None}
     state = os_.build_state(data(tokens=[soon, fine, never]), NOW)
-    assert ids(state) == {"token-expiry:BEBÉ HÉROE"}
+    assert ids(state) == {"token-expiry:CUENTOS"}
     assert state["findings"][0]["severity"] == "warn"
-    assert state["findings"][0]["text"] == "El token de Bebé Héroe vence en 3 días"
+    assert state["findings"][0]["text"] == "El token de Cuentos vence en 3 días"
 
 
 def test_token_expiring_in_one_day_uses_the_singular():

@@ -600,7 +600,7 @@ _IMAGES_HEADING_RE = re.compile(r"\n[ \t]*#{0,3}[ \t]*IM[ÁA]GENES[ \t]*:?[ \t]*
 # guion ("PERSONAJES:" + una linea "[LUNA]: descripcion detallada" por
 # personaje). En cada prompt de imagen el modelo escribe solo la etiqueta [LUNA] y
 # _parse_story la expande con la descripcion completa, textual: asi el
-# personaje se repite identico en las 8-10 imagenes sin depender de que el modelo
+# personaje se repite identico en las 16-20 imagenes sin depender de que el modelo
 # lo copie fielmente cada vez.
 _CHARACTERS_HEADER_RE = re.compile(r"^[ \t]*#{0,3}[ \t]*PERSONAJES[ \t]*:?[ \t]*$", re.IGNORECASE | re.MULTILINE)
 _CHARACTER_LINE_RE = re.compile(r"^[ \t]*-?[ \t]*\[([^\]\n]+)\][ \t]*:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
@@ -668,6 +668,11 @@ def has_image_blocks(text: str) -> bool:
     real. Un modelo de razonamiento que vuelca su pensamiento ("Then Imagen 1,
     Imagen 2...") o una respuesta cortada por max_tokens no lo cumplen."""
     return bool(_IMAGE_BLOCK_RE.search(text.replace("**", "")))
+
+
+def count_image_blocks(text: str) -> int:
+    """Cantidad de bloques "Imagen N / Frase / Prompt" reales del texto crudo (sin escribir scratch)."""
+    return len(_IMAGE_BLOCK_RE.findall(text.replace("**", "")))
 
 
 def _parse_story(text: str, story_id: str = None) -> dict:
@@ -786,6 +791,12 @@ def extract_script(raw_text: str) -> str:
 
 
 SPANISH_WORDS_PER_MINUTE = 170  # calibrado contra .subs.json reales generados con Chatterbox (158-189 wpm observado)
+MIN_VIDEO_SECONDS = 80  # todos los videos con guion duran mas de 1:20
+LONG_SCRIPT_MIN_WORDS = 270  # a 189 palabras/min (la voz mas rapida observada) son ~86 s, con margen sobre los 80 s
+LONG_SCRIPT_MAX_WORDS = 300
+LONG_IMAGES_MIN = 14  # el prompt pide 16-20; el margen evita rechazar por una imagen de mas o de menos
+LONG_IMAGES_MAX = 22
+LONG_KINDS = frozenset({"historias", "ninio_selectivo", "macrame"})  # kinds de video con guion de ~90 s
 
 
 MIN_SCRIPT_WORDS = 30  # ~10s de narracion; por debajo no es una historia
@@ -804,6 +815,32 @@ def validate_script(script: str, min_words: int = MIN_SCRIPT_WORDS) -> None:
             f"Guion invalido ({len(text.split())} palabras, minimo {min_words}): "
             f"{text[:100]!r}"
         )
+
+
+def _long_script_problem(script: str) -> Optional[str]:
+    """Texto del problema si el guion no tiene el largo de un video de mas de 1:20, o None."""
+    words = len(script.split())
+    if LONG_SCRIPT_MIN_WORDS <= words <= LONG_SCRIPT_MAX_WORDS:
+        return None
+    return (f"Guion fuera de largo: {words} palabras "
+            f"(deben ser {LONG_SCRIPT_MIN_WORDS}-{LONG_SCRIPT_MAX_WORDS} para durar mas de 1:20)")
+
+
+def validate_long_script_length(script: str) -> None:
+    problem = _long_script_problem(script)
+    if problem:
+        raise PipelineError(problem)
+
+
+def validate_image_count(n: int) -> None:
+    if not LONG_IMAGES_MIN <= n <= LONG_IMAGES_MAX:
+        raise PipelineError(f"Imágenes fuera de rango: {n} (deben ser {LONG_IMAGES_MIN}-{LONG_IMAGES_MAX})")
+
+
+def validate_min_duration(seconds: float) -> None:
+    if seconds < MIN_VIDEO_SECONDS:
+        raise PipelineError(
+            f"Video más corto que 1:20: el audio dura {seconds:.0f} s (minimo {MIN_VIDEO_SECONDS} s)")
 
 
 def cap_script_to_duration(script: str, duration_seconds: Optional[int]) -> str:
@@ -835,7 +872,7 @@ CHARACTER_SHEET_REQUEST = (
     "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT (si lo hay) y antes de "
     "\"Guion\", escribi un bloque \"PERSONAJES:\" con una linea por cada personaje que "
     "aparezca en las imagenes (el animal y cada humano; si no hay personajes, la pieza u "
-    "objeto principal), con este formato: [NOMBRE]: descripcion en ingles de 40 a 60 "
+    "objeto principal), con este formato: [NOMBRE]: descripcion en ingles de 90 a 120 "
     "palabras con especie o raza, edad, tamano, color y patron exacto del pelaje o pelo, "
     "ojos, rasgos distintivos y ropa o accesorios. La ficha lleva SOLO rasgos "
     "permanentes; el estado de cada momento (apagado, sucio, feliz, dormido) va en la "
@@ -853,7 +890,7 @@ NINIO_SHEET_REQUEST = (
     "\"PERSONAJES:\" con estas lineas en ingles: la del nino, la del adulto (cada una de 60 a 80 palabras: "
     "edad exacta, genero, tono de piel, color y largo exacto del pelo y su peinado, color de ojos, UN rasgo "
     "distintivo visible como pecas, hoyuelos o un mechon, y UNA sola ropa fija con colores exactos y hex, la "
-    "misma en las 5 imagenes) y una linea [COCINA]: la cocina fija (30 a 45 palabras: color de paredes con hex, "
+    "misma en todas las imagenes) y una linea [COCINA]: la cocina fija (30 a 45 palabras: color de paredes con hex, "
     "ventana a la izquierda, mesa de madera clara, 3 objetos fijos, luz calida). En cada \"Prompt:\" escribi 70 a "
     "100 palabras en ingles y nombra SIEMPRE con su etiqueta, por ejemplo [MATEO], a cada personaje que aparezca "
     "y a [COCINA] (todas las imagenes ocurren en esa misma cocina), sin redescribirlos: el sistema pega las "
@@ -862,12 +899,12 @@ NINIO_SHEET_REQUEST = (
 
 
 # Variante para el anuncio de Macramé: fichas de la creadora, de la pieza final y de la sala, iguales en
-# las 5 imagenes (misma ropa, misma pieza, misma sala).
+# todas las imagenes (misma ropa, misma pieza, misma sala).
 MACRAME_SHEET_REQUEST = (
     "\n\nFORMATO DE IMAGENES (obligatorio): despues de HOOK_TEXT y antes de \"Guion\", escribi un bloque "
     "\"PERSONAJES:\" con estas lineas en ingles: la de la creadora (60 a 80 palabras: edad exacta, tono de "
     "piel, color y largo exacto del pelo y su peinado, color de ojos, UN rasgo distintivo visible y UNA sola "
-    "ropa fija con colores exactos y hex, la misma en las 5 imagenes), [PIEZA] (50 a 70 palabras: tipo exacto "
+    "ropa fija con colores exactos y hex, la misma en todas las imagenes), [PIEZA] (50 a 70 palabras: tipo exacto "
     "de pieza de macrame, tamano, cuerda con color y hex, nudos y diseno distintivos, flecos, aro o palito de "
     "madera) y [ESCENA] (30 a 45 palabras: sala fija con color de paredes con hex, sofa beige, ventana a la "
     "izquierda, tres plantas, luz calida de atardecer). En cada \"Prompt:\" escribi 70 a 100 palabras en ingles y "
@@ -896,39 +933,46 @@ HISTORIAS_SHEET_REQUEST = (
 )
 
 
+LONG_FORMAT_REQUEST = (
+    "\n\nFORMATO LARGO (obligatorio): el video dura unos 90 segundos. La narracion tiene entre 260 y 290 "
+    "palabras (cuenta las palabras antes de responder: si te quedas corto, desarrolla mas las escenas del "
+    "medio de la historia, nunca rellenes con repeticiones) y la historia lleva entre 16 y 20 imagenes (un bloque "
+    "Imagen N por cada una, una cada 1 o 2 frases)."
+)
+
+
 def build_trigger_message(base_message: str, duration_seconds: Optional[int], kind: Optional[str] = None) -> str:
     """Arma el mensaje disparador de un Project de historias: agrega el pedido
     de ficha de personajes y, si hay una duracion objetivo, un pedido de
     longitud aproximada en palabras, para que el modelo genere directamente un
     guion cercano al objetivo en vez de depender solo del recorte posterior
     de cap_script_to_duration (que nunca puede alargar una historia corta,
-    solo acortarla si se pasa)."""
+    solo acortarla si se pasa). Los kinds de LONG_KINDS ignoran la duracion
+    elegida: su guion es siempre el de ~90 s y se pide con LONG_FORMAT_REQUEST."""
     message = base_message
-    if duration_seconds:
+    is_long = kind in LONG_KINDS
+    if duration_seconds and not is_long:
         word_target = round(duration_seconds / 60 * SPANISH_WORDS_PER_MINUTE)
         message += f" (el guion de narracion debe tener aproximadamente {word_target} palabras)"
     sheet = {"macrame": MACRAME_SHEET_REQUEST, "ninio_selectivo": NINIO_SHEET_REQUEST,
              "historias": HISTORIAS_SHEET_REQUEST}.get(kind, CHARACTER_SHEET_REQUEST)
-    return message + sheet
+    return message + sheet + (LONG_FORMAT_REQUEST if is_long else "")
 
 
-_NINIO_AGE_RE = re.compile(r"\d+[- ]years?[- ]old", re.IGNORECASE)
-
-
-HISTORIA_MIN_WORDS = 90   # el prompt pide 100-120 (~42 s); margen a los lados
-HISTORIA_MAX_WORDS = 130
+# Edad de la ficha de un personaje: "28-year-old" o escrita ("twenty-eight-year-old", "five years old").
+_NINIO_AGE_RE = re.compile(r"\b(?:\d+|[a-z]+(?:-[a-z]+)?)[- ]years?[- ]old", re.IGNORECASE)
 
 
 def validate_historia_script(script: str) -> None:
-    """El guion de HISTORIAS mide ~42 s (100-120 palabras), cierra pidiendo un corazon para el animal
+    """El guion de HISTORIAS mide ~90 s (260-290 palabras), cierra pidiendo un corazon para el animal
     y no usa "Comenta PALABRA". El mensaje lleva el marcador sanable "guion de historia fuera de
     formato" para que el lote regenere."""
     text = script.strip()
     plain = unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode().lower()
-    words = len(text.split())
     problems = []
-    if not HISTORIA_MIN_WORDS <= words <= HISTORIA_MAX_WORDS:
-        problems.append(f"{words} palabras (deben ser {HISTORIA_MIN_WORDS}-{HISTORIA_MAX_WORDS})")
+    length_problem = _long_script_problem(text)
+    if length_problem:
+        problems.append(length_problem)
     if "corazon" not in " ".join(plain.split()[-30:]):
         problems.append("no cierra pidiendo un corazon para el animal")
     if re.search(r"\bcomenta\b", plain):  # palabra completa: "comentaban" no cuenta
@@ -945,6 +989,17 @@ def validate_historia_story_text(story_text: str, story_id: str) -> None:
         story = load_story_from_text(story_text, story_id)
         script = " ".join(p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"]))
     validate_historia_script(script)
+
+
+def validate_long_story_text(story_text: str, story_id: str) -> None:
+    """Valida el largo de un video de mas de 1:20 dentro de la respuesta completa del modelo: palabras del
+    guion (bloque "Guion" o, si no viene separado, las frases de cada imagen) y cantidad de imagenes."""
+    script = extract_script(story_text)
+    if not script.strip():
+        story = load_story_from_text(story_text, story_id)
+        script = " ".join(p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"]))
+    validate_long_script_length(script)
+    validate_image_count(count_image_blocks(story_text))
 
 
 def validate_ad_story(story: dict, setting: str = "Cocina", subjects: tuple = ()) -> None:

@@ -50,12 +50,12 @@ def test_window_now_closes_at_9pm_sharp():
 
 def test_existing_slots_collects_other_batches_of_the_same_page(monkeypatch):
     monkeypatch.setattr(bp, "_load", lambda: {
-        "a": {"page_name": "Bebé Héroe", "videos": [{"scheduled_at": "2026-10-07T20:00:00", "status": "ready"},
-                                                    {"scheduled_at": "2026-10-08T20:00:00", "status": "error"}]},
+        "a": {"page_name": "CUENTOS", "videos": [{"scheduled_at": "2026-10-07T20:00:00", "status": "ready"},
+                                                 {"scheduled_at": "2026-10-08T20:00:00", "status": "error"}]},
         "b": {"page_name": "HISTORIAS", "videos": [{"scheduled_at": "2026-10-07T12:00:00", "status": "ready"}]},
     })
     monkeypatch.setattr(bp.facebook_publisher, "list_post_times", lambda page_id=None, **k: [datetime(2026, 10, 9, 13)])
-    slots = bp.existing_slots("Bebé Héroe", {"facebook": {"page_id": "1"}})
+    slots = bp.existing_slots("CUENTOS", {"facebook": {"page_id": "1"}})
     assert sorted(slots) == [datetime(2026, 10, 7, 20), datetime(2026, 10, 9, 13)]
 
 

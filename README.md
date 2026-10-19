@@ -26,7 +26,7 @@ Variables (`.env`):
 | `FREELLM_URL` | `http://127.0.0.1:31415/v1` | Endpoint FreeLLM API |
 | `HERMES_CUSTOM_FREELLMAPI_API_KEY` | — (obligatoria) | API key del endpoint |
 | `FREELLM_MODEL` | `auto` | Modelo (`auto` = router inteligente, o un ID específico) |
-| `FREELLM_TIMEOUT` | `300` | Timeout por request (seg) |
+| `FREELLM_TIMEOUT` | `600` | Timeout por request (seg) |
 | `FREELLM_MAX_TOKENS` | `4096` | Tokens máximos de salida |
 
 ---

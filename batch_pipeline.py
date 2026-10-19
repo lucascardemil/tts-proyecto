@@ -20,7 +20,6 @@ import re
 import shutil
 import threading
 import time
-import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -45,11 +44,11 @@ def _text_system_prompt(kind: str) -> str:
     return prompt
 
 # Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas).
-# Hoy ninguno: HISTORIAS usa un formato fijo de ~42 s con su propia estructura (prompts/historias_system.md).
+# Hoy ninguno: HISTORIAS usa un formato fijo de ~90 s con su propia estructura (prompts/historias_system.md).
 PILARES_KINDS: set = set()
 
 TEXT_FORMAT_ATTEMPTS = 3  # reintentos ante respuesta truncada o sin formato
-STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # los demas (posts) no traen bloques Imagen
+STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo"}  # los demas (posts) no traen bloques Imagen
 
 # Alimento protagonista de cada historia/post de niño selectivo. Sin esto el modelo
 # se ancla a los ejemplos del prompt (brocoli) y todo gira alrededor de lo mismo; se
@@ -57,76 +56,6 @@ STORY_TEXT_KINDS = {"historias", "macrame", "ninio_selectivo", "bebe_heroe"}  # 
 NINIO_FOODS = (
     "brócoli", "zanahoria", "calabacín", "espinaca", "zapallo (calabaza)", "tomate", "palta (aguacate)",
     "arroz", "pollo", "pan", "huevo", "fideos", "lentejas", "plátano", "papa", "manzana",
-)
-# ── Pagina "Bebé Héroe" ────────────────────────────────────────────────────
-# Reels de 18 s (4 escenas) de un bebé bombero que rescata animales o ayuda a su familia (workflow
-# del cliente). Ideas del banco: (idea, hashtag del animal/tema); se sortea una por video evitando
-# las recientes. Voz: la voz clonada "Voz de Bebé" (tts_engine.add_custom_voice); musica y fuente
-# en assets/bebe_heroe/; subtitulos Luckiest Guy y zoom por escena (video_maker.BEBE_HEROE_*).
-BEBE_HEROE_KIND = "bebe_heroe"
-BEBE_HEROE_VOICE_LABEL = "Voz de Bebé"
-BEBE_HEROE_SLOT_HOURS = [20, 10]  # Chile: la noche rinde mas; segundo bloque a media mañana
-BEBE_HEROE_SCENES = 4
-BEBE_HEROE_MIN_WORDS = 12  # 4 frases de 4-9 palabras
-BEBE_HEROE_HISTORY_LIMIT = 12
-BEBE_HEROE_DEFAULT_QUESTION = "¿Crees que hice bien?"
-BEBE_HEROE_IDEAS = (
-    ("un gatito atrapado en un árbol", "gatito"),
-    ("un perrito empapado bajo la lluvia al que cubre con su paraguas", "perrito"),
-    ("un nido caído con 3 pajaritos que devuelve a su árbol", "pajaritos"),
-    ("un pollito perdido que busca a su mamá gallina", "pollito"),
-    ("una tortuga que quiere cruzar la calle", "tortuga"),
-    ("un conejo atrapado en una cerca", "conejo"),
-    ("un patito con la patita lastimada", "patito"),
-    ("la bicicleta rota de papá que quiere arreglar", "familia"),
-    ("las bolsas pesadas de mamá que ayuda a cargar", "familia"),
-    ("una carta del abuelo que se le cayó y le entrega", "abuelo"),
-    ("un columpio que construye para su hermanito", "familia"),
-    ("la cocina que limpia para sorprender a mamá", "familia"),
-    ("un osito de peluche olvidado en la basura", "peluche"),
-    ("una muñeca rota que lleva a la ambulancia de juguete", "juguetes"),
-    ("el carrito de juguete roto de su hermanito que arregla con cinta", "familia"),
-    ("un parque lleno de basura que decide limpiar", "ecologia"),
-    ("una caja que se mueve bajo la lluvia y que abre: dentro hay 2 cachorritos, y termina con ellos bajo su paraguas", "cachorritos"),
-    ("un patito atrapado en un charco congelado al que libera rompiendo el hielo con un palito", "patito"),
-    ("las bolsas de manzanas que se le cayeron a una abuelita: las recoge una por una y ella le da una de premio", "abuelita"),
-    ("un bombero adulto que busca su casco por todas partes y el bebé aparece corriendo con él", "bombero"),
-    ("una manguera descontrolada disparando agua que el bebé doma, y termina empapado riendo", "manguera"),
-    ("5 pollitos con miedo a cruzar que el bebé guía como si dirigiera el tránsito con su casco rojo", "pollitos"),
-    ("un arbolito de Navidad caído al que intenta ponerle la estrella hasta que papá lo sube en hombros", "navidad"),
-    ("un gatito asustado frente a una lavadora (apagada) al que el bebé rescata", "gatito"),
-    ("la carta de una niña que se lleva el viento y que el bebé atrapa corriendo en el aire", "carta"),
-    ("un helado que se le cae a un niño y el bebé comparte el suyo: comen juntos", "helado"),
-    ("un zapatito de bebé flotando en una acequia que pesca con una rama", "zapatito"),
-    ("el globo rojo de una niña atrapado en un árbol que baja trepando con ayuda de un banquito", "globo"),
-    ("un huevo caído fuera del nido en el pasto que devuelve a su lugar con algodón", "nido"),
-    ("un perrito tiritando cuya mantita está en un tendedero muy alto y el bebé la baja", "perrito"),
-    ("las llaves de mamá caídas en una alcantarilla que rescata con un imán de juguete", "llaves"),
-    ("una cometa de colores atorada en unos cables que baja tirando del hilo junto a papá", "cometa"),
-    ("un pecesito en un balde sin agua al que el bebé corre a llenarlo con un vaso", "pecesito"),
-    ("una plantita seca que el bebé riega todos los días hasta que florece", "jardin"),
-    ("un abuelito en silla de ruedas atascado en el barro al que ayuda poniendo una tablita", "abuelito"),
-    ("su hermanita con miedo en un apagón a la que llega con una linterna de juguete para iluminarla", "linterna"),
-    ("el carrito de supermercado de mamá que se va cuesta abajo solo y el bebé corre a frenarlo con su cuerpo", "carrito"),
-    ("un gatito enredado en la lana de la abuela, hecho una bolita, que el bebé desenreda con paciencia", "gatito"),
-    ("un pajarito que se golpea contra una ventana y cae, y el bebé lo pone en una cajita con algodón", "pajarito"),
-    ("la cadena salida de la bici del hermano mayor que el bebé intenta poner con las manos llenas de grasa", "bicicleta"),
-    ("un cachorro que muerde el zapato de papá (papá enojado) y el bebé le da un hueso de juguete para cambiarlo", "cachorro"),
-    ("una tortuga patas arriba que no puede voltearse y el bebé le da la vuelta con un palito", "tortuga"),
-    ("un tren de juguete descarrilado que el bebé arregla, con su casco rojo de maquinista", "tren"),
-    ("una mariposa en el suelo (simulada) a la que el bebé le hace una casita con una hoja para protegerla del viento", "mariposa"),
-    ("un paquete pesado que deja el cartero y que el bebé arrastra hasta la puerta porque mamá no puede", "paquete"),
-    ("un balón de los niños en el techo de la casa que el bebé alcanza haciendo una torre de cajas", "balon"),
-    ("un perrito con cono de la vergüenza que no puede comer y al que el bebé da comida con una cucharita", "perrito"),
-    ("una regadera que gotea toda la noche y que el bebé cierra con fuerza hasta que el agua para", "regadera"),
-    ("un pollito caído en una piscina vacía al que ayuda a salir poniéndole una rampa de madera", "pollito"),
-    ("los lentes caídos y sucios del abuelito, que el bebé limpia con su polerita", "abuelito"),
-    ("una gatita que mueve a sus 4 gatitos uno por uno bajo la lluvia, y el bebé la ayuda con un paraguas", "gatita"),
-    ("un muñeco de nieve que se derrite al sol y al que el bebé le pone una sombrilla", "muneco"),
-    ("un autito de juguete sin rueda, cuya rueda el bebé busca bajo el sillón para arreglarlo", "autito"),
-    ("un perro que persigue una cometa y se enreda, y el bebé desenreda el hilo", "cometa"),
-    ("su hermanita que no puede con una mochila escolar gigante y a la que empuja por detrás para ayudarla", "mochila"),
-    ("el faro solar apagado del jardín que el bebé limpia hasta que vuelve a encenderse e ilumina el jardín", "faro"),
 )
 
 _NINIO_KINDS = {"ninio_selectivo", "ninio_post"}
@@ -176,7 +105,7 @@ def _generate_text_with_chain(
                     text, backend = text_provider.generate_text(
                         system,
                         trigger_message,
-                        max_tokens=8192,  # el router "auto" razona ~3000 tokens antes de contestar
+                        max_tokens=16384,  # la salida son ~7-8 mil tokens y el router "auto" razona ~3 mil antes de contestar
                         temperature=0.8,
                         model=models[(attempt - 1) % len(models)],
                     )
@@ -185,18 +114,25 @@ def _generate_text_with_chain(
                     if kind in STORY_TEXT_KINDS and not auto_pipeline.has_image_blocks(text):
                         raise text_provider.TextProviderError(
                             "freellm: la respuesta no trae bloques Imagen/Frase/Prompt (razonamiento o formato roto)")
-                    # HISTORIAS dura ~42 s: un guion fuera de rango se reintenta ya con el
-                    # siguiente modelo, sin esperar al reintento de etapa (no escribe scratch).
-                    if kind == "historias":
+                    # Todos los videos duran mas de 1:20: un guion fuera de largo o un numero de imagenes
+                    # fuera de rango se reintenta ya con el siguiente modelo (no escribe scratch).
+                    if kind in auto_pipeline.LONG_KINDS:
                         script = auto_pipeline.extract_script(text)
-                        if script.strip():
-                            try:
-                                auto_pipeline.validate_historia_script(script)
-                            except auto_pipeline.PipelineError as ve:
-                                raise text_provider.TextProviderError(
-                                    "freellm: formato de historia fuera de rango: " + str(ve))
+                        try:
+                            if script.strip():
+                                if kind == "historias":
+                                    auto_pipeline.validate_historia_script(script)
+                                else:
+                                    auto_pipeline.validate_long_script_length(script)
+                            auto_pipeline.validate_image_count(auto_pipeline.count_image_blocks(text))
+                        except auto_pipeline.PipelineError as ve:
+                            raise text_provider.TextProviderError("freellm: " + str(ve))
                 except text_provider.TextProviderError as e:
-                    retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "formato de historia", "rate limit"))
+                    # "timed out"/"fallo tras": el modelo no termino a tiempo una respuesta larga (o la red
+                    # fallo en sus reintentos internos): el siguiente modelo de la cadena suele contestar.
+                    retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "formato de historia", "fuera de largo",
+                                                 "fuera de rango", "fuera de formato", "rate limit",
+                                                 "timed out", "fallo tras"))
                     if not retryable or attempt == attempts:
                         raise
                     logger.warning("batch: %s; reintento %d/%d con otro modelo", e, attempt, attempts)
@@ -223,10 +159,11 @@ import youtube_publisher
 import feedback_analyzer
 import gaming_clip
 import gaming_news
+import howbig
 import job_store
 import meme_maker
 import seo_optimizer
-from tts_engine import text_to_speech_verified, text_to_speech_phrases, get_default_voice, BEDTIME_PRESET, NARRATION_CHECK_SUFFIX
+from tts_engine import text_to_speech_verified, get_default_voice, BEDTIME_PRESET, NARRATION_CHECK_SUFFIX
 
 # logging.getLogger(__name__) ("batch_pipeline") no tenia ningun handler propio
 # ni de un ancestro configurado (el logger "pipeline" de auto_pipeline.py es un
@@ -255,6 +192,15 @@ BATCH_MIN_GAP_SECONDS = 3600
 # best_hour por la metrica circular de _compute_schedule.
 BATCH_HOUR_START = 9
 BATCH_HOUR_END = 21  # inclusive: las 21:00 en punto es el ultimo horario
+
+# How Big Really: horario por fase desde el primer lote de la pagina (hora de Chile). Dias 1-14: 3 posts
+# al dia (11:00, 15:00, 22:00); desde el dia 15: 2 al dia (11:00 y 22:00). Las 22:00 quedan fuera del rango
+# general 9-21, asi que esta pagina usa su propio tope (HOWBIG_HOUR_END).
+HOWBIG_PHASE1_DAYS = 14
+HOWBIG_PHASE1_HOURS = [11, 15, 22]
+HOWBIG_PHASE2_HOURS = [11, 22]
+HOWBIG_HOUR_END = 22
+HOWBIG_LAUNCH_STORE = "howbig_launch"
 
 # Posts de imagen gaming (Workflow JugadasEpicasVideojuegos, sec. 4): Facebook
 # a las 13:00 y 20:00 (son el scheduled_at del video), Instagram una hora
@@ -397,11 +343,16 @@ _HEALABLE_EXTRA_MARKERS = (
     "unknown ref",  # WhatsApp Web se redibujo entre el snapshot y el clic: pasa solo
     "no hay noticias de videojuegos", "ningun medio de videojuegos",  # sin noticias nuevas / sin internet: se reintenta mas tarde
     "no cierra con comenta ebook",  # el modelo olvido el llamado a la accion: otro intento suele cumplir
-    "guion de historia fuera de formato",  # largo o cierre fuera del formato de ~42 s: otro intento suele cumplir
+    "guion de historia fuera de formato",  # largo o cierre fuera del formato de ~90 s: otro intento suele cumplir
+    "guion fuera de largo",  # el modelo respondio un guion mas corto o mas largo que el de ~90 s: otro intento suele cumplir
+    "imágenes fuera de rango",  # el modelo respondio con otra cantidad de imagenes (16-20): otro intento suele cumplir
+    "video más corto que 1:20",  # la voz salio mas corta de lo esperado: otro audio suele pasar de 1:20
     "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
     "respuesta truncada por max_tokens",  # modelo de razonamiento que no alcanzo a contestar: otro modelo/momento suele
     "cuota agotada (429)",  # limite por minuto del proveedor de texto: se repone en minutos
     "no trae bloques imagen",  # razonamiento volcado o formato roto: otra respuesta suele traerlos
+    "timed out",  # el proveedor de texto no termino a tiempo una respuesta larga: otro momento/modelo suele
+    "fallo tras",  # el proveedor de texto agoto sus reintentos internos (red/timeout/5xx): suele pasar solo
 )
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
@@ -494,7 +445,7 @@ STORY_PATTERNS = {
 STORY_PATTERN_COOLDOWN = 2  # no repite un patron usado en los ultimos N videos
 
 RESCUE_STORY_CRAFT = (
-    "\n\nESTRUCTURA (obligatoria, 5 pasos, video de unos 42 segundos): 1) Gancho de espera: la primera frase "
+    "\n\nESTRUCTURA (obligatoria, 5 pasos, video de unos 90 segundos): 1) Gancho de espera: la primera frase "
     "lleva un numero o plazo concreto y una consecuencia (\"Nuri esperó siete meses en el mismo banco. Todos "
     "pasaban... nadie la veía.\"). 2) Conflicto y adversidad: que cambio y como lo soporta con el tiempo y el "
     "clima (con frio, con lluvia, semanas mas tarde); lugar especifico y DIFERENTE en cada historia, "
@@ -506,8 +457,8 @@ RESCUE_STORY_CRAFT = (
     "transformacion visible (su persona lo reconoce y el animal la reconoce al instante, o llega a su hogar); "
     "final esperanzador. 5) Cierre: una frase de esperanza con el nombre del animal y la invitacion a dejar un "
     "corazón (\"Hoy Nuri ya no espera sola... deja un corazón para Nuri\"); escribe la palabra corazón, nunca el "
-    "emoji, y no pidas una palabra clave ni prometas Parte 2. El guion de narracion tiene de 100 a 120 "
-    "palabras, escritas con los acentos y la ñ correctos (esperó, veía, niño). El personaje bondadoso o rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y "
+    "emoji, y no pidas una palabra clave ni prometas Parte 2. El guion de narracion tiene de 260 a 290 "
+    "palabras (unas 24 a 28 frases: desarrolla el conflicto con varias adversidades y el reencuentro con una escena concreta), escritas con los acentos y la ñ correctos (esperó, veía, niño). El personaje bondadoso o rescatista es DIFERENTE en cada historia: cambia nombre, edad, genero y "
     "ocupacion (nunca reuses el nombre de una historia anterior). Incluye su ficha completa en PERSONAJES y "
     "usa su etiqueta en los prompts. La ultima imagen muestra la transformacion (feliz en su hogar o ya "
     "reunido). Si la historia no tiene una transformacion visible o un misterio resuelto, cambia la idea."
@@ -641,17 +592,18 @@ def _best_hour_for_networks(networks: dict) -> Optional[int]:
     return None if result.get("insufficient_data") else result.get("best_hour")
 
 
-def _into_publish_window(dt: datetime) -> datetime:
-    """Lleva `dt` al rango BATCH_HOUR_START-BATCH_HOUR_END: antes de abrir
+def _into_publish_window(dt: datetime, hour_end: int = BATCH_HOUR_END) -> datetime:
+    """Lleva `dt` al rango BATCH_HOUR_START-`hour_end` (por defecto BATCH_HOUR_END): antes de abrir
     -> hoy a la apertura; despues de cerrar -> manana a la apertura."""
     if dt.hour < BATCH_HOUR_START:
         return dt.replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
-    if dt.hour > BATCH_HOUR_END or (dt.hour == BATCH_HOUR_END and (dt.minute or dt.second)):
+    if dt.hour > hour_end or (dt.hour == hour_end and (dt.minute or dt.second)):
         return (dt + timedelta(days=1)).replace(hour=BATCH_HOUR_START, minute=0, second=0, microsecond=0)
     return dt
 
 
-def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime) -> datetime:
+def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime,
+                               hour_end: int = BATCH_HOUR_END) -> datetime:
     """Encuentra un scheduled_at libre para un reschedule por falta de gap,
     escalonandolo respecto de TODOS los demas videos "ready"/"publishing"
     de TODOS los proyectos (no solo el actual) que ya apuntan a >= base_dt.
@@ -678,7 +630,7 @@ def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime
                 continue
             if dt >= base_dt - timedelta(seconds=BATCH_MIN_GAP_SECONDS):
                 taken.append(dt)
-    slot = _into_publish_window(base_dt)
+    slot = _into_publish_window(base_dt, hour_end)
     # Mientras el candidato caiga a menos de BATCH_MIN_GAP_SECONDS de algun
     # slot ya ocupado, lo empuja justo despues de ese slot y lo vuelve a
     # encuadrar en la ventana horaria (empujar puede cruzar las 20h, o el
@@ -689,19 +641,40 @@ def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime
         changed = False
         for dt in taken:
             if abs((slot - dt).total_seconds()) < BATCH_MIN_GAP_SECONDS:
-                slot = _into_publish_window(dt + timedelta(seconds=BATCH_MIN_GAP_SECONDS))
+                slot = _into_publish_window(dt + timedelta(seconds=BATCH_MIN_GAP_SECONDS), hour_end)
                 changed = True
     return slot
 
 
-def _free_slot(desired: datetime, taken: list, rescue: bool = False) -> datetime:
-    """Primer horario libre a partir de `desired`, dentro de 9:00-21:00 y a no menos de
+def howbig_hours_for_date(day, launch) -> list:
+    """Horas de publicacion de How Big Really para `day`: fase 1 (3 al dia) los primeros
+    HOWBIG_PHASE1_DAYS dias desde `launch` (fecha del primer lote de la pagina), despues fase 2 (2 al dia)."""
+    if (day - launch).days < HOWBIG_PHASE1_DAYS:
+        return list(HOWBIG_PHASE1_HOURS)
+    return list(HOWBIG_PHASE2_HOURS)
+
+
+def _howbig_launch_date():
+    """Fecha del primer lote de How Big Really: se guarda (hoy) la primera vez y de ahi en mas es fija.
+    Llamar bajo `_lock` para que dos lotes simultaneos no la pisen."""
+    saved = (job_store.load(HOWBIG_LAUNCH_STORE) or {}).get("date")
+    try:
+        return datetime.fromisoformat(str(saved)).date()
+    except (TypeError, ValueError):
+        pass
+    today = datetime.now().date()
+    job_store.save(HOWBIG_LAUNCH_STORE, {"date": today.isoformat()})
+    return today
+
+
+def _free_slot(desired: datetime, taken: list, rescue: bool = False, hour_end: int = BATCH_HOUR_END) -> datetime:
+    """Primer horario libre a partir de `desired`, dentro de 9:00-`hour_end`:00 (por defecto 21:00) y a no menos de
     BATCH_MIN_GAP_SECONDS de cualquier publicacion ya hecha o programada (`taken`). Ese dia se prueba
     primero la hora pedida y despues las demas horas del rango, de la mas cercana a la mas lejana; si no
     queda ninguna, los dias siguientes. Nunca antes de ahora + el adelanto minimo de programacion."""
     earliest = datetime.now() + NATIVE_SCHEDULE_MIN_LEAD
     desired = max(desired, earliest.replace(minute=0, second=0, microsecond=0))
-    hours = sorted(range(BATCH_HOUR_START, BATCH_HOUR_END + 1), key=lambda h: (abs(h - desired.hour), h))
+    hours = sorted(range(BATCH_HOUR_START, hour_end + 1), key=lambda h: (abs(h - desired.hour), h))
     for day in range(90):
         date = (desired + timedelta(days=day)).date()
         if rescue and date.weekday() == 0:  # el perfil rescate no publica los lunes
@@ -745,7 +718,8 @@ def existing_slots(page_name: str, networks: dict, exclude_project: Optional[str
 
 def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False,
                       fixed_hours: Optional[list] = None, skip_days: int = 0,
-                      taken: Optional[list] = None) -> list:
+                      taken: Optional[list] = None, hours_for_date: Optional[Callable] = None,
+                      hour_end: int = BATCH_HOUR_END) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -761,7 +735,42 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     (skip_days=1 = publicar cada 2 dias).
     Con `taken` (horarios ya ocupados de la pagina, ver existing_slots) cada publicacion se corre al
     primer horario libre del rango 9-21 h (ver _free_slot) para no pisar ni duplicar las existentes.
+    Con `hours_for_date` (fecha -> lista de horas, p. ej. howbig_hours_for_date) el reparto es por calendario:
+    desde hoy, cada dia usa sus propias horas en orden, saltando las que ya pasaron (antes de ahora + el
+    adelanto minimo) en vez de correr el lote, y sin pasar del tope del dia (cantidad de horas de ese dia menos lo
+    que `taken` ya tiene en esa fecha; un dia lleno se salta, y las horas a menos de BATCH_MIN_GAP_SECONDS de un
+    horario ocupado no se usan); `per_day`/`skip_days`/`fixed_hours` no se usan. `hour_end` es
+    el tope horario de _free_slot (How Big Really publica hasta las 22:00).
     Devuelve `total` timestamps ISO."""
+    if hours_for_date is not None:
+        now = datetime.now()
+        earliest = now + NATIVE_SCHEDULE_MIN_LEAD
+        occupied = taken if taken is not None else []
+        schedule = []
+        for offset in range(400):
+            if len(schedule) >= total:
+                break
+            day_date = (now + timedelta(days=offset)).date()
+            day_hours = hours_for_date(day_date)
+            # Tope del dia: la fase manda cuantos posts caben por fecha, contando lo ya ocupado (otros lotes,
+            # posts externos). Un dia lleno se salta entero; no se reubican los horarios a otras horas.
+            capacity = max(0, len(day_hours) - sum(1 for t in occupied if t.date() == day_date))
+            chosen = []
+            for hour in day_hours:
+                if len(chosen) >= capacity or len(schedule) + len(chosen) >= total:
+                    break
+                slot = datetime(day_date.year, day_date.month, day_date.day, hour % 24)
+                if slot < earliest:
+                    continue  # ya paso (o no da el adelanto minimo): se salta, no se corre el lote
+                if any(abs((slot - t).total_seconds()) < BATCH_MIN_GAP_SECONDS for t in occupied):
+                    continue
+                chosen.append(slot)
+            for when in chosen:
+                if taken is not None:
+                    when = _free_slot(when, occupied, rescue=rescue, hour_end=hour_end)  # red de seguridad
+                    occupied.append(when)
+                schedule.append(when.isoformat())
+        return schedule
     base_hours = [h for _, _, h in feedback_analyzer.DAYPARTS if BATCH_HOUR_START <= h <= BATCH_HOUR_END]
     if fixed_hours:
         base_hours = list(fixed_hours)
@@ -823,12 +832,10 @@ def _text_kind_for_page(page_name: str) -> str:
         return "macrame"
     if "SELECTIVO" in name:
         return "ninio_selectivo"
-    if is_bebe_heroe_page(page_name):
-        return BEBE_HEROE_KIND
     return "historias"
 
 
-# Anuncios de ebook (~14-17 s, estilo testimonio): paginas cuyo video es un anuncio con largo fijo, cierre
+# Anuncios de ebook (~90 s, estilo testimonio): paginas cuyo video es un anuncio con largo fijo, cierre
 # "Comenta EBOOK", fichas fijas (personajes + set) y, al final, un celular con la portada del ebook.
 AD_KINDS = {
     "ninio_selectivo": {"cover": SCRIPT_DIR / "assets" / "ninio" / "ebook_cover.jpg", "setting": "Cocina"},
@@ -849,101 +856,6 @@ def phone_card_for_page(page_name: str) -> Optional[str]:
     if kind and AD_KINDS[kind]["cover"].exists():
         return str(AD_KINDS[kind]["cover"])
     return None
-
-
-def _has_fixed_length(page_name: str) -> bool:
-    """Paginas cuyo video tiene un largo fijo (el prompt lo pide): Bebé Héroe (18 s), los anuncios de
-    ebook de Niño Selectivo (~14 s) y Macramé (~17 s), e HISTORIAS (~42 s; cualquier pagina que use el
-    prompt de historias). La duracion elegida en el lote no les cambia el guion."""
-    return (is_bebe_heroe_page(page_name) or ad_kind_for_page(page_name) is not None
-            or _text_kind_for_page(page_name) == "historias")
-
-
-def is_bebe_heroe_page(page_name: str) -> bool:
-    """Pagina "Bebé Héroe" (con o sin acentos/mayusculas)."""
-    name = unicodedata.normalize("NFD", page_name or "").encode("ascii", "ignore").decode().upper()
-    return "BEBE" in name and "HEROE" in name
-
-
-def _recent_bebe_ideas(projects: dict) -> list:
-    """Ideas (texto) de los ultimos videos de Bebé Héroe, de mas viejo a mas nuevo."""
-    seen = []
-    for project in projects.values():
-        if _text_kind_for_page(_project_page_name(project)) != BEBE_HEROE_KIND:
-            continue
-        seen += [(v.get("scheduled_at", ""), v["bebe_idea"]) for v in project.get("videos", []) if v.get("bebe_idea")]
-    return [idea for _, idea in sorted(seen)][-BEBE_HEROE_HISTORY_LIMIT:]
-
-
-def _pick_bebe_idea(projects: dict) -> tuple:
-    """(idea, hashtag): una del banco que no este entre las recientes."""
-    recent = _recent_bebe_ideas(projects)
-    fresh = [i for i in BEBE_HEROE_IDEAS if i[0] not in recent] or list(BEBE_HEROE_IDEAS)
-    return random.choice(fresh)
-
-
-def bebe_trigger_block() -> tuple:
-    """(idea, hashtag, texto): la idea sorteada del banco (sin repetir las recientes) y el bloque que se
-    agrega al mensaje para el generador de texto."""
-    with _lock:
-        projects = _load()
-        idea, tag = _pick_bebe_idea(projects)
-        recent = _recent_bebe_ideas(projects)
-    text = f"{_NL}{_NL}Idea de esta pieza: {idea}."
-    if recent:
-        text += f"{_NL}Evita repetir: " + "; ".join(recent) + "."
-    return idea, tag, text
-
-
-def bebe_script_from_story(story: dict) -> str:
-    """Guion de Bebé Héroe: las 4 frases de las imagenes, en orden (el bloque "Guion" del modelo a veces
-    llega recortado; las frases son exactamente lo que se narra)."""
-    return " ".join(p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"]))
-
-
-def generate_bebe_heroe_voice(frases: list, voice: Optional[str], on_progress=None) -> tuple:
-    """Una voz por frase (cada una entra en su hueco fijo del reel de 18 s) y el audio completo ya armado.
-    Devuelve (ruta del audio, [{text, start, dur}] para los subtitulos)."""
-    if on_progress:
-        on_progress(1, len(frases))
-    paths = text_to_speech_phrases(
-        frases, voice=_bebe_heroe_voice(voice),
-        exaggeration=BEDTIME_PRESET["exaggeration"], cfg_weight=BEDTIME_PRESET["cfg_weight"],
-    )
-    mix = Path(paths[0]).with_name(f"{Path(paths[0]).stem}_bebe_heroe.wav")
-    return str(mix), video_maker.assemble_bebe_heroe_audio(paths, frases, mix)
-
-
-def _bebe_heroe_voice(voice: Optional[str]) -> str:
-    """Voz de la pagina: la elegida si es clonada; si no, la voz clonada "Voz de Bebé"; si esa no
-    existe todavia, la voz por defecto de la app."""
-    from tts_engine import CUSTOM_VOICE_PREFIX, list_custom_voices
-    if voice and voice.startswith(CUSTOM_VOICE_PREFIX):
-        return voice
-    for slug, meta in list_custom_voices().items():
-        if meta.get("label") == BEBE_HEROE_VOICE_LABEL:
-            return CUSTOM_VOICE_PREFIX + slug
-    return voice or get_default_voice()
-
-
-_NL = chr(10)
-
-
-def _bebe_heroe_copy(video: dict) -> dict:
-    """Titulo y descripcion de Bebé Héroe (plantilla viral del workflow): pregunta final de la
-    historia, resumen de una linea, llamada a comentar y hashtags de la pagina + el del tema."""
-    summary = (video.get("story_summary") or "").strip()
-    script = (video.get("script_text") or "").strip()
-    question = next((s for s in reversed(re.split(r"(?<=[.!?])\s+", script)) if s.endswith("?")), BEBE_HEROE_DEFAULT_QUESTION)
-    tag = "#" + re.sub(r"[^A-Za-z0-9]", "", (video.get("bebe_tag") or "bebe"))
-    body = (
-        f"{question} 🥺❤️{_NL}{_NL}{summary}{_NL}{_NL}"
-        "Si tú también lo hubieras ayudado, deja un ❤️ en los comentarios y comparte "
-        "para que más bebés héroes se animen."
-        f"{_NL}{_NL}#BebéHéroe #HistoriasQueInspiran #Rescate {tag}"
-    )
-    title = (summary or question)[:100]
-    return {"title": title, "description": body}
 
 
 def _next_project_name(projects: dict, page_name: str) -> str:
@@ -968,13 +880,16 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     se manda al generador de texto para pedir la historia.
 
     content_type: "video" (default, el pipeline completo guion+clips+audio+
-    render), "gaming_image" / "ninio_image" (un solo post de imagen 4:5 + caption;
+    render), "gaming_image" / "ninio_image" / "howbig_image" (un solo post de imagen 4:5 + caption;
     ver IMAGE_POST_PROFILES, _generate_batch_image_post/_publish_batch_image_post)
     o "gaming_clip" (clip viral de Medal editado en vertical, ver
     _generate_batch_clip) -- YouTube solo para el clip (canal de gaming)."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     every_n_days = min(30, max(1, int(every_n_days or 1)))
+    if content_type == "howbig_image":
+        # How Big Really publica solo en Facebook: punto unico por el que pasa todo lote (la ruta, reintentos...).
+        networks = {k: v for k, v in (networks or {}).items() if k == "facebook"}
     mixed = MIXED_TYPES.get(content_type)
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
@@ -996,21 +911,29 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         video_settings["copy_profile"] = RESCUE_PROFILE
     profile = IMAGE_POST_PROFILES.get(mixed[1] if mixed else content_type)
     clip_post = (mixed[0] if mixed else content_type) == "gaming_clip"
-    bebe = content_type == "video" and is_bebe_heroe_page(page_name)
-    fixed_hours = (
-        profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post
-        else BEBE_HEROE_SLOT_HOURS if bebe else None
-    )
+    fixed_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
     rescue_skip = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
     skip_days = max(rescue_skip, every_n_days - 1)  # cada N dias = N-1 dias vacios entre publicaciones
-    schedule = _compute_schedule(
-        total_videos, per_day, best_hour, rescue=rescue,
-        fixed_hours=fixed_hours,
-        skip_days=skip_days,
-        taken=existing_slots(page_name, networks),
-    )
+    if content_type == "howbig_image":
+        # Horario por fase (dias 1-14: 3 al dia; despues 2 al dia), ver howbig_hours_for_date.
+        per_day = len(HOWBIG_PHASE1_HOURS)
+        with _lock:
+            launch = _howbig_launch_date()
+        schedule = _compute_schedule(
+            total_videos, per_day, best_hour,
+            taken=existing_slots(page_name, networks),
+            hours_for_date=lambda day: howbig_hours_for_date(day, launch),
+            hour_end=HOWBIG_HOUR_END,
+        )
+    else:
+        schedule = _compute_schedule(
+            total_videos, per_day, best_hour, rescue=rescue,
+            fixed_hours=fixed_hours,
+            skip_days=skip_days,
+            taken=existing_slots(page_name, networks),
+        )
 
     project = {
         "id": uuid.uuid4().hex[:10],
@@ -1344,17 +1267,12 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     story_id = f"batch_{project_id}_{index:03d}"
     trigger_message = auto_pipeline.build_trigger_message(
         project.get("trigger_message", "dame una historia"),
-        None if _has_fixed_length(_project_page_name(project)) else vs.get("duration_seconds"),  # el reel ya mide 18 s / el anuncio 14 s
+        None,  # las paginas con guion duran ~1:30 fijos: no usan la duracion del panel
         kind=_text_kind_for_page(_project_page_name(project)),
     )
     rescue = _is_rescue_project(project)
-    bebe = _text_kind_for_page(_project_page_name(project)) == BEBE_HEROE_KIND
-    bebe_idea = bebe_tag = None
     if _uses_story_pattern(project):  # Historias (con o sin YouTube): patron + sin repetir nombres
         trigger_message += _story_trigger_addition(project, pattern)
-    elif bebe:
-        bebe_idea, bebe_tag, extra = bebe_trigger_block()
-        trigger_message += extra
     text_provider_pref = vs.get("text_provider", "auto")
     _provider_attempts: list = []
     try:
@@ -1373,14 +1291,10 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             stage_label="guion",
         )
         hook_text = ""
-        if rescue or bebe:
+        if rescue:
             hook_text, story_text = _split_hook_text(story_text)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
-        if bebe and len(story["prompts"]) != BEBE_HEROE_SCENES:
-            raise RuntimeError(
-                f"no se encontraron prompts de imagen: Bebé Héroe necesita {BEBE_HEROE_SCENES} escenas "
-                f"y llegaron {len(story['prompts'])}"
-            )
+        auto_pipeline.validate_image_count(len(story["prompts"]))
         auto_pipeline.validate_prompts_english(story)
         ad_kind = ad_kind_for_page(_project_page_name(project))
         if ad_kind:
@@ -1390,8 +1304,6 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             for p in story["prompts"]:
                 p["prompt"] = auto_pipeline.apply_visual_style(p["prompt"], visual_style)
         script_text = auto_pipeline.extract_script(story_text)
-        if bebe:
-            script_text = bebe_script_from_story(story)
         if not script_text.strip():
             # Algunos generadores de texto (ej. el de macrame) no mandan un
             # bloque "Guion" separado antes de "Imagen 1" -- la respuesta
@@ -1409,13 +1321,12 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 "batch: guion vacio via extract_script, reconstruido desde %d frases de imagen (%d chars)",
                 len(story["prompts"]), len(script_text),
             )
-        auto_pipeline.validate_script(script_text, min_words=BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
+        auto_pipeline.validate_script(script_text)
+        auto_pipeline.validate_long_script_length(script_text)
         if ad_kind and "ebook" not in script_text.lower():
             raise RuntimeError("el guion no cierra con Comenta EBOOK (llamado a la accion del anuncio)")
         if _text_kind_for_page(_project_page_name(project)) == "historias":
             auto_pipeline.validate_historia_script(script_text)
-        if not _has_fixed_length(_project_page_name(project)):  # Bebé Héroe (18 s) y el anuncio (14 s) ya miden lo justo: no se recortan
-            script_text = auto_pipeline.cap_script_to_duration(script_text, vs.get("duration_seconds"))
         if rescue:
             forbidden = seo_optimizer.find_forbidden_terms(f"{script_text} {hook_text}")
             if forbidden:
@@ -1440,7 +1351,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                 return auto_pipeline.generate_clips(
                     story, clips_dir, unattended=True, start_index=start_index,
                     provider=provider,
-                    generate_video=vs.get("generate_video_clips", True) and not bebe,  # la composicion usa imagenes
+                    generate_video=vs.get("generate_video_clips", True),
                 )
 
         clips = _run_stage_with_retry(
@@ -1459,26 +1370,20 @@ def _generate_batch_video(project_id: str, index: int) -> None:
 
         _set_stage(project_id, index, "audio")
         frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
-        bebe_timings = None
-        if bebe:
-            (audio_path, bebe_timings), narration = _run_stage_with_retry(
-                lambda: (generate_bebe_heroe_voice(frases, vs.get("voice")), {"ok": True, "skipped": True}),
-                attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
-                stage_label="audio",
-            )
-        else:
-            audio_path, narration = _run_stage_with_retry(
-                lambda: text_to_speech_verified(
-                    script_text,
-                    voice=vs.get("voice") or get_default_voice(),
-                    exaggeration=BEDTIME_PRESET["exaggeration"],
-                    cfg_weight=BEDTIME_PRESET["cfg_weight"],
-                ),
-                attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
-                stage_label="audio",
-            )
+        voice = vs.get("voice") or get_default_voice()
+        audio_path, narration = _run_stage_with_retry(
+            lambda: text_to_speech_verified(
+                script_text,
+                voice=voice,
+                exaggeration=BEDTIME_PRESET["exaggeration"],
+                cfg_weight=BEDTIME_PRESET["cfg_weight"],
+            ),
+            attempts=LOCAL_STAGE_RETRY_ATTEMPTS,
+            stage_label="audio",
+        )
         if not audio_path:
             raise RuntimeError("Error al generar el audio.")
+        auto_pipeline.validate_min_duration(video_maker.get_audio_duration(audio_path))
 
         clip_paths = sorted(
             (str(p) for p in clips_dir.glob("scene_*.*") if p.suffix in (".mp4", ".jpg")),
@@ -1501,23 +1406,20 @@ def _generate_batch_video(project_id: str, index: int) -> None:
 
         def _do_render():
             with app._video_render_lock:
-                if bebe:  # reel de 18 s con tiempos fijos (ver video_maker.build_bebe_heroe_props)
-                    timeline = video_maker.build_bebe_heroe_props(clip_paths, audio_path, bebe_timings, sfx_tag=bebe_tag)
-                else:
-                    timeline = video_maker.build_props(
-                        image_paths=clip_paths,
-                        audio_path=audio_path,
-                        title=hook_text,
-                        subtitles_enabled=vs.get("subtitles_enabled", True),
-                        subtitle_style=subtitle_style,
-                        frases=frases,
-                        animate_images=vs.get("animate_images", True),
-                        ai_label=RESCUE_AI_LABEL if rescue else None,
-                        mood=mood,
-                        script_text=script_text,
-                        phone_card=phone_card_for_page(_project_page_name(project)),
-                        phone_card_cta="COMENTA EBOOK",
-                    )
+                timeline = video_maker.build_props(
+                    image_paths=clip_paths,
+                    audio_path=audio_path,
+                    title=hook_text,
+                    subtitles_enabled=vs.get("subtitles_enabled", True),
+                    subtitle_style=subtitle_style,
+                    frases=frases,
+                    animate_images=vs.get("animate_images", True),
+                    ai_label=RESCUE_AI_LABEL if rescue else None,
+                    mood=mood,
+                    script_text=script_text,
+                    phone_card=phone_card_for_page(_project_page_name(project)),
+                    phone_card_cta="COMENTA EBOOK",
+                )
                 if not timeline:
                     return None
                 try:
@@ -1526,7 +1428,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
                     logger.exception("batch %s video %d: no se pudo puntuar el riesgo de slideshow", project_id, index)
                 return video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
-                    orientation="vertical" if bebe else vs.get("orientation", "vertical"),
+                    orientation=vs.get("orientation", "vertical"),
                 )
 
         _set_stage(project_id, index, "render")
@@ -1560,8 +1462,6 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             "attempt": narration.get("attempt"), "skipped": narration.get("skipped", False),
         }
         v["script_text"] = script_text
-        if bebe:
-            v.update(bebe_idea=bebe_idea, bebe_tag=bebe_tag, story_summary=hook_text, bebe_phrases=bebe_timings)
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -1664,6 +1564,17 @@ IMAGE_POST_PROFILES = {
         },
         "max_hashtags": {"instagram": 6, "facebook": 3},
         "default_trigger": "dame el próximo post de macramé", "label": "Post macramé",
+    },
+    "howbig_image": {
+        "kind": "howbig_post",  # prompts/howbig_post_system.md: comparaciones de escala (How Big Really), en ingles
+        "templates": howbig.TEMPLATE_LABELS, "week": None,  # la plantilla se sortea (howbig.pick_template), no hay semana tipo
+        "slot_hours": list(HOWBIG_PHASE1_HOURS), "network_offsets": {},
+        "history_store": "howbig_post_history",
+        "composition": "", "text_fill": (255, 255, 255),
+        "ai_design": "scale",  # Flow dibuja la ilustracion vectorial con su titulo; fondo negro #0A0A0A intencional
+        "topics": True,  # cada post sale de un tema del banco (assets/howbig/topics.json), nunca inventado
+        "max_hashtags": {"instagram": 0, "facebook": 1},
+        "default_trigger": "give me the next How Big Really post", "label": "Post How Big Really",
     },
 }
 
@@ -1786,10 +1697,24 @@ def _ai_meme_layout(post: dict) -> str:
     )
 
 
+def _ai_scale_layout(post: dict) -> str:
+    """Sufijo (en ingles) para el prompt de Flow en How Big Really: todo dentro del 90 % central del
+    cuadro y el titulo escrito tal cual (sin comillas dobles dentro del titulo)."""
+    title = (post.get("top") or "").strip().replace('"', "'")
+    return (
+        " Keep every element inside the central 90% of the frame, nothing near the edges. "
+        f'The title text must be spelled exactly as written: "{title}". '
+        "No other text, no logos, no watermark."
+    )
+
+
 def _image_post_template(profile_key: str, scheduled_at: Optional[str]) -> str:
-    """Plantilla del post. Con `rotate` en el perfil, la que lleva mas tiempo sin usarse (historial);
+    """Plantilla del post. Con `topics` en el perfil, la sortea howbig.pick_template (ponderada, nunca la
+    misma que la ultima); con `rotate`, la que lleva mas tiempo sin usarse (historial);
     si no, la de la semana tipo que le toca a este horario."""
     profile = IMAGE_POST_PROFILES[profile_key]
+    if profile.get("topics"):
+        return howbig.pick_template([e.get("template") for e in _load_gaming_history(profile["history_store"])])
     if profile.get("rotate"):
         recent = [e.get("template") for e in _load_gaming_history(profile["history_store"])]
         last = {t: max((i for i, r in enumerate(recent) if r == t), default=-1) for t in profile["templates"]}
@@ -1826,9 +1751,20 @@ def generate_gaming_post(
 
     _stage("idea")
     news_item = None
+    topic = None
     if profile.get("news"):  # noticia real y reciente, que no se haya publicado ya
         news_item = gaming_news.next_news()
         template_message = trigger_message + gaming_news.news_block(news_item)
+    elif profile.get("topics"):  # tema del banco: el modelo solo redacta, no inventa datos
+        used = {e.get("topic_id") for e in _load_gaming_history(profile["history_store"]) if e.get("topic_id")}
+        topic = howbig.pick_topic(template, used)  # BankExhaustedError: falla claro, antes de gastar texto o Flow
+        template = topic["template"]  # si la plantilla pedida no tenia tema libre, manda la del tema
+        template_message = (
+            trigger_message
+            + f"\n\nTemplate for this post: {template} ({profile['templates'][template]})."
+            + howbig.topic_block(topic)
+            + _gaming_history_block(store_name=profile["history_store"])
+        )
     else:
         template_message = (
             trigger_message
@@ -1851,6 +1787,10 @@ def generate_gaming_post(
         stage_label="idea",
     )
     post = _parse_gaming_post(reply)
+    if topic:
+        post["topic_id"] = topic["id"]
+        post["template"] = template
+        post["caption"] = howbig.format_caption(post["caption"], topic)
 
     _stage("imagen")
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1861,6 +1801,7 @@ def generate_gaming_post(
         else _ai_story_layout(post, template, page_name) if ai_design == "story"
         else _ai_news_layout(post, news_item["source"]) if ai_design == "news"
         else _ai_meme_layout(post) if ai_design == "meme"
+        else _ai_scale_layout(post) if ai_design == "scale"
         else profile["composition"]
     )
 
@@ -1875,7 +1816,8 @@ def generate_gaming_post(
                 story, dest_dir, unattended=True, start_index=0,
                 provider=image_provider if image_provider in auto_pipeline.PROVIDERS else "whatsapp",
                 generate_video=False,
-                aspect="1:1" if ai_design else "3:4",  # Flow: posts cuadrados (los disenados por la IA)
+                # Flow: posts cuadrados (los disenados por la IA); la escala va 3:4 y se ajusta a 4:5 sin recortar el fondo negro
+                aspect="3:4" if ai_design == "scale" else "1:1" if ai_design else "3:4",
             )
             Path(generated[0]).replace(base_path)
 
@@ -1885,7 +1827,9 @@ def generate_gaming_post(
         on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider != "flow" else None,
         stage_label="imagen",
     )
-    if ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
+    if ai_design == "scale":  # ilustracion con fondo negro intencional: 4:5 sin quitar bordes oscuros
+        meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_IG, trim=False)
+    elif ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
         meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_SQUARE)
     elif profile.get("card"):  # tarjeta editorial: texto en un panel, no sobre la foto
         meme_maker.render_card(
@@ -1943,7 +1887,8 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         "index": index,
         "hook": post["hook"],
         "idea": post["idea"],
-        "template": template,
+        "template": post.get("template", template),
+        "topic_id": post.get("topic_id"),
         "created_at": datetime.now().isoformat(),
     }, profile["history_store"])
     with _lock:
@@ -1953,7 +1898,7 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         v["stage"] = None
         v["story_id"] = story_id
         v["video_path"] = str(dest_path)
-        v["template"] = template
+        v["template"] = post.get("template", template)
         v["idea"] = post["idea"]
         v["caption"] = post["caption"]
         v["gen_attempts"] = 0
@@ -2233,12 +2178,19 @@ def _load_gaming_history(store_name: str = GAMING_HISTORY_STORE_NAME) -> list:
     return job_store.load(store_name).get("entries", [])
 
 
+def _history_keeps_all(store_name: str) -> bool:
+    """El historial de un perfil con banco de temas (`topics`) no se poda: de el sale la lista de temas
+    ya usados, y podarlo haria que los mas viejos volvieran a salir (y que el banco nunca se agotara).
+    Esta acotado por el tamano del banco, porque un tema agotado no genera mas posts."""
+    return any(p.get("topics") and p.get("history_store") == store_name for p in IMAGE_POST_PROFILES.values())
+
+
 def _append_gaming_history(entry: dict, store_name: str = GAMING_HISTORY_STORE_NAME) -> None:
     with _lock:
         store = job_store.load(store_name)
         entries = store.get("entries", [])
         entries.append(entry)
-        store["entries"] = entries[-GAMING_HISTORY_MAX:]
+        store["entries"] = entries if _history_keeps_all(store_name) else entries[-GAMING_HISTORY_MAX:]
         job_store.save(store_name, store)
 
 
@@ -2478,6 +2430,7 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                 v["scheduled_at"] = _next_free_reschedule_slot(
                     projects, (project_id, index),
                     datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS),
+                    hour_end=HOWBIG_HOUR_END if item_type(projects[project_id], v) == "howbig_image" else BATCH_HOUR_END,
                 ).isoformat()
         _save(projects)
 
@@ -2548,12 +2501,6 @@ def _publish_batch_video(project_id: str, index: int) -> None:
         else kind if kind in COPY_FALLBACKS else None,
         niche_tags=NICHE_HASHTAGS.get(kind),
     )
-    if kind == BEBE_HEROE_KIND:
-        copy = _bebe_heroe_copy(video)
-        content.update(
-            title=copy["title"], facebook_description=copy["description"],
-            instagram_description=copy["description"], yt_description=copy["description"] + " #Shorts",
-        )
     title = content["title"]
 
     def _yt(v, page_id):
@@ -2854,8 +2801,9 @@ def _recover_stuck_videos() -> None:
                         dt = datetime.fromisoformat(v["scheduled_at"])
                     except (TypeError, ValueError):
                         continue
-                    if not (BATCH_HOUR_START <= dt.hour <= BATCH_HOUR_END):
-                        clamped_hour = BATCH_HOUR_START if dt.hour < BATCH_HOUR_START else BATCH_HOUR_END
+                    hour_end = HOWBIG_HOUR_END if item_type(project, v) == "howbig_image" else BATCH_HOUR_END
+                    if not (BATCH_HOUR_START <= dt.hour <= hour_end):
+                        clamped_hour = BATCH_HOUR_START if dt.hour < BATCH_HOUR_START else hour_end
                         v["scheduled_at"] = dt.replace(
                             hour=clamped_hour, minute=0, second=0, microsecond=0
                         ).isoformat()

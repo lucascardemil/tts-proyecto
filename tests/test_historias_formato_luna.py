@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""HISTORIAS: formato fijo de 5 pasos (~42 s), cierre con corazón para el animal."""
+"""HISTORIAS: formato fijo de 5 pasos (~90 s), cierre con corazón para el animal."""
 import sys
 from pathlib import Path
 
@@ -18,17 +18,17 @@ def test_historias_prompt_names_the_five_steps_and_the_fixed_length():
     text = PROMPT.read_text(encoding="utf-8")
     for step in ("Gancho de espera", "Conflicto", "Giro", "Reencuentro", "Cierre"):
         assert step in text, step
-    assert "100 a 120 palabras" in text
+    assert "260 a 290 palabras" in text
     assert "corazón" in text
     assert "Comenta" not in text and "comenta" not in text  # el cierre ya no pide palabra clave
-    for kept in ("HOOK_TEXT:", "PERSONAJES:", "NUNCA en español", "8 a 10 imágenes"):
+    for kept in ("HOOK_TEXT:", "PERSONAJES:", "NUNCA en español", "16 a 20 imágenes"):
         assert kept in text, kept
 
 
 def test_rescue_story_craft_matches_the_prompt():
     craft = bp.RESCUE_STORY_CRAFT
     assert "corazón" in craft and "omenta" not in craft
-    assert "100 a 120 palabras" in craft
+    assert "260 a 290 palabras" in craft
     assert "giro" in craft.lower() and "reencuentro" in craft.lower()
 
 
@@ -42,30 +42,38 @@ def test_new_pattern_has_the_highest_weight_and_rescue_block_uses_it():
 
 
 def test_historias_is_fixed_length_and_has_no_value_pillars():
-    assert bp._has_fixed_length("HISTORIAS")
-    assert bp._has_fixed_length("MACRAME CREATIVO") and bp._has_fixed_length("Bebé Héroe")
+    for kind in ("historias", "macrame", "ninio_selectivo"):
+        assert "aproximadamente" not in ap.build_trigger_message("x", 30, kind=kind), kind
     assert bp.PILARES_KINDS == set()
     assert "PILARES DE VALOR" not in bp._text_system_prompt("historias")
 
 
 GOOD = (
     "Nuri esperó siete meses en el mismo banco de una plaza de Oaxaca. Todos pasaban a su lado... nadie la veía. "
-    "Su dueño se mudó una noche de tormenta y ella volvió cada tarde, con frío y con lluvia, a la misma hora. "
-    "La gente pensaba que era una gata callejera más. Hasta que Camila, la panadera, notó el lazo rojo en su "
-    "cuello y un cartel viejo pegado en la farmacia. Era Nuri. Su dueño la buscaba desde hacía meses y cruzó la "
-    "plaza corriendo. Cuando la vio, Nuri lo reconoció al instante y saltó a sus brazos. Hoy Nuri ya no espera "
-    "sola. Si tú también crees que ninguna historia debe terminar en la calle, deja un corazón para Nuri."
+    "Los niños de la escuela le dejaban migas de pan sobre la madera, y el vendedor de elotes le guardaba un poco "
+    "de agua en una tapa vieja. Ella lo agradecía con la mirada, pero nunca se alejaba de ese rincón, porque "
+    "esperaba a alguien y no pensaba rendirse. Su dueño se mudó una noche de tormenta y ella volvió cada tarde, "
+    "con frío y con lluvia, a la misma hora. Cuando el viento helado levantaba las hojas secas, Nuri se hacía una "
+    "bolita blanca y cerraba los ojos, soñando con el sonido de unos pasos conocidos. Pasaron las semanas y su "
+    "pelaje se volvió opaco y desordenado. La gente pensaba que era una gata callejera más. Hasta que Camila, la "
+    "panadera, notó el lazo rojo en su cuello y un cartel viejo pegado en la farmacia. Tenía una foto, un número "
+    "de teléfono y tres palabras escritas con letra temblorosa: ayúdennos a encontrarla. Era Nuri. Camila llamó "
+    "enseguida, con las manos todavía llenas de harina. Su dueño la buscaba desde hacía meses, había pegado "
+    "carteles en cada barrio y cruzó la plaza corriendo, sin aliento. Cuando la vio, Nuri lo reconoció al "
+    "instante, se quedó quieta un segundo y saltó a sus brazos maullando como nunca. Hoy Nuri ya no espera sola. "
+    "Duerme en una cama suave, junto a la ventana donde entra el sol de la mañana, y ya no teme a las tormentas. Si tú también crees que "
+    "ninguna historia debe terminar en la calle, deja un corazón para Nuri."
 )
 
 
 def test_good_historia_script_passes():
     n = len(GOOD.split())
-    assert ap.HISTORIA_MIN_WORDS <= n <= ap.HISTORIA_MAX_WORDS, n
+    assert ap.LONG_SCRIPT_MIN_WORDS <= n <= ap.LONG_SCRIPT_MAX_WORDS, n
     ap.validate_historia_script(GOOD)
 
 
 @pytest.mark.parametrize("script, fragment", [
-    (" ".join(GOOD.split()[:60]) + " deja un corazón para Nuri.", "palabras"),
+    (" ".join(GOOD.split()[:120]) + " deja un corazón para Nuri.", "palabras"),
     (GOOD + " " + GOOD, "palabras"),
     (GOOD.replace("corazón", "like"), "corazon"),
     (GOOD.replace("deja un corazón para Nuri.", "Comenta GATA si la habrías ayudado."), "corazon"),
@@ -144,12 +152,13 @@ def test_comenta_check_is_a_whole_word():
             "deja un corazón para Nuri.", "deja un corazón para Nuri. Comenta GATA."))
 
 
-def _story_text(script):
-    return (
-        "HOOK_TEXT: Nadie la veía 🌧️\n\nPERSONAJES:\n[GATA]: a white cat\n\nGuion\n" + script + "\n\n"
-        "Imagen 1\nFrase del guion: «Nuri esperó siete meses en el mismo banco»\n"
-        "Prompt: 9:16 vertical, photorealistic: a white cat on a bench\n"
+def _story_text(script, n_images=18):
+    blocks = "".join(
+        f"Imagen {i}\nFrase del guion: «Nuri esperó siete meses en el mismo banco {i}»\n"
+        f"Prompt: 9:16 vertical, photorealistic: a white cat on a bench, scene {i}\n\n"
+        for i in range(1, n_images + 1)
     )
+    return "HOOK_TEXT: Nadie la veía 🌧️\n\nPERSONAJES:\n[GATA]: a white cat\n\nGuion\n" + script + "\n\n" + blocks
 
 
 def _chain_with(monkeypatch, replies):
@@ -166,6 +175,9 @@ def _chain_with(monkeypatch, replies):
     return calls
 
 
+GOOD_ANY = _story_text(GOOD)
+
+
 def test_chain_retries_a_historias_script_out_of_range_with_the_next_model(monkeypatch):
     bad = _story_text(" ".join(GOOD.split()[:83]) + " deja un corazón para Nuri.")
     good = _story_text(GOOD)
@@ -175,12 +187,14 @@ def test_chain_retries_a_historias_script_out_of_range_with_the_next_model(monke
     assert calls == ["m1", "m2"]
 
 
-def test_chain_does_not_apply_the_historias_length_check_to_other_kinds(monkeypatch):
+def test_chain_retries_a_short_script_of_any_long_kind_but_not_of_the_posts(monkeypatch):
     short = _story_text("Un guion corto de macrame con solo unas pocas palabras.")
-    calls = _chain_with(monkeypatch, [short])
+    calls = _chain_with(monkeypatch, [short, GOOD_ANY])
     out = bp._generate_text_with_chain("macrame", "MACRAME CREATIVO", "msg", "t")
-    assert out == short
-    assert len(calls) == 1
+    assert out == GOOD_ANY and calls == ["m1", "m2"]  # macrame tambien dura mas de 1:20
+    calls = _chain_with(monkeypatch, [short])
+    out = bp._generate_text_with_chain("ninio_post", "NIÑO SELECTIVO", "msg", "t")  # un post no es un video largo
+    assert out == short and len(calls) == 1
 
 
 def test_recent_story_patterns_counts_historias_pages_without_the_rescue_profile():
@@ -188,7 +202,7 @@ def test_recent_story_patterns_counts_historias_pages_without_the_rescue_profile
         "a": {"page_name": "HISTORIAS", "video_settings": {}, "videos": [
             {"scheduled_at": "2026-10-02", "story_pattern": "ladron"},
             {"scheduled_at": "2026-10-01", "story_pattern": "guardian"}, {"scheduled_at": "x"}]},
-        "b": {"page_name": "Bebé Héroe", "video_settings": {}, "videos": [
+        "b": {"page_name": "CUENTOS", "video_settings": {}, "videos": [
             {"scheduled_at": "2026-10-03", "story_pattern": "separacion"}]},
         "c": {"page_name": "otra", "video_settings": {"copy_profile": bp.RESCUE_PROFILE}, "videos": [
             {"scheduled_at": "2026-10-04", "story_pattern": "espera_diaria"}]},
@@ -212,7 +226,7 @@ def test_story_craft_examples_are_written_with_accents():
     assert "espero " not in craft and "veia" not in craft
     assert "acentos" in craft and "ñ" in craft
     prompt = PROMPT.read_text(encoding="utf-8")
-    assert "unas 9 a 11 frases" in prompt
+    assert "unas 24 a 28 frases" in prompt
     assert "acentos" in prompt and "ñ" in prompt
     assert "todo animal merece un hogar" in prompt
 

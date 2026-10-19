@@ -202,10 +202,13 @@ def _serif(candidates: tuple, px: int) -> ImageFont.FreeTypeFont:
     return _font(px)
 
 
-def fit_post(base_path: Path, out_path: Path, size: tuple) -> Path:
-    """Imagen ya diseñada (con su texto) -> JPEG recortado al centro a `size`, sin bordes negros."""
+def fit_post(base_path: Path, out_path: Path, size: tuple, trim: bool = True) -> Path:
+    """Imagen ya diseñada (con su texto) -> JPEG recortado al centro a `size`, sin bordes negros.
+    Con `trim=False` no se quitan los bordes oscuros (fondo negro intencional, p. ej. How Big Really):
+    solo se recorta a la proporcion de `size`."""
     with Image.open(base_path) as base:
-        _crop_to(_trim_dark_borders(base.convert("RGB")), size).save(out_path, "JPEG", quality=92)
+        img = base.convert("RGB")
+        _crop_to(_trim_dark_borders(img) if trim else img, size).save(out_path, "JPEG", quality=92)
     return out_path
 
 

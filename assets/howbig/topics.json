@@ -1,0 +1,1001 @@
+[
+  {
+    "id": "a001",
+    "template": "A",
+    "big": "blue whale heart",
+    "reference": "golf cart",
+    "fact": "The biggest heart on the planet belongs to the blue whale. It can weigh around 400 pounds and is often compared to the size of a golf cart.",
+    "source": null,
+    "question": "What animal should we scale next?"
+  },
+  {
+    "id": "a002",
+    "template": "A",
+    "big": "blue whale",
+    "reference": "NBA basketball court",
+    "fact": "The blue whale is the largest animal known to have ever lived. The biggest ones reach nearly 100 feet long, longer than an NBA basketball court (94 feet).",
+    "source": "NOAA",
+    "question": "What should we put next to a blue whale next?"
+  },
+  {
+    "id": "a003",
+    "template": "A",
+    "big": "blue whale tongue",
+    "reference": "elephant",
+    "fact": "A blue whale's tongue alone can weigh as much as an elephant.",
+    "source": "National Geographic",
+    "question": "Which body part should we scale next?"
+  },
+  {
+    "id": "a004",
+    "template": "A",
+    "big": "giraffe",
+    "reference": "London double-decker bus",
+    "fact": "A tall male giraffe can stand about 18 feet tall. That is taller than a London double-decker bus, which is about 14 feet high.",
+    "source": null,
+    "question": "What animal should we measure next?"
+  },
+  {
+    "id": "a005",
+    "template": "A",
+    "big": "giraffe tongue",
+    "reference": "12-inch ruler",
+    "fact": "A giraffe's tongue is about 18 to 20 inches long, roughly one and a half standard rulers.",
+    "source": null,
+    "question": "Which strange animal feature should we scale next?"
+  },
+  {
+    "id": "a006",
+    "template": "A",
+    "big": "male African elephant",
+    "reference": "three family cars",
+    "fact": "A big male African elephant can weigh around 13,000 pounds, roughly as much as three family cars.",
+    "source": null,
+    "question": "What animal should we weigh next?"
+  },
+  {
+    "id": "a007",
+    "template": "A",
+    "big": "elephant trunk",
+    "reference": "2-gallon bucket",
+    "fact": "An elephant's trunk can hold up to about 2 gallons of water at once, like carrying a small bucket on its face.",
+    "source": null,
+    "question": "What animal superpower should we scale next?"
+  },
+  {
+    "id": "a008",
+    "template": "A",
+    "big": "ostrich egg",
+    "reference": "chicken eggs",
+    "fact": "An ostrich egg is the largest egg laid by any living bird. One egg holds about as much as two dozen chicken eggs.",
+    "source": null,
+    "question": "How many chicken eggs did you guess?"
+  },
+  {
+    "id": "a009",
+    "template": "A",
+    "big": "ostrich eye",
+    "reference": "billiard ball",
+    "fact": "An ostrich's eye is about 2 inches across, roughly the size of a billiard ball, and it is bigger than the bird's own brain.",
+    "source": null,
+    "question": "What animal should we scale next?"
+  },
+  {
+    "id": "a010",
+    "template": "A",
+    "big": "colossal squid eye",
+    "reference": "basketball",
+    "fact": "The colossal squid has the largest eyes in the animal kingdom. One measured eye was about 11 inches across, bigger than a basketball.",
+    "source": null,
+    "question": "What deep-sea creature should we scale next?"
+  },
+  {
+    "id": "a011",
+    "template": "A",
+    "big": "saltwater crocodile",
+    "reference": "family car",
+    "fact": "The largest crocodile ever measured in captivity, a saltwater croc named Lolong, was about 20 feet long, longer than most family cars.",
+    "source": "Guinness World Records",
+    "question": "What reptile should we scale next?"
+  },
+  {
+    "id": "a012",
+    "template": "A",
+    "big": "whale shark",
+    "reference": "city bus",
+    "fact": "The whale shark is the largest fish in the ocean. It can grow to about 40 feet long, roughly the length of a city bus.",
+    "source": null,
+    "question": "What ocean animal should we scale next?"
+  },
+  {
+    "id": "a013",
+    "template": "A",
+    "big": "bee hummingbird",
+    "reference": "US penny",
+    "fact": "The bee hummingbird is the smallest bird in the world: about 2 inches long and lighter than a US penny.",
+    "source": null,
+    "question": "What tiny animal should we scale next?"
+  },
+  {
+    "id": "a014",
+    "template": "A",
+    "big": "polar bear standing up",
+    "reference": "standard doorway",
+    "fact": "A large male polar bear standing on its hind legs can be more than 8 feet tall, well above a standard doorway (about 6 feet 8 inches).",
+    "source": null,
+    "question": "What predator should we scale next?"
+  },
+  {
+    "id": "a015",
+    "template": "A",
+    "big": "bull moose antlers",
+    "reference": "a tall man",
+    "fact": "A big bull moose can carry antlers that span about 6 feet from tip to tip, as wide as a tall man is tall. It grows a new set every year.",
+    "source": null,
+    "question": "What animal should we scale next?"
+  },
+  {
+    "id": "a016",
+    "template": "A",
+    "big": "capybara",
+    "reference": "Great Dane",
+    "fact": "The capybara is the largest rodent in the world. It can weigh more than 100 pounds, about as much as a big Great Dane.",
+    "source": null,
+    "question": "Which animal surprised you the most?"
+  },
+  {
+    "id": "a017",
+    "template": "A",
+    "big": "sperm whale brain",
+    "reference": "human brain",
+    "fact": "The sperm whale has the largest brain of any animal. It weighs about 17 pounds, roughly five times heavier than yours.",
+    "source": null,
+    "question": "What brain should we compare next?"
+  },
+  {
+    "id": "a018",
+    "template": "A",
+    "big": "Japanese spider crab",
+    "reference": "king-size bed",
+    "fact": "The Japanese spider crab has the longest legs of any crab. From claw to claw it can span up to about 12 feet, longer than a king-size bed.",
+    "source": "Guinness World Records",
+    "question": "What sea creature should we scale next?"
+  },
+  {
+    "id": "a019",
+    "template": "A",
+    "big": "Goliath birdeater spider",
+    "reference": "dinner plate",
+    "fact": "The Goliath birdeater is one of the biggest spiders on Earth. Its legs can span about 11 inches, roughly the size of a dinner plate.",
+    "source": null,
+    "question": "Would you rather see a bigger or a smaller creature next?"
+  },
+  {
+    "id": "a020",
+    "template": "A",
+    "big": "wandering albatross wingspan",
+    "reference": "basketball hoop",
+    "fact": "The wandering albatross has the largest wingspan of any living bird, up to about 11 feet. That is wider than a basketball hoop is tall.",
+    "source": null,
+    "question": "What bird should we scale next?"
+  },
+  {
+    "id": "a021",
+    "template": "A",
+    "big": "Komodo dragon",
+    "reference": "kayak",
+    "fact": "The Komodo dragon is the largest lizard alive. It can grow up to about 10 feet long, roughly the length of a kayak.",
+    "source": null,
+    "question": "What reptile should we scale next?"
+  },
+  {
+    "id": "a022",
+    "template": "A",
+    "big": "bumblebee bat",
+    "reference": "US dime",
+    "fact": "The bumblebee bat is one of the smallest mammals on Earth. It weighs about 2 grams, less than a US dime.",
+    "source": null,
+    "question": "What tiny animal should we scale next?"
+  },
+  {
+    "id": "a023",
+    "template": "A",
+    "big": "kiwi egg",
+    "reference": "the mother kiwi",
+    "fact": "A kiwi lays one of the largest eggs for its body size of any bird. A single egg can be up to about 20 percent of the mother's weight.",
+    "source": null,
+    "question": "What animal fact should we scale next?"
+  },
+  {
+    "id": "a024",
+    "template": "A",
+    "big": "emperor penguin",
+    "reference": "6-year-old child",
+    "fact": "The emperor penguin is the tallest penguin alive. It stands nearly 4 feet tall, about as tall as a 6-year-old child.",
+    "source": null,
+    "question": "What animal should we stand next to a kid next?"
+  },
+  {
+    "id": "a025",
+    "template": "A",
+    "big": "American bison",
+    "reference": "small car",
+    "fact": "The American bison is the heaviest land animal in North America. A big male can weigh up to about 2,000 pounds and stand 6 feet tall at the shoulder.",
+    "source": null,
+    "question": "What animal should we scale next?"
+  },
+  {
+    "id": "a026",
+    "template": "A",
+    "big": "giant manta ray",
+    "reference": "two-story house",
+    "fact": "A giant manta ray can have a wingspan of more than 20 feet, about the height of a two-story house.",
+    "source": null,
+    "question": "What ocean giant should we scale next?"
+  },
+  {
+    "id": "a027",
+    "template": "A",
+    "big": "Rafflesia flower",
+    "reference": "car tire",
+    "fact": "Rafflesia produces the largest single flower in the world. One bloom can be about 3 feet across, wider than a car tire.",
+    "source": null,
+    "question": "What plant should we scale next?"
+  },
+  {
+    "id": "a028",
+    "template": "A",
+    "big": "giant water lily pad",
+    "reference": "a grown man",
+    "fact": "Giant Amazon water lily pads can grow more than 6 feet across, wider than most grown men are tall.",
+    "source": null,
+    "question": "What plant should we scale next?"
+  },
+  {
+    "id": "a029",
+    "template": "A",
+    "big": "coconut crab",
+    "reference": "yardstick",
+    "fact": "The coconut crab is the largest land-living arthropod. Its legs can span about 3 feet, roughly the length of a yardstick.",
+    "source": null,
+    "question": "What creature should we scale next?"
+  },
+  {
+    "id": "a030",
+    "template": "A",
+    "big": "giant sequoia seed",
+    "reference": "flake of oatmeal",
+    "fact": "The giant sequoia, one of the largest living things on Earth, grows from a seed about the size of a flake of oatmeal.",
+    "source": null,
+    "question": "Which tiny-to-huge comparison should we do next?"
+  },
+  {
+    "id": "a031",
+    "template": "A",
+    "big": "DNA in one human cell",
+    "reference": "a 6-foot person",
+    "fact": "If you uncoiled the DNA packed inside just one of your cells, it would stretch about 6 feet (2 meters), as long as a tall person.",
+    "source": null,
+    "question": "What part of the human body should we scale next?"
+  },
+  {
+    "id": "a032",
+    "template": "A",
+    "big": "human thigh bone",
+    "reference": "your height",
+    "fact": "Your thigh bone (the femur) is the longest bone in your body. It is about one quarter of your total height.",
+    "source": null,
+    "question": "Which bone should we scale next?"
+  },
+  {
+    "id": "a033",
+    "template": "A",
+    "big": "stapes bone",
+    "reference": "grain of rice",
+    "fact": "The stapes, deep inside your ear, is the smallest bone in your body. It is about 3 millimeters long, smaller than a grain of rice.",
+    "source": null,
+    "question": "What body part should we compare next?"
+  },
+  {
+    "id": "a034",
+    "template": "A",
+    "big": "human eyeball",
+    "reference": "ping-pong ball",
+    "fact": "Your eyeball is only about 1 inch across, smaller than a ping-pong ball.",
+    "source": null,
+    "question": "What body part should we scale next?"
+  },
+  {
+    "id": "a035",
+    "template": "A",
+    "big": "human heart",
+    "reference": "a large fist",
+    "fact": "Your heart is only about the size of a large fist, yet it pumps around 2,000 gallons of blood every single day.",
+    "source": null,
+    "question": "What organ should we scale next?"
+  },
+  {
+    "id": "a036",
+    "template": "A",
+    "big": "human skin",
+    "reference": "twin mattress",
+    "fact": "Your skin is your largest organ. Spread out flat, an adult's skin would cover about 20 square feet, roughly the size of a twin mattress.",
+    "source": null,
+    "question": "What organ should we scale next?"
+  },
+  {
+    "id": "a037",
+    "template": "A",
+    "big": "human brain",
+    "reference": "cantaloupe",
+    "fact": "Your brain weighs about 3 pounds, roughly as much as a medium cantaloupe.",
+    "source": null,
+    "question": "What should we weigh next?"
+  },
+  {
+    "id": "a038",
+    "template": "A",
+    "big": "the Sun",
+    "reference": "Earth",
+    "fact": "The Sun is so big that about 1.3 million Earths could fit inside it.",
+    "source": "NASA",
+    "question": "What space object should we scale next?"
+  },
+  {
+    "id": "a039",
+    "template": "A",
+    "big": "Jupiter",
+    "reference": "Earth",
+    "fact": "Jupiter is the biggest planet in our solar system. More than 1,300 Earths could fit inside it.",
+    "source": "NASA",
+    "question": "Which planet should we scale next?"
+  },
+  {
+    "id": "a040",
+    "template": "A",
+    "big": "Jupiter's Great Red Spot",
+    "reference": "Earth",
+    "fact": "Jupiter's Great Red Spot is a giant storm that has been swirling for more than 150 years, and it is still wider than our entire planet.",
+    "source": "NASA",
+    "question": "What space storm or object should we scale next?"
+  },
+  {
+    "id": "a041",
+    "template": "A",
+    "big": "the Moon",
+    "reference": "Earth",
+    "fact": "The Moon is about 2,160 miles across, only about one quarter as wide as Earth.",
+    "source": "NASA",
+    "question": "What moon should we scale next?"
+  },
+  {
+    "id": "a042",
+    "template": "A",
+    "big": "Olympus Mons",
+    "reference": "Mount Everest",
+    "fact": "Olympus Mons on Mars is the tallest volcano in the solar system. It rises about 16 miles high, more than twice as tall as Mount Everest, and covers an area about the size of Arizona.",
+    "source": "NASA",
+    "question": "What mountain should we compare next?"
+  },
+  {
+    "id": "a043",
+    "template": "A",
+    "big": "Saturn's rings",
+    "reference": "a 3-story building",
+    "fact": "Saturn's main rings stretch up to about 175,000 miles across, yet they are generally only about 30 feet thick, the height of a 3-story building.",
+    "source": "NASA",
+    "question": "What should we scale in space next?"
+  },
+  {
+    "id": "a044",
+    "template": "A",
+    "big": "Ganymede",
+    "reference": "planet Mercury",
+    "fact": "Jupiter's moon Ganymede is the largest moon in the solar system. It is bigger than the planet Mercury.",
+    "source": "NASA",
+    "question": "Which moon should we compare next?"
+  },
+  {
+    "id": "a045",
+    "template": "A",
+    "big": "Mars",
+    "reference": "Earth",
+    "fact": "Mars is only about half as wide as Earth, about 4,200 miles across.",
+    "source": "NASA",
+    "question": "Which planet should we compare next?"
+  },
+  {
+    "id": "a046",
+    "template": "A",
+    "big": "Mercury",
+    "reference": "the Moon",
+    "fact": "Mercury is the smallest planet in our solar system, only slightly larger than Earth's Moon.",
+    "source": "NASA",
+    "question": "Which planet should we scale next?"
+  },
+  {
+    "id": "a047",
+    "template": "A",
+    "big": "Neptune",
+    "reference": "Earth",
+    "fact": "Neptune is about four times wider than Earth.",
+    "source": "NASA",
+    "question": "Which planet surprised you the most?"
+  },
+  {
+    "id": "a048",
+    "template": "A",
+    "big": "International Space Station",
+    "reference": "American football field",
+    "fact": "The International Space Station is about 356 feet from end to end, nearly the length of an American football field including the end zones.",
+    "source": "NASA",
+    "question": "What spacecraft should we scale next?"
+  },
+  {
+    "id": "a049",
+    "template": "A",
+    "big": "Saturn V rocket",
+    "reference": "Statue of Liberty",
+    "fact": "The Saturn V rocket that sent astronauts to the Moon stood about 363 feet tall, roughly 60 feet taller than the Statue of Liberty.",
+    "source": "NASA",
+    "question": "What machine should we scale next?"
+  },
+  {
+    "id": "a050",
+    "template": "A",
+    "big": "Hubble Space Telescope",
+    "reference": "school bus",
+    "fact": "The Hubble Space Telescope is about the size of a large school bus, roughly 43 feet long.",
+    "source": "NASA",
+    "question": "What spacecraft should we scale next?"
+  },
+  {
+    "id": "a051",
+    "template": "A",
+    "big": "James Webb Space Telescope sunshield",
+    "reference": "tennis court",
+    "fact": "The James Webb Space Telescope carries a sunshield about the size of a tennis court to keep its instruments cold.",
+    "source": "NASA",
+    "question": "What telescope or spacecraft should we scale next?"
+  },
+  {
+    "id": "a052",
+    "template": "A",
+    "big": "Burj Khalifa",
+    "reference": "Eiffel Tower",
+    "fact": "The Burj Khalifa in Dubai stands about 2,717 feet tall, roughly two and a half times the height of the Eiffel Tower.",
+    "source": null,
+    "question": "What building should we scale next?"
+  },
+  {
+    "id": "a053",
+    "template": "A",
+    "big": "Statue of Liberty index finger",
+    "reference": "NBA player",
+    "fact": "The Statue of Liberty's index finger is about 8 feet long, longer than even the tallest NBA players are tall.",
+    "source": null,
+    "question": "What landmark detail should we scale next?"
+  },
+  {
+    "id": "a054",
+    "template": "A",
+    "big": "Great Pyramid of Giza",
+    "reference": "Statue of Liberty",
+    "fact": "The Great Pyramid of Giza was originally about 480 feet tall, about one and a half times the Statue of Liberty from ground to torch. It stayed the tallest human-made structure on Earth for more than 3,000 years.",
+    "source": null,
+    "question": "What ancient structure should we scale next?"
+  },
+  {
+    "id": "a055",
+    "template": "A",
+    "big": "Great Wall of China",
+    "reference": "Earth's equator",
+    "fact": "Counting all of its branches, the Great Wall of China stretches about 13,000 miles, more than half the distance around Earth's equator.",
+    "source": null,
+    "question": "What landmark should we measure next?"
+  },
+  {
+    "id": "a056",
+    "template": "A",
+    "big": "RMS Titanic",
+    "reference": "three football fields",
+    "fact": "The Titanic was about 882 feet long, almost the length of three American football fields placed end to end.",
+    "source": null,
+    "question": "What ship should we scale next?"
+  },
+  {
+    "id": "a057",
+    "template": "A",
+    "big": "Nimitz-class aircraft carrier",
+    "reference": "Eiffel Tower",
+    "fact": "A Nimitz-class aircraft carrier is about 1,092 feet long. Stood on end, it would be about as tall as the Eiffel Tower.",
+    "source": null,
+    "question": "What giant machine should we compare next?"
+  },
+  {
+    "id": "a058",
+    "template": "A",
+    "big": "Wright brothers' first flight",
+    "reference": "Boeing 747 wingspan",
+    "fact": "The Wright brothers' first powered flight in 1903 covered about 120 feet, shorter than the wingspan of a Boeing 747.",
+    "source": null,
+    "question": "What invention should we scale next?"
+  },
+  {
+    "id": "a059",
+    "template": "A",
+    "big": "Big Ben minute hand",
+    "reference": "small car",
+    "fact": "Each minute hand on the Big Ben clock in London is about 14 feet long, roughly the length of a small car.",
+    "source": null,
+    "question": "What landmark detail should we scale next?"
+  },
+  {
+    "id": "a060",
+    "template": "A",
+    "big": "Mount Rushmore faces",
+    "reference": "six-story building",
+    "fact": "Each president's face carved into Mount Rushmore is about 60 feet tall, as tall as a six-story building.",
+    "source": null,
+    "question": "What monument should we scale next?"
+  },
+  {
+    "id": "a061",
+    "template": "A",
+    "big": "Mount Everest",
+    "reference": "cruising passenger jet",
+    "fact": "The summit of Mount Everest is about 29,000 feet above sea level, only about a mile below where passenger jets usually cruise (around 35,000 feet).",
+    "source": null,
+    "question": "What mountain should we scale next?"
+  },
+  {
+    "id": "a062",
+    "template": "A",
+    "big": "Challenger Deep",
+    "reference": "Mount Everest",
+    "fact": "The Challenger Deep in the Mariana Trench is nearly 36,000 feet deep. If you dropped Mount Everest into it, its peak would still be more than a mile underwater.",
+    "source": "NOAA",
+    "question": "What part of the ocean should we scale next?"
+  },
+  {
+    "id": "a063",
+    "template": "A",
+    "big": "Mauna Kea",
+    "reference": "Mount Everest",
+    "fact": "Measured from its base on the ocean floor, Hawaii's Mauna Kea is more than 30,000 feet tall, taller than Mount Everest.",
+    "source": "NOAA",
+    "question": "What mountain should we compare next?"
+  },
+  {
+    "id": "a064",
+    "template": "A",
+    "big": "Grand Canyon",
+    "reference": "Empire State Building",
+    "fact": "The Grand Canyon is about a mile deep in places, deep enough to stack more than three Empire State Buildings inside it.",
+    "source": null,
+    "question": "What natural wonder should we scale next?"
+  },
+  {
+    "id": "a065",
+    "template": "A",
+    "big": "General Sherman tree trunk",
+    "reference": "three-lane highway",
+    "fact": "General Sherman, a giant sequoia in California, is the largest living tree by volume. Its trunk is about 36 feet wide at the base, as wide as a three-lane highway.",
+    "source": "Guinness World Records",
+    "question": "What tree should we scale next?"
+  },
+  {
+    "id": "a066",
+    "template": "A",
+    "big": "Hyperion, the tallest tree",
+    "reference": "Big Ben's tower",
+    "fact": "Hyperion, a coast redwood in California, is the tallest known living tree at about 380 feet, taller than the tower that holds Big Ben (about 316 feet).",
+    "source": "Guinness World Records",
+    "question": "What tree should we compare next?"
+  },
+  {
+    "id": "a067",
+    "template": "A",
+    "big": "Angel Falls",
+    "reference": "Niagara Falls",
+    "fact": "Angel Falls in Venezuela is the tallest waterfall in the world, about 3,200 feet from top to bottom, more than 15 times taller than Niagara Falls.",
+    "source": null,
+    "question": "What waterfall should we scale next?"
+  },
+  {
+    "id": "a068",
+    "template": "A",
+    "big": "largest US hailstone",
+    "reference": "volleyball",
+    "fact": "The largest hailstone ever recorded in the United States fell in Vivian, South Dakota, in 2010. It was about 8 inches across, roughly the size of a volleyball.",
+    "source": "NOAA",
+    "question": "What weather fact should we scale next?"
+  },
+  {
+    "id": "a069",
+    "template": "A",
+    "big": "Cullinan diamond",
+    "reference": "pound of butter",
+    "fact": "The Cullinan, the largest gem-quality diamond ever found, weighed about 3,106 carats in the rough, roughly 1.4 pounds, heavier than a pound of butter.",
+    "source": "Guinness World Records",
+    "question": "What treasure should we scale next?"
+  },
+  {
+    "id": "a070",
+    "template": "A",
+    "big": "lightning bolt",
+    "reference": "surface of the Sun",
+    "fact": "A lightning bolt can heat the air around it to about 50,000 degrees Fahrenheit, roughly five times hotter than the surface of the Sun.",
+    "source": "NOAA",
+    "question": "What force of nature should we compare next?"
+  },
+  {
+    "id": "a071",
+    "template": "A",
+    "big": "Sue the T. rex",
+    "reference": "40-foot shipping container",
+    "fact": "Sue, one of the largest and most complete T. rex skeletons ever found, measures about 40 feet long, as long as a 40-foot shipping container.",
+    "source": null,
+    "question": "What dinosaur should we scale next?"
+  },
+  {
+    "id": "a072",
+    "template": "A",
+    "big": "Large Hadron Collider",
+    "reference": "marathon route",
+    "fact": "The main ring of the Large Hadron Collider is about 17 miles around, nearly two-thirds the length of a marathon.",
+    "source": null,
+    "question": "What machine should we scale next?"
+  },
+  {
+    "id": "b001",
+    "template": "B",
+    "big": "Russia",
+    "reference": "Africa",
+    "fact": "On most world maps Russia looks bigger than Africa. In reality Africa covers about 11.7 million square miles, almost 1.8 times the size of Russia (about 6.6 million).",
+    "source": null,
+    "question": "Which map surprised you most?"
+  },
+  {
+    "id": "b002",
+    "template": "B",
+    "big": "Greenland",
+    "reference": "Africa",
+    "fact": "Greenland looks almost as big as Africa on many maps. In reality Africa is about 14 times larger.",
+    "source": null,
+    "question": "Which country looks bigger on maps than it really is?"
+  },
+  {
+    "id": "b003",
+    "template": "B",
+    "big": "Alaska",
+    "reference": "Texas",
+    "fact": "Alaska covers about 665,000 square miles, more than twice the size of Texas (about 269,000).",
+    "source": null,
+    "question": "Which map comparison should we do next?"
+  },
+  {
+    "id": "b004",
+    "template": "B",
+    "big": "Brazil",
+    "reference": "contiguous United States",
+    "fact": "Brazil covers about 3.3 million square miles, slightly more than the contiguous United States (about 3.1 million).",
+    "source": null,
+    "question": "Which country should we compare next?"
+  },
+  {
+    "id": "b005",
+    "template": "B",
+    "big": "Australia",
+    "reference": "contiguous United States",
+    "fact": "Australia covers about 3 million square miles, almost as big as the contiguous United States (about 3.1 million).",
+    "source": null,
+    "question": "Which map surprised you most?"
+  },
+  {
+    "id": "b006",
+    "template": "B",
+    "big": "United Kingdom",
+    "reference": "Oregon",
+    "fact": "The entire United Kingdom covers about 94,000 square miles, slightly smaller than the state of Oregon (about 98,000).",
+    "source": null,
+    "question": "Which state or country should we compare next?"
+  },
+  {
+    "id": "b007",
+    "template": "B",
+    "big": "Texas",
+    "reference": "France",
+    "fact": "Texas covers about 269,000 square miles, roughly a quarter bigger than mainland France (about 213,000).",
+    "source": null,
+    "question": "Which map comparison surprised you most?"
+  },
+  {
+    "id": "b008",
+    "template": "B",
+    "big": "Japan",
+    "reference": "California",
+    "fact": "Japan covers about 146,000 square miles, a bit smaller than California (about 164,000).",
+    "source": null,
+    "question": "Which country should we overlay next?"
+  },
+  {
+    "id": "b009",
+    "template": "B",
+    "big": "Germany",
+    "reference": "Montana",
+    "fact": "Germany covers about 138,000 square miles, a little smaller than the state of Montana (about 147,000).",
+    "source": null,
+    "question": "Which map surprised you most?"
+  },
+  {
+    "id": "b010",
+    "template": "B",
+    "big": "Italy",
+    "reference": "Arizona",
+    "fact": "Italy covers about 116,000 square miles, almost the same as Arizona (about 114,000).",
+    "source": null,
+    "question": "Which country should we compare to a US state next?"
+  },
+  {
+    "id": "b011",
+    "template": "B",
+    "big": "Canada",
+    "reference": "United States",
+    "fact": "Counting its lakes and rivers, Canada covers about 3.85 million square miles, slightly more than the entire United States, making it the second-largest country on Earth.",
+    "source": null,
+    "question": "Which map should we do next?"
+  },
+  {
+    "id": "b012",
+    "template": "B",
+    "big": "the Moon",
+    "reference": "Australia",
+    "fact": "The Moon is about 2,160 miles across. Australia is about 2,500 miles wide from east to west, so the Moon is narrower than Australia.",
+    "source": null,
+    "question": "Which space-versus-map comparison should we do next?"
+  },
+  {
+    "id": "b013",
+    "template": "B",
+    "big": "Pluto",
+    "reference": "United States",
+    "fact": "Pluto is less than 1,500 miles wide, roughly half the width of the United States.",
+    "source": "NASA",
+    "question": "Which world should we put on a map next?"
+  },
+  {
+    "id": "b014",
+    "template": "B",
+    "big": "Valles Marineris",
+    "reference": "United States",
+    "fact": "Valles Marineris, a canyon system on Mars, is about 2,500 miles long, about as long as the United States is wide.",
+    "source": "NASA",
+    "question": "Which space feature should we put on a map next?"
+  },
+  {
+    "id": "b015",
+    "template": "B",
+    "big": "Lake Superior",
+    "reference": "Austria",
+    "fact": "Lake Superior covers about 31,700 square miles, roughly the size of Austria or South Carolina.",
+    "source": null,
+    "question": "Which lake should we compare next?"
+  },
+  {
+    "id": "b016",
+    "template": "B",
+    "big": "Madagascar",
+    "reference": "France",
+    "fact": "Madagascar covers about 227,000 square miles, larger than mainland France (about 213,000).",
+    "source": null,
+    "question": "Which island should we compare next?"
+  },
+  {
+    "id": "b017",
+    "template": "B",
+    "big": "Indonesia",
+    "reference": "contiguous United States",
+    "fact": "Indonesia stretches about 3,000 miles from east to west, wider than the contiguous United States (about 2,800 miles coast to coast).",
+    "source": null,
+    "question": "Which map surprised you most?"
+  },
+  {
+    "id": "b018",
+    "template": "B",
+    "big": "Chile",
+    "reference": "contiguous United States",
+    "fact": "Chile is about 2,600 miles long, almost as long as the contiguous United States is wide, yet on average it is only about 110 miles wide.",
+    "source": null,
+    "question": "Which country shape should we compare next?"
+  },
+  {
+    "id": "b019",
+    "template": "B",
+    "big": "Algeria",
+    "reference": "Greenland",
+    "fact": "Algeria covers about 920,000 square miles, more than Greenland (about 836,000), even though Greenland looks far bigger on most maps.",
+    "source": null,
+    "question": "Which country looks smaller on maps than it really is?"
+  },
+  {
+    "id": "b020",
+    "template": "B",
+    "big": "Antarctica",
+    "reference": "United States",
+    "fact": "Antarctica covers about 5.5 million square miles, nearly one and a half times the size of the United States.",
+    "source": null,
+    "question": "Which continent should we compare next?"
+  },
+  {
+    "id": "b021",
+    "template": "B",
+    "big": "Sahara Desert",
+    "reference": "United States",
+    "fact": "The Sahara covers about 3.6 million square miles, nearly as big as the entire United States.",
+    "source": null,
+    "question": "Which desert should we compare next?"
+  },
+  {
+    "id": "b022",
+    "template": "B",
+    "big": "Kazakhstan",
+    "reference": "Texas",
+    "fact": "Kazakhstan, the largest landlocked country in the world, covers about 1 million square miles, nearly four times the size of Texas.",
+    "source": null,
+    "question": "Which country should we put next to Texas next?"
+  },
+  {
+    "id": "b023",
+    "template": "B",
+    "big": "New Zealand",
+    "reference": "United Kingdom",
+    "fact": "New Zealand covers about 104,000 square miles, slightly more than the United Kingdom (about 94,000).",
+    "source": null,
+    "question": "Which map surprised you most?"
+  },
+  {
+    "id": "b024",
+    "template": "B",
+    "big": "India",
+    "reference": "Norway, Sweden and Finland",
+    "fact": "On many maps Norway, Sweden and Finland together look as big as India. In reality India covers about 1.27 million square miles, more than twice those three countries combined.",
+    "source": null,
+    "question": "Which map trick should we expose next?"
+  },
+  {
+    "id": "b025",
+    "template": "B",
+    "big": "Great Lakes",
+    "reference": "United Kingdom",
+    "fact": "Together, the five Great Lakes cover about 94,000 square miles of water, about the same area as the entire United Kingdom.",
+    "source": null,
+    "question": "Which lake or sea should we compare next?"
+  },
+  {
+    "id": "b026",
+    "template": "B",
+    "big": "Great Barrier Reef Marine Park",
+    "reference": "Italy",
+    "fact": "The Great Barrier Reef stretches about 1,400 miles along Australia's coast, and its marine park covers about 133,000 square miles, more than Italy.",
+    "source": null,
+    "question": "Which natural wonder should we map next?"
+  },
+  {
+    "id": "c001",
+    "template": "C",
+    "big": "all gold ever mined",
+    "reference": "Olympic swimming pools",
+    "fact": "All the gold ever mined, more than 200,000 tonnes, would fit in a single cube about 72 feet (22 meters) on each side. That is only enough to fill about four or five Olympic swimming pools.",
+    "source": null,
+    "question": "How much gold did you think there was?"
+  },
+  {
+    "id": "c002",
+    "template": "C",
+    "big": "all the water on Earth",
+    "reference": "the Earth",
+    "fact": "If all of Earth's water, from oceans to clouds, were gathered into one ball, it would be only about 860 miles across.",
+    "source": "USGS",
+    "question": "How big did you guess that ball would be?"
+  },
+  {
+    "id": "c003",
+    "template": "C",
+    "big": "all fresh liquid water",
+    "reference": "the Earth",
+    "fact": "All the fresh liquid water on Earth, in lakes, rivers and underground, would make a ball only about 170 miles across.",
+    "source": "USGS",
+    "question": "How much fresh water did you think we had?"
+  },
+  {
+    "id": "c004",
+    "template": "C",
+    "big": "Golden Gate Bridge cable wire",
+    "reference": "Earth's equator",
+    "fact": "The two main cables of the Golden Gate Bridge contain about 80,000 miles of wire, enough to wrap around Earth's equator more than three times.",
+    "source": null,
+    "question": "How many times did you think it would go around?"
+  },
+  {
+    "id": "c005",
+    "template": "C",
+    "big": "Lake Baikal water",
+    "reference": "all five Great Lakes",
+    "fact": "Lake Baikal in Siberia is the deepest lake on Earth, more than a mile deep at its deepest point. It holds more water than all five North American Great Lakes combined.",
+    "source": null,
+    "question": "How deep do you think it goes?"
+  },
+  {
+    "id": "c006",
+    "template": "C",
+    "big": "Antarctic ice sheet",
+    "reference": "global sea level",
+    "fact": "Antarctica holds about 90 percent of the world's ice. If all of it melted, sea levels would rise by nearly 200 feet.",
+    "source": null,
+    "question": "How high did you guess the oceans would rise?"
+  },
+  {
+    "id": "c007",
+    "template": "C",
+    "big": "Amazon River water",
+    "reference": "all the world's rivers",
+    "fact": "The Amazon carries nearly one fifth of all the river water that flows into the world's oceans.",
+    "source": null,
+    "question": "Which river should we measure next?"
+  },
+  {
+    "id": "c008",
+    "template": "C",
+    "big": "one million $1 bills",
+    "reference": "Statue of Liberty",
+    "fact": "A stack of one million $1 bills would be about 360 feet tall, taller than the Statue of Liberty from ground to torch, and it would weigh about a ton.",
+    "source": null,
+    "question": "How tall do you think a billion would be?"
+  },
+  {
+    "id": "c009",
+    "template": "C",
+    "big": "all the salt in the ocean",
+    "reference": "a 40-story building",
+    "fact": "If all the salt in the ocean were spread evenly over Earth's land, it would form a layer more than 500 feet thick, about the height of a 40-story building.",
+    "source": "NOAA",
+    "question": "How thick did you guess the layer would be?"
+  },
+  {
+    "id": "c010",
+    "template": "C",
+    "big": "bricks in the Empire State Building",
+    "reference": "a single brick",
+    "fact": "The Empire State Building was built with about 10 million bricks.",
+    "source": null,
+    "question": "How many bricks did you think it took?"
+  },
+  {
+    "id": "c011",
+    "template": "C",
+    "big": "stone blocks in the Great Pyramid",
+    "reference": "a single block",
+    "fact": "The Great Pyramid of Giza is made of more than 2 million stone blocks, and many of them weigh more than two tons each.",
+    "source": null,
+    "question": "How many blocks did you guess?"
+  },
+  {
+    "id": "c012",
+    "template": "C",
+    "big": "the Sun's mass",
+    "reference": "everything else in the solar system",
+    "fact": "The Sun holds about 99.8 percent of all the mass in our solar system. Every planet, moon and asteroid together makes up the leftover 0.2 percent.",
+    "source": "NASA",
+    "question": "How much of the solar system did you think the Sun was?"
+  },
+  {
+    "id": "c013",
+    "template": "C",
+    "big": "Jupiter's mass",
+    "reference": "all the other planets combined",
+    "fact": "Jupiter is more than twice as massive as all the other planets in our solar system combined.",
+    "source": "NASA",
+    "question": "How many Earths do you think Jupiter weighs?"
+  }
+]

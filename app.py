@@ -124,12 +124,12 @@ HTML = r"""<!DOCTYPE html>
 <title>Panel de Video — TTS + Video</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@400&family=Playfair+Display:wght@700&family=Poppins:wght@500&family=Montserrat:wght@600&family=Bebas+Neue&family=Anton&family=Bangers&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@400&family=Playfair+Display:wght@700&family=Poppins:wght@500&family=Montserrat:wght@600&family=Bebas+Neue&family=Anton&family=Bangers&family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script>
 (function () {
-  var t = "matrix";
-  try { t = localStorage.getItem("uiTheme") || "matrix"; } catch (e) { /* sin localStorage */ }
-  document.documentElement.setAttribute("data-theme", t === "classic" ? "classic" : "matrix");
+  var t = "fallout3";
+  try { t = localStorage.getItem("uiTheme") || "fallout3"; } catch (e) { /* sin localStorage */ }
+  document.documentElement.setAttribute("data-theme", t === "classic" || t === "fallout4" ? t : "fallout3");
 })();
 </script>
 <style>
@@ -583,19 +583,79 @@ HTML = r"""<!DOCTYPE html>
   .hist-item-name { font-size: 11.5px; color: var(--text-secondary); word-break: break-all; margin: 0 0 8px; }
   .hist-item.selected { outline: 2px solid var(--red-light); }
   /* OFFICE:START */
-  .office-scene { width: 100%; height: auto; display: block; border-radius: var(--radius-md); }
+  /* Refugio estilo Fallout Shelter: paleta fija del juego, no cambia con el tema del panel */
+  .office-scene {
+    --v-rock: #3b2c1f; --v-rock2: #4a3828; --v-wall: #56666d; --v-wall2: #45545a; --v-floor: #2a2f33;
+    --v-trim: #f2c230; --v-blue: #1f62b8; --v-plate: #d8b53a;
+    width: 100%; max-width: 720px; height: auto; display: block; margin: 0 auto; border-radius: var(--radius-md);
+  }
+  .office-scene .v-rock { fill: var(--v-rock); }
+  .office-scene .v-rock2 { fill: var(--v-rock2); }
+  /* sin prefijo .office-scene: el contenido de <use> no matchea selectores con ancestros */
+  .v-wall { fill: var(--v-wall); }
+  .v-wall2 { fill: var(--v-wall2); }
+  .v-floor { fill: var(--v-floor); }
+  .v-trim { fill: var(--v-trim); }
+  .v-blue { fill: var(--v-blue); }
+  .v-lamp { fill: #fff3b0; }
+  .office-scene .v-plate { fill: var(--v-plate); stroke: #1b1b1b; stroke-width: 1.2; }
+  .office-scene .v-plate-text { fill: #1b1b1b; font-size: 8.5px; font-weight: 700; letter-spacing: .06em; font-family: var(--display, inherit); }
+  .office-scene .v-title { font-family: var(--display, inherit); letter-spacing: .08em; }
+  .dw-skin { fill: var(--skin); }
+  .dw-hair { fill: var(--hair); }
+  .office-scene .v-term { fill: #4ade80; stroke: #4ade80; }
+  .office-scene .v-onair { fill: #4a1212; stroke: #1b1b1b; stroke-width: 1.2; }
+  .office-scene .v-onair-text { fill: #8a3a3a; font-size: 8.5px; font-weight: 700; }
+  .office-scene .v-wave { fill: none; stroke: #f2c230; stroke-width: 1.6; stroke-linecap: round; opacity: .25; }
+  .office-scene .v-bar { fill: #4ade80; }
+  .office-scene .v-alarm { fill: #5a1a1a; stroke: #1b1b1b; stroke-width: 1.5; }
+  .office-scene .room-frame { fill: none; stroke: #1b1b1b; stroke-width: 2; }
+  .office-scene .room-dim { fill: #000; opacity: 0; pointer-events: none; }
+  .office-scene .room-glow { fill: transparent; opacity: 0; pointer-events: none; }
+  .office-scene .room-led { fill: #9a9a9a; stroke: #1b1b1b; stroke-width: 1.2; }
+  .office-scene .bubble-bg { fill: #fff8e6; stroke: #9a9a9a; stroke-width: 1.5; }
+  .office-scene .bubble-text { fill: #2b2418; font-size: 9.5px; font-weight: 600; }
   .office-agent { cursor: pointer; outline: none; }
   .office-focus { fill: transparent; stroke: transparent; }
-  .office-agent:focus-visible .office-focus { stroke: var(--red-light); stroke-width: 2; }
-  .office-agent .screen { fill: #9a9a9a; }
-  .office-agent.status-ok .screen, .office-agent.status-busy .screen { fill: #4ade80; }
-  .office-agent.status-warn .screen { fill: #fbbf24; }
-  .office-agent.status-error .screen { fill: #f87171; }
-  .office-agent.offline .screen { fill: #9a9a9a; }
-  .office-agent.status-busy .screen { animation: officeBlink 1.2s ease-in-out infinite; }
+  .office-agent:focus-visible .office-focus, .office-agent.selected .office-focus { stroke: var(--red-light); stroke-width: 2.5; }
+  .office-agent:hover .room-frame { stroke: var(--red-light); }
+  .office-agent.status-ok .room-led, .office-agent.status-busy .room-led { fill: #4ade80; }
+  .office-agent.status-warn .room-led { fill: #fbbf24; }
+  .office-agent.status-error .room-led { fill: #f87171; }
+  .office-agent.status-ok .bubble-bg, .office-agent.status-busy .bubble-bg { stroke: #4ade80; }
+  .office-agent.status-warn .bubble-bg { stroke: #fbbf24; }
+  .office-agent.status-error .bubble-bg { stroke: #f87171; }
+  .office-agent.status-warn .room-glow { fill: #fbbf24; opacity: .14; }
+  .office-agent.status-error .room-glow { fill: #f87171; opacity: .2; }
+  .office-agent.status-error .v-alarm { fill: #f87171; }
+  .office-agent.status-busy .v-onair { fill: #c01818; }
+  .office-agent.status-busy .v-onair-text { fill: #fff; }
+  .office-agent.status-idle .room-dim, .office-agent.offline .room-dim { opacity: .5; }
+  .office-agent.offline .room-led { fill: #9a9a9a; }
+  /* animaciones: el morador trabaja y el prop de su sala se mueve; todo se apaga con reduced-motion */
+  .office-scene .v-gear, .office-scene .v-bar, .office-scene .v-dw { transform-box: fill-box; }
+  .office-scene .v-gear { transform-origin: center; }
+  .office-scene .v-bar { transform-origin: bottom; }
+  .office-scene .v-elevator { animation: vaultLift 14s ease-in-out infinite alternate; }
+  .office-agent.status-busy .room-led { animation: officeBlink 1.2s ease-in-out infinite; }
+  .office-agent.status-busy .v-dw { animation: vaultWork .7s ease-in-out infinite alternate; }
+  .office-agent.status-busy .v-gear { animation: vaultSpin 5s linear infinite; }
+  .office-agent.status-busy .v-wave { animation: vaultWave 1.4s ease-in-out infinite; }
+  .office-agent.status-busy .v-wave2 { animation-delay: .35s; }
+  .office-agent.status-busy .v-bar { animation: vaultBar 1.6s ease-in-out infinite alternate; }
+  .office-agent.status-busy .v-bar2 { animation-duration: 1.1s; }
+  .office-agent.status-busy .v-term-line { animation: officeBlink 1s steps(2) infinite; }
+  .office-agent.status-error .room-glow { animation: vaultAlarm 1.2s ease-in-out infinite; }
   @keyframes officeBlink { 50% { opacity: .35; } }
-  @media (prefers-reduced-motion: reduce) { .office-agent.status-busy .screen { animation: none; } }
-  .office-agent:hover .bubble-bg { stroke: #8a7f6a; }
+  @keyframes vaultWork { to { transform: translateY(-1.5px); } }
+  @keyframes vaultSpin { to { transform: rotate(360deg); } }
+  @keyframes vaultWave { 0%, 100% { opacity: .15; } 50% { opacity: .95; } }
+  @keyframes vaultBar { to { transform: scaleY(.55); } }
+  @keyframes vaultAlarm { 50% { opacity: .05; } }
+  @keyframes vaultLift { to { transform: translateY(232px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .office-scene *, .office-agent * { animation: none !important; }
+  }
   .office-finding { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
   .office-sev { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
   .office-sev.error { background: rgba(248,113,113,.18); color: #fca5a5; }
@@ -604,14 +664,13 @@ HTML = r"""<!DOCTYPE html>
   .office-finding-text { flex: 1; font-size: 14px; }
   .office-views { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   @media (max-width: 520px) { .office-finding { flex-wrap: wrap; } .office-finding-text { flex-basis: 100%; } }
-  #office-3d { width: 100%; aspect-ratio: 16 / 9; max-height: 440px; border-radius: var(--radius-md); overflow: hidden; background: #000; border: 1px solid var(--border); }
+  #office-3d { width: 100%; max-width: 720px; margin: 0 auto; aspect-ratio: 4 / 3; border-radius: var(--radius-md); overflow: hidden; background: #2a2018; border: 1px solid var(--border); }
   #office-3d canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; }
   #office-3d[hidden], .office-agent-row[hidden] { display: none; }
-  .office-agent-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .office-agent-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
   .office-agent-btn.selected { border-color: var(--red-light); }
   .office-agent-btn.status-warn { color: #fbbf24; }
   .office-agent-btn.status-error { color: #f87171; }
-  @media (max-width: 520px) { #office-3d { aspect-ratio: 4 / 3; } }
   @media (max-width: 520px) { .office-agent-row { display: grid; grid-template-columns: 1fr 1fr; } }
   .office-rule { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
   .office-rule-text { flex: 1 1 220px; min-width: 0; font-size: 14px; }
@@ -626,74 +685,111 @@ HTML = r"""<!DOCTYPE html>
   #office-automation[hidden], #office-log[hidden] { display: none; }
   @media (max-width: 520px) { .office-rule { flex-wrap: wrap; } .office-rule-text { flex-basis: 100%; } }
   /* OFFICE:END */
-  /* MATRIX:START */
-  #matrix-rain { display: none; position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: .3; }
-  html[data-theme="matrix"] #matrix-rain { display: block; }
+  /* THEME:START */
+  /* Pip-Boy: Fallout 3 (verde fosforo) y Fallout 4 (ambar). Los acentos siguen llamandose --red-* en todo el panel. */
+  #crt-fx {
+    display: none; position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+    background:
+      radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, .55) 100%),
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, .18) 0, rgba(0, 0, 0, .18) 1px, transparent 1px, transparent 3px);
+    animation: crtFlicker 6s steps(1) infinite;
+  }
+  @keyframes crtFlicker { 0%, 100% { opacity: 1; } 46% { opacity: .94; } 50% { opacity: .86; } 54% { opacity: .96; } }
+  html[data-theme^="fallout"] #crt-fx { display: block; }
   .theme-toggle { margin-top: auto; width: 100%; font-family: inherit; text-align: left; }
-  html[data-theme="matrix"] {
-    --bg-main: #000000;
-    --bg-sidebar: #010a03;
-    --surface-1: #041006;
-    --surface-2: #07180a;
-    --surface-3: #0b2210;
-    --border: #0f4a1c;
-    --border-hover: #1a7a31;
-    --text-primary: #c8ffd6;
-    --text-secondary: #7fd99a;
-    --text-muted: #55a96d;
-    --red-dark: #04440f;
-    --red-primary: #00a828;
-    --red-light: #00ff41;
-    --gradient-red: linear-gradient(110deg, #04440f 0%, #00a828 45%, #00ff41 100%);
-    --gradient-red-hover: linear-gradient(110deg, #066016 0%, #00c032 45%, #4dff77 100%);
-    --gradient-red-active: linear-gradient(110deg, #04440f, #00a828, #00d636);
-    --gradient-red-subtle: linear-gradient(135deg, #041006, rgba(0, 168, 40, 0.22));
-    --success: #00ff41;
+  html[data-theme="fallout3"] {
+    --bg-main: #020b06;
+    --bg-sidebar: #030f08;
+    --surface-1: #05140c;
+    --surface-2: #081c11;
+    --surface-3: #0c2618;
+    --card-bg: rgba(5, 20, 12, .9);
+    --border: #14573a;
+    --border-hover: #1f8a5a;
+    --text-primary: #c4ffe0;
+    --text-secondary: #86e8b4;
+    --text-muted: #5fc48e;
+    --red-dark: #06592b;
+    --red-primary: #0fb85c;
+    --red-light: #1aff80;
+    --gradient-red: linear-gradient(110deg, #06592b 0%, #0fb85c 45%, #1aff80 100%);
+    --gradient-red-hover: linear-gradient(110deg, #087a3a 0%, #14d46e 45%, #66ffa8 100%);
+    --gradient-red-active: linear-gradient(110deg, #06592b, #0fb85c, #14d46e);
+    --gradient-red-subtle: linear-gradient(135deg, #05140c, rgba(15, 184, 92, 0.22));
+    --success: #1aff80;
+    --on-accent: #00200e;
+    --glow: 26, 255, 128;
+  }
+  html[data-theme="fallout4"] {
+    --bg-main: #0a0600;
+    --bg-sidebar: #0e0900;
+    --surface-1: #150d02;
+    --surface-2: #1c1204;
+    --surface-3: #261806;
+    --card-bg: rgba(21, 13, 2, .9);
+    --border: #5c3d0b;
+    --border-hover: #8f6016;
+    --text-primary: #ffe9c2;
+    --text-secondary: #f0c27a;
+    --text-muted: #c79a52;
+    --red-dark: #6b3f00;
+    --red-primary: #d98a10;
+    --red-light: #ffb641;
+    --gradient-red: linear-gradient(110deg, #6b3f00 0%, #d98a10 45%, #ffb641 100%);
+    --gradient-red-hover: linear-gradient(110deg, #8f5600 0%, #f09c1c 45%, #ffd078 100%);
+    --gradient-red-active: linear-gradient(110deg, #6b3f00, #d98a10, #f09c1c);
+    --gradient-red-subtle: linear-gradient(135deg, #150d02, rgba(217, 138, 16, 0.22));
+    --success: #ffb641;
+    --on-accent: #261500;
+    --glow: 255, 182, 65;
+  }
+  html[data-theme^="fallout"] {
     --error: #f87171;
-    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+    --mono: "Share Tech Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+    --display: "VT323", var(--mono);
+    --radius-sm: 2px;
+    --radius-md: 3px;
+    --radius-lg: 4px;
     color-scheme: dark;
+    scrollbar-color: var(--border) var(--bg-main);
   }
-  html[data-theme="matrix"] body,
-  html[data-theme="matrix"] button,
-  html[data-theme="matrix"] input,
-  html[data-theme="matrix"] select,
-  html[data-theme="matrix"] textarea { font-family: var(--mono); }
-  html[data-theme="matrix"] .card { background: rgba(4, 16, 6, .9); box-shadow: 0 0 18px rgba(0, 255, 65, .08); }
-  html[data-theme="matrix"] .card h2 { color: var(--red-light); text-shadow: 0 0 8px rgba(0, 255, 65, .55); letter-spacing: .03em; }
-  html[data-theme="matrix"] .nav-item.active,
-  html[data-theme="matrix"] .btn-primary,
-  html[data-theme="matrix"] .voice-card .gentle-badge,
-  html[data-theme="matrix"] .ring.done::after,
-  html[data-theme="matrix"] .ring.error::after { color: #00200a; font-weight: 700; }
-  html[data-theme="matrix"] .nav-item.active { box-shadow: 0 0 14px rgba(0, 255, 65, .35); }
-  html[data-theme="matrix"] .btn-primary { box-shadow: 0 0 22px rgba(0, 255, 65, .25); }
-  html[data-theme="matrix"] .tab-btn.active {
-    color: var(--red-light); background: rgba(0, 255, 65, .12);
-    box-shadow: inset 0 -2px 0 var(--red-light), 0 0 14px rgba(0, 255, 65, .2);
+  html[data-theme^="fallout"] body,
+  html[data-theme^="fallout"] button,
+  html[data-theme^="fallout"] input,
+  html[data-theme^="fallout"] select,
+  html[data-theme^="fallout"] textarea { font-family: var(--mono); }
+  html[data-theme^="fallout"] .card { background: var(--card-bg); box-shadow: 0 0 18px rgba(var(--glow), .08); }
+  html[data-theme^="fallout"] .card h2 {
+    font-family: var(--display); font-size: 1.45em; font-weight: 400; letter-spacing: .04em;
+    color: var(--red-light); text-shadow: 0 0 8px rgba(var(--glow), .55);
   }
-  html[data-theme="matrix"] .voice-card.active { border-color: var(--red-light); }
-  /* tinte verde solo en fondo y mobiliario; las pantallas (.screen) conservan su color de estado */
-  html[data-theme="matrix"] .office-scene > rect,
-  html[data-theme="matrix"] .office-scene > line,
-  html[data-theme="matrix"] .office-agent > :not(.screen):not(.office-focus) {
-    filter: grayscale(.4) sepia(1) hue-rotate(75deg) saturate(2) brightness(.75);
+  html[data-theme^="fallout"] .nav-item { font-family: var(--display); font-size: 1.2em; letter-spacing: .03em; }
+  html[data-theme^="fallout"] .nav-item.active,
+  html[data-theme^="fallout"] .btn-primary,
+  html[data-theme^="fallout"] .voice-card .gentle-badge,
+  html[data-theme^="fallout"] .ring.done::after,
+  html[data-theme^="fallout"] .ring.error::after { color: var(--on-accent); font-weight: 700; }
+  html[data-theme^="fallout"] .nav-item.active { box-shadow: 0 0 14px rgba(var(--glow), .35); }
+  html[data-theme^="fallout"] .btn-primary { box-shadow: 0 0 22px rgba(var(--glow), .25); }
+  html[data-theme^="fallout"] .tab-btn.active {
+    color: var(--red-light); background: rgba(var(--glow), .12); border-color: rgba(var(--glow), .35);
+    box-shadow: inset 0 -2px 0 var(--red-light), 0 0 14px rgba(var(--glow), .2);
   }
-  html[data-theme="matrix"] { scrollbar-color: #0f4a1c #000; }
+  html[data-theme^="fallout"] .voice-card.active { border-color: var(--red-light); }
   /* rojos fijos del tema clasico que no pasan por variables */
-  html[data-theme="matrix"] .tab-btn.active { border-color: rgba(0, 255, 65, .35); }
-  html[data-theme="matrix"] textarea:focus { box-shadow: 0 0 0 3px rgba(0, 255, 65, .16); }
-  html[data-theme="matrix"] .subtitle-preset-card.active { border-color: var(--red-light); box-shadow: 0 0 0 1px var(--red-light); }
-  html[data-theme="matrix"] .btn-outline-danger { color: #f87171; border-color: #f87171; }
-  html[data-theme="matrix"] .btn-outline-danger:hover:not(:disabled) { background: rgba(248, 113, 113, .12); }
-  html[data-theme="matrix"] .table-best-row { background: rgba(0, 255, 65, .06); }
-  @media (prefers-reduced-motion: reduce) { #matrix-rain { opacity: .15; } }
-  /* MATRIX:END */
+  html[data-theme^="fallout"] textarea:focus { box-shadow: 0 0 0 3px rgba(var(--glow), .16); }
+  html[data-theme^="fallout"] .subtitle-preset-card.active { border-color: var(--red-light); box-shadow: 0 0 0 1px var(--red-light); }
+  html[data-theme^="fallout"] .btn-outline-danger { color: #f87171; border-color: #f87171; }
+  html[data-theme^="fallout"] .btn-outline-danger:hover:not(:disabled) { background: rgba(248, 113, 113, .12); }
+  html[data-theme^="fallout"] .table-best-row { background: rgba(var(--glow), .06); }
+  @media (prefers-reduced-motion: reduce) { #crt-fx { animation: none; } }
+  /* THEME:END */
 </style>
 </head>
 <body>
-<!-- MATRIX:START -->
-<canvas id="matrix-rain" aria-hidden="true"></canvas>
-<!-- MATRIX:END -->
+<!-- THEME:START -->
+<div id="crt-fx" aria-hidden="true"></div>
+<!-- THEME:END -->
 
 <button class="menu-toggle" id="menu-toggle" aria-label="Abrir menú" aria-expanded="false">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -735,9 +831,9 @@ HTML = r"""<!DOCTYPE html>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.32c-.77.3-1.4.98-1.4 1.68v.3"/><path d="M12 17h.01"/></svg>
     Soporte
   </a>
-  <!-- MATRIX:START -->
-  <button type="button" class="nav-item theme-toggle" id="theme-toggle" aria-pressed="true">Tema: Matrix</button>
-  <!-- MATRIX:END -->
+  <!-- THEME:START -->
+  <button type="button" class="nav-item theme-toggle" id="theme-toggle">Tema: Fallout 3</button>
+  <!-- THEME:END -->
 </nav>
 
 <main>
@@ -747,55 +843,161 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <h2>Oficina</h2>
       <p class="card-desc">Los agentes trabajan con lo que ya hace el sistema. Hacé clic en uno para ver su detalle y sus sugerencias.</p>
-      <svg class="office-scene" viewBox="0 0 320 176" role="group" aria-label="Oficina con cuatro agentes">
-        <rect width="320" height="176" fill="#f4efe6"/>
-        <rect y="132" width="320" height="44" fill="#cdbfa6"/>
-        <rect x="133" y="10" width="54" height="34" fill="#bfe3f5" stroke="#9a9a9a"/>
-        <line x1="160" y1="10" x2="160" y2="44" stroke="#9a9a9a"/>
-        <line x1="133" y1="27" x2="187" y2="27" stroke="#9a9a9a"/>
-        <g class="office-agent status-idle" id="office-agent-videos" role="button" tabindex="0" aria-label="Videos">
-          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
-          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
-          <text id="office-bubble-videos" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
-          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
-          <rect x="30" y="107" width="20" height="20" rx="6" fill="#D85A30"/>
-          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
-          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
-          <rect class="screen" x="32" y="114" width="16" height="8"/>
-          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Videos</text>
+      <svg class="office-scene" viewBox="0 0 400 300" role="group" aria-label="Refugio con cuatro agentes">
+        <defs>
+          <linearGradient id="vault-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#e8a24a"/>
+            <stop offset="1" stop-color="#f3cf8a"/>
+          </linearGradient>
+          <pattern id="vault-hazard" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="4" height="8" fill="#f2c230"/>
+            <rect x="4" width="4" height="8" fill="#1b1b1b"/>
+          </pattern>
+          <g id="vault-room">
+            <rect class="v-wall" width="178" height="122"/>
+            <rect class="v-wall2" width="178" height="9"/>
+            <rect class="v-floor" y="100" width="178" height="22"/>
+            <rect class="v-trim" y="98" width="178" height="3"/>
+            <path d="M0 110H178M30 100V122M80 100V122M130 100V122" stroke="#1b1b1b" stroke-opacity=".35" fill="none"/>
+            <rect class="v-lamp" x="14" y="9" width="14" height="4" rx="2"/>
+            <rect class="v-lamp" x="150" y="9" width="14" height="4" rx="2"/>
+          </g>
+          <g id="vault-dweller">
+            <rect x="-7" y="-4" width="6" height="4" rx="1.5" fill="#1a1a1a"/>
+            <rect x="1" y="-4" width="6" height="4" rx="1.5" fill="#1a1a1a"/>
+            <rect class="v-blue" x="-6.5" y="-17" width="13" height="14"/>
+            <path d="M0 -17V-3" stroke="#17488a" stroke-width="1"/>
+            <rect class="v-blue" x="-8.5" y="-31" width="17" height="17" rx="4"/>
+            <rect class="v-blue" x="-12" y="-30" width="4" height="14" rx="2"/>
+            <rect class="v-blue" x="8" y="-30" width="4" height="14" rx="2"/>
+            <rect class="v-trim" x="-12" y="-27" width="4" height="2"/>
+            <rect class="v-trim" x="8" y="-27" width="4" height="2"/>
+            <path class="v-trim" d="M-5 -31L0 -23L5 -31Z"/>
+            <path d="M0 -23V-15" stroke="#f2c230" stroke-width="1.4"/>
+            <text x="0" y="-17.5" text-anchor="middle" font-size="4.6" font-weight="700" fill="#f2c230">111</text>
+            <rect x="8.5" y="-25" width="6.5" height="6" rx="1" fill="#6b7a3a" stroke="#3d4620" stroke-width=".8"/>
+            <rect x="9.7" y="-23.8" width="4" height="3.4" fill="#7dff9a"/>
+            <circle class="dw-skin" cx="-10" cy="-15" r="2"/>
+            <circle class="dw-skin" cx="10" cy="-15" r="2"/>
+            <circle class="dw-skin" cx="0" cy="-38" r="8.7"/>
+            <path class="dw-hair" d="M-8.9 -39A8.9 8.9 0 0 1 8.9 -39Q4 -44 0 -41.5Q-4 -44 -8.9 -39Z"/>
+            <circle cx="-3" cy="-37" r="1" fill="#222"/>
+            <circle cx="3" cy="-37" r="1" fill="#222"/>
+            <path d="M-3 -34Q0 -31.5 3 -34" stroke="#7a4a30" stroke-width=".9" fill="none"/>
+          </g>
+        </defs>
+        <rect width="400" height="300" class="v-rock"/>
+        <path class="v-rock2" d="M0 296L40 286L90 298L150 288L230 297L300 287L360 297L400 289V300H0Z"/>
+        <circle class="v-rock2" cx="196" cy="160" r="3"/>
+        <circle class="v-rock2" cx="5" cy="164" r="2.5"/>
+        <circle class="v-rock2" cx="395" cy="164" r="2.5"/>
+        <rect width="400" height="30" fill="url(#vault-sky)"/>
+        <path d="M0 30V22L40 16L90 24L150 14L220 22L290 12L350 20L400 14V30Z" fill="#7a5632"/>
+        <rect y="28" width="400" height="4" fill="#5a4630"/>
+        <circle cx="34" cy="22" r="15" fill="#8f969a" stroke="#3a3f42" stroke-width="2"/>
+        <circle cx="34" cy="22" r="10" fill="none" stroke="#3a3f42" stroke-width="2" stroke-dasharray="3 2.4"/>
+        <circle cx="34" cy="22" r="6.5" fill="#f2c230" stroke="#3a3f42" stroke-width="1"/>
+        <text x="34" y="24.6" text-anchor="middle" font-size="7" font-weight="700" fill="#1b1b1b">111</text>
+        <text x="392" y="22" text-anchor="end" font-size="10" font-weight="700" fill="#2b1d0e" class="v-title">VAULT 111</text>
+        <rect x="190" y="32" width="20" height="268" fill="#1c1a17"/>
+        <path d="M196 32V300M204 32V300" stroke="#3a362f" stroke-width="1"/>
+        <g class="v-elevator">
+          <rect x="191.5" y="34" width="17" height="24" rx="2" fill="#f2c230" stroke="#1b1b1b" stroke-width="1.5"/>
+          <rect x="195" y="38" width="10" height="12" fill="#1c1a17"/>
         </g>
-        <g class="office-agent status-idle" id="office-agent-publica" role="button" tabindex="0" aria-label="Publica" transform="translate(80 0)">
-          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
-          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
-          <text id="office-bubble-publica" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
-          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
-          <rect x="30" y="107" width="20" height="20" rx="6" fill="#378ADD"/>
-          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
-          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
-          <rect class="screen" x="32" y="114" width="16" height="8"/>
-          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Publica</text>
+
+        <g class="office-agent status-idle" id="office-agent-videos" role="button" tabindex="0" aria-label="Videos" transform="translate(10 38)">
+          <use href="#vault-room"/>
+          <path d="M0 22H178M0 27H178" stroke="#8a949a" stroke-width="3" opacity=".55"/>
+          <rect x="10" y="92" width="76" height="6" fill="url(#vault-hazard)"/>
+          <g class="v-gear">
+            <circle cx="48" cy="62" r="25" fill="#9aa3a8" stroke="#3a3f42" stroke-width="7" stroke-dasharray="7 5"/>
+            <circle cx="48" cy="62" r="20" fill="#7d868b" stroke="#3a3f42" stroke-width="2"/>
+            <circle cx="48" cy="62" r="7" fill="#f2c230" stroke="#3a3f42" stroke-width="2"/>
+            <path d="M48 44V80M30 62H66" stroke="#3a3f42" stroke-width="2.5"/>
+          </g>
+          <rect x="128" y="42" width="34" height="24" rx="2" fill="#10151a" stroke="#8a949a" stroke-width="2"/>
+          <path class="v-term" d="M139 48L152 54L139 60Z"/>
+          <g transform="translate(108 104) scale(1.25)"><use class="v-dw" href="#vault-dweller" style="--skin:#f2c9a0;--hair:#5a3b1e"/></g>
+          <rect class="room-dim" width="178" height="122"/>
+          <rect class="room-glow" width="178" height="122"/>
+          <rect class="room-frame" x="-1" y="-1" width="180" height="124" rx="3"/>
+          <rect class="v-plate" x="6" y="105" width="56" height="12" rx="2"/>
+          <text class="v-plate-text" x="34" y="114" text-anchor="middle">VIDEOS</text>
+          <circle class="room-led" cx="166" cy="18" r="4"/>
+          <rect class="bubble-bg" x="24" y="13" width="122" height="17" rx="5"/>
+          <text class="bubble-text" id="office-bubble-videos" x="85" y="25" text-anchor="middle">Cargando…</text>
+          <rect class="office-focus" x="-4" y="-4" width="186" height="130" rx="5"/>
         </g>
-        <g class="office-agent status-idle" id="office-agent-metricas" role="button" tabindex="0" aria-label="Métricas" transform="translate(160 0)">
-          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
-          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
-          <text id="office-bubble-metricas" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
-          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
-          <rect x="30" y="107" width="20" height="20" rx="6" fill="#1D9E75"/>
-          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
-          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
-          <rect class="screen" x="32" y="114" width="16" height="8"/>
-          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Métricas</text>
+
+        <g class="office-agent status-idle" id="office-agent-publica" role="button" tabindex="0" aria-label="Publica" transform="translate(212 38)">
+          <use href="#vault-room"/>
+          <rect class="v-onair" x="16" y="38" width="44" height="15" rx="3"/>
+          <text class="v-onair-text" x="38" y="49" text-anchor="middle">ON AIR</text>
+          <rect x="12" y="78" width="66" height="22" rx="2" fill="#7a5a35" stroke="#1b1b1b" stroke-width="1.5"/>
+          <path d="M40 78V64" stroke="#2b2b2b" stroke-width="2"/>
+          <rect x="36" y="57" width="8" height="10" rx="4" fill="#2b2b2b" stroke="#8a949a" stroke-width="1"/>
+          <path d="M150 98V50" stroke="#8a949a" stroke-width="3"/>
+          <path d="M142 98L150 74L158 98" stroke="#8a949a" stroke-width="2" fill="none"/>
+          <circle cx="150" cy="46" r="4" fill="#f2c230" stroke="#1b1b1b" stroke-width="1.5"/>
+          <path class="v-wave" d="M141 40A12 12 0 0 1 141 52"/>
+          <path class="v-wave v-wave2" d="M135 36A19 19 0 0 1 135 56"/>
+          <path class="v-wave" d="M159 40A12 12 0 0 0 159 52"/>
+          <path class="v-wave v-wave2" d="M165 36A19 19 0 0 0 165 56"/>
+          <g transform="translate(106 104) scale(1.25)"><use class="v-dw" href="#vault-dweller" style="--skin:#c68b5e;--hair:#1f1a17"/></g>
+          <rect class="room-dim" width="178" height="122"/>
+          <rect class="room-glow" width="178" height="122"/>
+          <rect class="room-frame" x="-1" y="-1" width="180" height="124" rx="3"/>
+          <rect class="v-plate" x="6" y="105" width="56" height="12" rx="2"/>
+          <text class="v-plate-text" x="34" y="114" text-anchor="middle">PUBLICA</text>
+          <circle class="room-led" cx="166" cy="18" r="4"/>
+          <rect class="bubble-bg" x="24" y="13" width="122" height="17" rx="5"/>
+          <text class="bubble-text" id="office-bubble-publica" x="85" y="25" text-anchor="middle">Cargando…</text>
+          <rect class="office-focus" x="-4" y="-4" width="186" height="130" rx="5"/>
         </g>
-        <g class="office-agent status-idle" id="office-agent-revisor" role="button" tabindex="0" aria-label="Revisor" transform="translate(240 0)">
-          <rect class="office-focus" x="4" y="52" width="72" height="118" rx="6"/>
-          <rect class="bubble-bg" x="4" y="56" width="72" height="20" rx="4" fill="#fff" stroke="#c9c2b4"/>
-          <text id="office-bubble-revisor" x="40" y="70" text-anchor="middle" fill="#3b2f1e" font-size="11">Cargando…</text>
-          <circle cx="40" cy="98" r="9" fill="#f2c9a0"/>
-          <rect x="30" y="107" width="20" height="20" rx="6" fill="#7F77DD"/>
-          <rect x="12" y="122" width="56" height="26" rx="3" fill="#a9743f"/>
-          <rect x="30" y="112" width="20" height="12" rx="2" fill="#2b2b3a"/>
-          <rect class="screen" x="32" y="114" width="16" height="8"/>
-          <text x="40" y="165" text-anchor="middle" fill="#3b2f1e" font-size="11">Revisor</text>
+
+        <g class="office-agent status-idle" id="office-agent-metricas" role="button" tabindex="0" aria-label="Métricas" transform="translate(10 168)">
+          <use href="#vault-room"/>
+          <rect x="12" y="36" width="72" height="50" rx="2" fill="#0e1a14" stroke="#8a949a" stroke-width="2"/>
+          <path d="M18 80H78" stroke="#3d5a47" stroke-width="1"/>
+          <rect class="v-bar" x="20" y="64" width="9" height="16"/>
+          <rect class="v-bar v-bar2" x="33" y="52" width="9" height="28"/>
+          <rect class="v-bar" x="46" y="58" width="9" height="22"/>
+          <rect class="v-bar v-bar2" x="59" y="44" width="9" height="36"/>
+          <rect x="136" y="88" width="34" height="12" rx="1" fill="#7a5a35" stroke="#1b1b1b" stroke-width="1.5"/>
+          <path d="M149 88V78H157V88L162 88L157 80H149L144 88Z" fill="#cfe8ee" stroke="#1b1b1b" stroke-width="1"/>
+          <path d="M145 88L148 82H158L161 88Z" fill="#66ff99"/>
+          <g transform="translate(112 104) scale(1.25)"><use class="v-dw" href="#vault-dweller" style="--skin:#e8b98a;--hair:#c9a227"/></g>
+          <rect class="room-dim" width="178" height="122"/>
+          <rect class="room-glow" width="178" height="122"/>
+          <rect class="room-frame" x="-1" y="-1" width="180" height="124" rx="3"/>
+          <rect class="v-plate" x="6" y="105" width="56" height="12" rx="2"/>
+          <text class="v-plate-text" x="34" y="114" text-anchor="middle">MÉTRICAS</text>
+          <circle class="room-led" cx="166" cy="18" r="4"/>
+          <rect class="bubble-bg" x="24" y="13" width="122" height="17" rx="5"/>
+          <text class="bubble-text" id="office-bubble-metricas" x="85" y="25" text-anchor="middle">Cargando…</text>
+          <rect class="office-focus" x="-4" y="-4" width="186" height="130" rx="5"/>
+        </g>
+
+        <g class="office-agent status-idle" id="office-agent-revisor" role="button" tabindex="0" aria-label="Revisor" transform="translate(212 168)">
+          <use href="#vault-room"/>
+          <rect x="146" y="38" width="20" height="30" fill="#1f62b8" stroke="#f2c230" stroke-width="1.5"/>
+          <circle cx="156" cy="53" r="6" fill="#f2c230"/>
+          <circle cx="156" cy="53" r="2.5" fill="#1f62b8"/>
+          <circle class="v-alarm" cx="24" cy="42" r="6"/>
+          <rect x="88" y="80" width="72" height="20" rx="2" fill="#7a5a35" stroke="#1b1b1b" stroke-width="1.5"/>
+          <rect x="108" y="58" width="32" height="22" rx="2" fill="#10151a" stroke="#8a949a" stroke-width="2"/>
+          <path class="v-term v-term-line" d="M113 64H132M113 69H128M113 74H134" stroke-width="2" fill="none"/>
+          <g transform="translate(60 104) scale(1.25)"><use class="v-dw" href="#vault-dweller" style="--skin:#f2c9a0;--hair:#8c8c8c"/></g>
+          <rect class="room-dim" width="178" height="122"/>
+          <rect class="room-glow" width="178" height="122"/>
+          <rect class="room-frame" x="-1" y="-1" width="180" height="124" rx="3"/>
+          <rect class="v-plate" x="6" y="105" width="56" height="12" rx="2"/>
+          <text class="v-plate-text" x="34" y="114" text-anchor="middle">REVISOR</text>
+          <circle class="room-led" cx="166" cy="18" r="4"/>
+          <rect class="bubble-bg" x="24" y="13" width="122" height="17" rx="5"/>
+          <text class="bubble-text" id="office-bubble-revisor" x="85" y="25" text-anchor="middle">Cargando…</text>
+          <rect class="office-focus" x="-4" y="-4" width="186" height="130" rx="5"/>
         </g>
       </svg>
       <div id="office-3d" hidden></div>
@@ -833,6 +1035,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
+        <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (video + post de imagen)</option>
         <option value="mix_gaming">Mixto — Gaming (alterna clip y post)</option>
@@ -915,6 +1118,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="300" class="duration-long-option">5 minutos</option>
         <option value="600" class="duration-long-option">10 minutos</option>
       </select>
+      <p class="pub-hint">Las páginas con guion (Historias, Macramé, Niño Selectivo) duran ~1:30 y no usan esta opción.</p>
 
       <div class="field-label-row" style="margin-top:14px">
         <label for="pipeline-provider">Crear las imágenes con</label>
@@ -1216,6 +1420,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
+        <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (1 video, 1 post, 1 video, 1 post…)</option>
         <option value="mix_gaming">Mixto — Gaming (1 clip, 1 post, 1 clip, 1 post…)</option>
@@ -1285,6 +1490,7 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
+      <p class="pub-hint" id="lote-howbig-note" style="display:none">Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora Chile). Solo Facebook.</p>
       <div id="lote-page-wrap" style="margin-top:10px">
         <label for="lote-page">Página</label>
         <select id="lote-page"></select>
@@ -1353,6 +1559,7 @@ HTML = r"""<!DOCTYPE html>
           <option value="300" class="duration-long-option">5 minutos</option>
           <option value="600" class="duration-long-option">10 minutos</option>
         </select>
+        <p class="pub-hint">Las páginas con guion (Historias, Macramé, Niño Selectivo) duran ~1:30 y no usan esta opción.</p>
 
         <label class="checkbox-row" for="lote-subtitles-enabled">
           <input type="checkbox" id="lote-subtitles-enabled" checked>
@@ -1812,8 +2019,8 @@ function officeSelect(id) {
   officeRenderAutomation(true);
   if (office3d) office3d.setSelected(id);
   Object.keys(OFFICE_AGENTS).forEach(k => {
-    const b = $("office-btn-" + k);
-    if (b) b.classList.toggle("selected", k === id);
+    $("office-agent-" + k).classList.toggle("selected", k === id);
+    $("office-btn-" + k).classList.toggle("selected", k === id);
   });
 }
 
@@ -1857,11 +2064,11 @@ async function officeInit3D() {
   office3dTried = true;
   if (!officeWebGL()) return;  // sin WebGL ni se descarga three.js: queda el SVG
   try {
-    const mod = await import("/static/office3d.js");
+    const mod = await import("/static/vault3d.js");
     const box = $("office-3d");
     box.hidden = false;
     $("office-agent-row").hidden = false;
-    office3d = mod.mountOffice3D(box, {
+    office3d = mod.mountVault3D(box, {
       onSelect: officeSelect,
       onLost: officeFallbackToSvg,
       reducedMotion: !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
@@ -1870,7 +2077,7 @@ async function officeInit3D() {
     office3d.setSelected(officeSelected);
     officeRender(true);
   } catch (e) {
-    console.warn("Oficina 3D no disponible, se usa la escena SVG:", e);
+    console.warn("Vault 3D no disponible, se usa la escena SVG:", e);
     officeFallbackToSvg();
   }
 }
@@ -1880,7 +2087,8 @@ function officeRender(force) {
     const v = officeAgentView(id);
     const text = officeOffline ? "Sin conexión" : v.bubble;
     $("office-agent-" + id).setAttribute("class",
-      "office-agent status-" + (officeOffline ? "idle" : v.status) + (officeOffline ? " offline" : ""));
+      "office-agent status-" + (officeOffline ? "idle" : v.status) + (officeOffline ? " offline" : "") +
+      (id === officeSelected ? " selected" : ""));
     $("office-bubble-" + id).textContent = text;
     $("office-agent-" + id).setAttribute("aria-label", OFFICE_AGENTS[id].title + ": " + text);
   });
@@ -1923,76 +2131,31 @@ Object.keys(OFFICE_AGENTS).forEach(id => {
   const g = $("office-agent-" + id);
   const select = () => officeSelect(id);
   g.addEventListener("click", select);
+  $("office-btn-" + id).addEventListener("click", select);
   g.addEventListener("keydown", e => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
   });
-  $("office-btn-" + id).addEventListener("click", select);
 });
 /* OFFICE:END */
 
-/* MATRIX:START */
-const RAIN_CELL = 16;
-const RAIN_GLYPHS = (() => {
-  let s = "";
-  for (let c = 0xFF66; c <= 0xFF9D; c++) s += String.fromCharCode(c);
-  return s + "0123456789";
-})();
-let rainTimer = null;
-let rainWidth = 0;
-let rainDrops = [];
+/* THEME:START */
+const THEMES = ["fallout3", "fallout4", "classic"];
+const THEME_LABELS = { fallout3: "Fallout 3", fallout4: "Fallout 4", classic: "Clásico" };
 
 function themeCurrent() {
-  return document.documentElement.getAttribute("data-theme") === "classic" ? "classic" : "matrix";
+  const t = document.documentElement.getAttribute("data-theme");
+  return THEMES.includes(t) ? t : "fallout3";
 }
 
 function themeApply(t) {
   document.documentElement.setAttribute("data-theme", t);
   try { localStorage.setItem("uiTheme", t); } catch (e) { /* sin localStorage: el tema vive en memoria */ }
-  const b = $("theme-toggle");
-  b.textContent = t === "matrix" ? "Tema: Matrix" : "Tema: Clásico";
-  b.setAttribute("aria-pressed", String(t === "matrix"));
-  rainSync();
+  $("theme-toggle").textContent = "Tema: " + THEME_LABELS[t];
 }
 
-function rainResize() {
-  const c = $("matrix-rain");
-  c.width = window.innerWidth;
-  c.height = window.innerHeight;
-  rainDrops = Array.from({ length: Math.ceil(c.width / RAIN_CELL) }, () => -Math.floor(Math.random() * 50));
-}
-
-function rainFrame() {
-  const c = $("matrix-rain");
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
-  ctx.fillRect(0, 0, c.width, c.height);
-  ctx.fillStyle = "#00ff41";
-  ctx.font = RAIN_CELL + "px monospace";
-  rainDrops.forEach((y, i) => {
-    ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL, y * RAIN_CELL);
-    rainDrops[i] = (y * RAIN_CELL > c.height && Math.random() > 0.975) ? 0 : y + 1;
-  });
-}
-
-function rainSync() {
-  rainWidth = window.innerWidth;
-  if (rainTimer) { clearInterval(rainTimer); rainTimer = null; }
-  const c = $("matrix-rain");
-  if (themeCurrent() !== "matrix" || document.hidden) return;
-  rainResize();
-  c.getContext("2d").clearRect(0, 0, c.width, c.height);
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    for (let i = 0; i < 60; i++) rainFrame();  // un cuadro estático
-    return;
-  }
-  rainTimer = setInterval(rainFrame, 50);
-}
-
-$("theme-toggle").addEventListener("click", () => themeApply(themeCurrent() === "matrix" ? "classic" : "matrix"));
-document.addEventListener("visibilitychange", rainSync);
-window.addEventListener("resize", () => { if (themeCurrent() === "matrix" && window.innerWidth !== rainWidth) rainSync(); });
+$("theme-toggle").addEventListener("click", () => themeApply(THEMES[(THEMES.indexOf(themeCurrent()) + 1) % THEMES.length]));
 themeApply(themeCurrent());
-/* MATRIX:END */
+/* THEME:END */
 
 // ── Navegación por pestañas (tabs superiores + sidebar) ──
 function activateTab(tab) {
@@ -2321,12 +2484,13 @@ let gamingJobId = null;
 let lastGamingJobType = null; // tipo del ultimo post renderizado (para regenerar en un mixto)
 try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
 // Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
-const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "howbig_image";
 const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
   ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
   historias_image: "dame el próximo post de historias de rescate", mix_historias: "dame una historia",
+  howbig_image: "give me the next How Big Really post",
   mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming", mix_macrame: "dame una historia",
 };
 // Cada mixto alterna estos dos tipos (igual que MIXED_TYPES en batch_pipeline.py).
@@ -2718,6 +2882,7 @@ function renderGamingJob(job) {
     $("gaming-caption").value = job.caption || "";
     // YouTube solo para clips (Short); por defecto marcado.
     $("gaming-youtube").checked = isClip;
+    $("gaming-instagram").checked = jobType !== "howbig_image";
     checkGamingYoutube(isClip);
     if (isClip) loadGamingGames();  // la generación del clip actualizó la lista de juegos
   }
@@ -2725,8 +2890,9 @@ function renderGamingJob(job) {
   for (const key of Object.keys(GAMING_NETWORKS)) {
     const st = (job.networks[key] || {}).status;
     const locked = st === "waiting" || st === "running" || st === "done";
-    $(`gaming-${key}`).disabled = locked;
-    if (locked) $(`gaming-${key}`).checked = false;
+    const facebookOnly = jobType === "howbig_image" && key !== "facebook";  // How Big Really: solo Facebook
+    $(`gaming-${key}`).disabled = locked || facebookOnly;
+    if (locked || facebookOnly) $(`gaming-${key}`).checked = false;
   }
   $("gaming-publish-btn").disabled = busy;
   $("gaming-regen-btn").disabled = busy;
@@ -2753,7 +2919,7 @@ async function pollGamingJob() {
   if (job.status === "generating" || busy) gamingPollTimer = setTimeout(pollGamingJob, 3000);
 }
 
-const GAMING_START_KIND = { ninio_image: "ninio", macrame_image: "macrame", historias_image: "historias" };
+const GAMING_START_KIND = { ninio_image: "ninio", macrame_image: "macrame", historias_image: "historias", howbig_image: "howbig" };
 async function startGamingPost(pageName, triggerMessage, type, withVideo = false) {
   $("pipeline-start-btn").disabled = true;
   let started = false;
@@ -3230,6 +3396,7 @@ $("lote-orientation").addEventListener("change", () => updateDurationOptions("lo
 updateDurationOptions("pipeline-orientation", "pipeline-duration");
 updateDurationOptions("lote-orientation", "lote-duration");
 
+let loteIgSaved = null; // casilla de Instagram antes de elegir How Big Really (se restaura al cambiar de tipo)
 function updateLoteTypeVisibility() {
   const type = $("lote-type").value;
   const isGaming = isPostType(type);
@@ -3241,6 +3408,18 @@ function updateLoteTypeVisibility() {
   const noYoutube = isImagePostType(type);
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
   $("lote-yt").closest("label").style.display = noYoutube ? "none" : "";
+  // How Big Really: solo Facebook (Instagram bloqueado y desmarcado) y horario automático por fases.
+  const howbig = type === "howbig_image";
+  $("lote-howbig-note").style.display = howbig ? "" : "none";
+  if (howbig) {
+    if (loteIgSaved === null) loteIgSaved = $("lote-ig").checked;
+    $("lote-fb").checked = true;
+    $("lote-ig").checked = false;
+  } else if (loteIgSaved !== null) {
+    $("lote-ig").checked = loteIgSaved;
+    loteIgSaved = null;
+  }
+  $("lote-ig").disabled = howbig;
   // placeholder removed
 }
 $("lote-type").addEventListener("change", updateLoteTypeVisibility);
@@ -3267,7 +3446,7 @@ $("lote-create-btn").addEventListener("click", async () => {
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
-  if ($("lote-ig").checked) networks.instagram = { page_id: pageId };
+  if (contentType !== "howbig_image" && $("lote-ig").checked) networks.instagram = { page_id: pageId };
   if (!isImagePostType(contentType) && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
@@ -4496,15 +4675,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                        trigger_message: Optional[str] = None, visual_style: Optional[str] = None,
                        duration_seconds: Optional[int] = None,
                        text_provider_pref: str = ""):
-    bebe = bool(page_name) and batch_pipeline._text_kind_for_page(page_name) == batch_pipeline.BEBE_HEROE_KIND
-    bebe_tag = None  # hashtag del tema sorteado: elige el efecto de sonido (assets/bebe_heroe/sfx)
-    bebe_timings: list = []  # [{text, start, dur}] de las 4 frases (los llena run_tts)
-    if bebe:  # Bebé Héroe: voz clonada, subtitulos del tema, sin titulo en pantalla ni recorte por duracion
-        tts_kwargs = {**tts_kwargs, "voice": batch_pipeline._bebe_heroe_voice(tts_kwargs.get("voice"))}
-        duration_seconds = None
-        generate_video_clips = False  # la composicion usa imagenes
-    elif page_name and batch_pipeline._has_fixed_length(page_name):  # anuncio de Niño Selectivo: ~14 s fijos
-        duration_seconds = None
+    if page_name:
+        duration_seconds = None  # las paginas con guion duran ~1:30 fijos
     if page_name and not story_text:
         _pipeline_sub_update(job_id, "text", status="running",
                               message=f"Generando historia (proveedor de texto: {text_provider_pref or 'auto'})...")
@@ -4513,9 +4685,6 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             trigger_text = auto_pipeline.build_trigger_message(
                 trigger_message or "dame una historia", duration_seconds, kind=text_kind,
             )
-            if bebe:
-                _, bebe_tag, extra = batch_pipeline.bebe_trigger_block()
-                trigger_text += extra
             if page_name.strip().upper() == batch_pipeline.RESCUE_PAGE_NAME:
                 pattern = batch_pipeline._pick_story_pattern(
                     batch_pipeline._recent_story_patterns(batch_pipeline._load()))
@@ -4537,11 +4706,7 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
                     batch_pipeline.AD_KINDS[text_kind].get("subjects", ()))
             if text_kind == "historias":
                 auto_pipeline.validate_historia_story_text(story_text, story_id)
-            if bebe:
-                _, story_text = batch_pipeline._split_hook_text(story_text)
-                n_scenes = len(auto_pipeline.load_story_from_text(story_text, story_id)["prompts"])
-                if n_scenes != batch_pipeline.BEBE_HEROE_SCENES:
-                    raise RuntimeError(f"Bebé Héroe necesita {batch_pipeline.BEBE_HEROE_SCENES} escenas y llegaron {n_scenes}.")
+            auto_pipeline.validate_long_story_text(story_text, story_id)
         except Exception as e:
             logger.exception("pipeline job %s: fallo al generar la historia", job_id)
             _pipeline_sub_update(job_id, "text", status="error", error=str(e))
@@ -4569,11 +4734,8 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             script_text = " ".join(
                 p["frase"] for p in sorted(story_for_script["prompts"], key=lambda p: p["index"])
             )
-        if bebe:  # las 4 frases de las imagenes son el guion completo
-            script_text = batch_pipeline.bebe_script_from_story(auto_pipeline.load_story_from_text(story_text, story_id))
         try:
-            auto_pipeline.validate_script(
-                script_text, min_words=batch_pipeline.BEBE_HEROE_MIN_WORDS if bebe else auto_pipeline.MIN_SCRIPT_WORDS)
+            auto_pipeline.validate_script(script_text)
         except auto_pipeline.PipelineError as e:
             logger.error("pipeline job %s: %s", job_id, e)
             _pipeline_sub_update(job_id, "text", status="error", error=str(e))
@@ -4599,25 +4761,25 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
             _pipeline_sub_update(job_id, "tts", percent=pct, message=msg)
 
         try:
-            if bebe:  # una voz por frase, cada una en su hueco fijo del reel de 18 s
-                frases = [p["frase"] for p in sorted(
-                    auto_pipeline.load_story_from_text(story_text, story_id)["prompts"], key=lambda p: p["index"])]
-                output_path, bebe_timings[:] = batch_pipeline.generate_bebe_heroe_voice(
-                    frases, tts_kwargs.get("voice"),
-                    on_progress=lambda i, n: on_progress(int(100 * (i - 1) / n), f"Voz de la frase {i} de {n}..."))
-                narration = {"ok": True, "skipped": True}
-            else:
-                output_path, narration = text_to_speech_verified(script_text, on_progress=on_progress, **tts_kwargs)
+            output_path, narration = text_to_speech_verified(
+                script_text, on_progress=on_progress, **tts_kwargs,
+            )
         except Exception as e:
             logger.exception("pipeline job %s: tts fallo", job_id)
             _pipeline_sub_update(job_id, "tts", status="error", error=str(e), percent=100)
             return
+        if output_path and page_name:  # las paginas con guion duran mas de 1:20: una voz mas corta se rechaza
+            try:
+                auto_pipeline.validate_min_duration(video_maker.get_audio_duration(output_path))
+            except Exception as e:  # tambien un audio ilegible: el estado nunca queda en "running" (el reintento esperaria para siempre)
+                logger.error("pipeline job %s: %s", job_id, e)
+                _pipeline_sub_update(job_id, "tts", status="error", error=str(e), percent=100)
+                return
         if output_path:
             logger.info("pipeline job %s: tts listo (%s)", job_id, output_path)
             check = "narración validada" if narration.get("ok") and not narration.get("skipped") else "Listo"
             _pipeline_sub_update(job_id, "tts", status="done", percent=100, message=check,
-                                  filename=Path(output_path).name,
-                                  **({"phrases": list(bebe_timings), "bebe_tag": bebe_tag} if bebe else {}))
+                                  filename=Path(output_path).name)
         else:
             logger.error("pipeline job %s: tts fallo sin excepcion", job_id)
             _pipeline_sub_update(job_id, "tts", status="error", percent=100,
@@ -4734,29 +4896,25 @@ def _run_pipeline_job(job_id: str, story_text: str, story_id: str, clips_dir: Pa
         story = auto_pipeline.load_story_from_text(story_text, story_id)
         frases = [p["frase"] for p in sorted(story["prompts"], key=lambda p: p["index"])]
         with _video_render_lock:
-            if bebe:
-                timeline = video_maker.build_bebe_heroe_props(
-                    clips, audio_path, bebe_timings or tts_state.get("phrases") or [],
-                    sfx_tag=bebe_tag or tts_state.get("bebe_tag"), on_progress=on_progress)
-            else:
-                timeline = video_maker.build_props(
-                    image_paths=clips,
-                    audio_path=audio_path,
-                    title=title,
-                    subtitles_enabled=subtitles_enabled,
-                    subtitle_style=subtitle_style,
-                    frases=frases,
-                    animate_images=animate_images,
-                    on_progress=on_progress,
-                    script_text=script_text,
-                    phone_card=batch_pipeline.phone_card_for_page(page_name) if page_name else None,
-                    phone_card_cta="COMENTA EBOOK",
-                )
+            timeline = video_maker.build_props(
+                image_paths=clips,
+                audio_path=audio_path,
+                title=title,
+                subtitles_enabled=subtitles_enabled,
+                subtitle_style=subtitle_style,
+                frases=frases,
+                animate_images=animate_images,
+                on_progress=on_progress,
+                script_text=script_text,
+                phone_card=batch_pipeline.phone_card_for_page(page_name) if page_name else None,
+                phone_card_cta="COMENTA EBOOK",
+                mood="warm_night",
+            )
             video_path = None
             if timeline:
                 video_path = video_maker.render_props(
                     video_maker.VIDEO_DIR / "props.json",
-                    orientation="vertical" if bebe else orientation,
+                    orientation=orientation,
                     on_progress=on_progress,
                 )
     except Exception as e:
@@ -4936,8 +5094,7 @@ def api_pipeline_retry(job_id):
             "story": {
                 "tts": (
                     {"status": "done", "percent": 100, "message": "Reutilizado de un intento anterior",
-                     "error": None, "filename": audio_filename,
-                     "phrases": old_tts.get("phrases"), "bebe_tag": old_tts.get("bebe_tag")}
+                     "error": None, "filename": audio_filename}
                     if skip_tts else
                     {"status": "pending", "percent": 0,
                      "message": "Esperando el audio del intento anterior..." if wait_tts_from else "",
@@ -5520,9 +5677,10 @@ def _run_gaming_generate(job_id: str, page_name: str, trigger_message: str,
         logger.exception("gaming %s: fallo la generacion", job_id)
         _gaming_update(job_id, status="error", stage=None, error=str(e))
         return
+    template = post.get("template", template)  # How Big Really: la plantilla del tema elegido, no la sorteada
     batch_pipeline._append_gaming_history({
         "project_id": "manual", "index": 0, "hook": post["hook"], "idea": post["idea"],
-        "template": template, "created_at": datetime.now().isoformat(),
+        "template": template, "topic_id": post.get("topic_id"), "created_at": datetime.now().isoformat(),
     }, profile["history_store"])
     _gaming_update(
         job_id, status="ready", stage=None, error=None, hook=post["hook"], top=post["top"],
@@ -5585,7 +5743,8 @@ def api_gaming_start():
     data = request.get_json(force=True)
     kind = "clip" if data.get("kind") == "clip" else "image"
     # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
-    profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image"}.get(
+    profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image",
+                   "howbig": "howbig_image"}.get(
         data.get("kind"), "gaming_image")
     if kind == "clip":
         game_key = data.get("game") or ""
@@ -5791,6 +5950,10 @@ def api_gaming_publish():
         job = _gaming_jobs.get(job_id)
         if not job:
             return jsonify({"ok": False, "error": "Post no encontrado."}), 404
+        if job.get("profile") == "howbig_image":
+            networks = [n for n in networks if n == "facebook"]  # How Big Really: solo Facebook
+            if not networks:
+                return jsonify({"ok": False, "error": "How Big Really se publica solo en Facebook."}), 400
         if "youtube" in networks and job.get("kind") != "clip":
             return jsonify({"ok": False, "error": "YouTube es solo para clips de video, no para posts de imagen."}), 400
         # Solo la imagen de Instagram se descarga por el tunel; el clip se sube directo.
@@ -6464,6 +6627,9 @@ def api_batch_create():
     networks = data.get("networks") or {}
     if image_profile:
         networks = {k: v for k, v in networks.items() if k != "youtube"}  # YouTube solo para clips
+    if content_type == "howbig_image" and not networks.get("facebook"):
+        # create_project descarta Instagram/YouTube de este tipo; sin Facebook no quedaria ninguna red.
+        return jsonify({"ok": False, "error": "How Big Really se publica solo en Facebook: activa Facebook."})
     video_settings = data.get("video_settings") or {}
     voice_error = _voice_error(video_settings.get("voice"))
     if voice_error:

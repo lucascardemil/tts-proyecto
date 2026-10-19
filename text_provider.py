@@ -42,7 +42,8 @@ FREELLM_FALLBACK_MODELS = tuple(
     m.strip() for m in (os.environ.get("FREELLM_FALLBACK_MODELS") or "mistral-medium-3.5,gemini-3.5-flash,auto").split(",")
     if m.strip()
 )
-FREELLM_TIMEOUT = int(os.environ.get("FREELLM_TIMEOUT", "300"))  # seg
+# seg. Una respuesta larga (~8 mil tokens, mas ~3 mil de razonamiento en el router "auto") puede pasar de 300 s.
+FREELLM_TIMEOUT = int(os.environ.get("FREELLM_TIMEOUT", "600"))
 FREELLM_MAX_TOKENS = int(os.environ.get("FREELLM_MAX_TOKENS", "4096"))
 
 # Reintentos internos por request ante red/timeouts/5xx
