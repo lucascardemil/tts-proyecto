@@ -184,7 +184,8 @@ def find_cause_resolved(data: dict, now: datetime) -> list:
 
 
 def find_republish(data: dict, now: datetime) -> list:
-    """Ítem en publish_error cuyo token de Meta para esa página está válido y cuyo último error no fue de autenticación."""
+    """Ítem en publish_error cuyo token de Meta para esa página está válido, cuyo último error no fue de autenticación
+    y que el auto-sanado de publicaciones de los lotes ya dio por perdido."""
     if "projects" in data.get("errors", {}):
         return []
     tokens = {office_state._norm(t.get("page_name")): t for t in data.get("tokens") or []}
@@ -192,6 +193,8 @@ def find_republish(data: dict, now: datetime) -> list:
     for project, video in office_state._items(data.get("projects", [])):
         if video.get("status") != "publish_error" or video.get("last_publish_auth_error"):
             continue
+        if video.get("publish_heal_cycles", 0) < batch_pipeline.MAX_PUBLISH_HEAL_CYCLES:
+            continue  # el auto-sanado de publicaciones de los lotes todavia se hace cargo de este ítem
         token = tokens.get(office_state._norm(office_state._page(project)))
         if token and token.get("ok") and not token.get("auth_error"):
             found.append(_target("republish", project, video))
@@ -219,7 +222,7 @@ def _exec_retry(target: Target):
 
 
 def _exec_republish(target: Target):
-    ok = batch_pipeline.retry_publish_video(target.payload["project_id"], target.payload["index"])
+    ok = batch_pipeline.retry_publish_video(target.payload["project_id"], target.payload["index"], reset_heal=False)
     return ok, "Publicación reintentada" if ok else "El ítem ya no estaba sin publicar"
 
 

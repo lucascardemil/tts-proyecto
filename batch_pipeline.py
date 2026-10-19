@@ -327,34 +327,22 @@ MAX_HEAL_CYCLES = 4
 GEMINI_QUOTA_MARKER = "cuota de gemini agotada"
 GEMINI_QUOTA_COOLDOWN_SECONDS = 6 * 3600  # 6h, 12h, 24h, 48h con MAX_HEAL_CYCLES=4
 
-# Ademas de los transitorios: fallos de proveedor que un nuevo guion/prompt
-# suele resolver. NO incluye "no encontre el proyecto" (nombre mal puesto:
-# reintentar no lo arregla) ni errores de parseo, salvo respuestas sin prompts.
-_HEALABLE_EXTRA_MARKERS = (
-    "el audio no coincide con el guion",  # el TTS invento/omitio palabras: otro audio suele salir bien
-    "meta ai no pudo generar",
-    "no encontre el boton 'meta ai'", "no encontre (habilitado)",
-    "filtro de seguridad de contenido",  # guion rechazado: otro guion suele pasar
-    "los clips no coinciden con la historia",  # regenerar desde cero lo arregla
-    "is covered by",  # overlay de carga (splash) tapando el clic en WhatsApp: pasa solo
-    "no se encontraron prompts de imagen",  # el modelo a veces responde solo el guion: otra respuesta suele traerlos
-    "no se pudo leer medal", "nameresolutionerror", "max retries exceeded",  # sin internet/DNS al buscar el clip
-    "flow no devolvió", "flow falló generando", "tardó más de",  # Google Flow lento o sin respuesta: se reintenta
-    "no están en inglés",  # el modelo escribio los prompts de imagen en español: otro modelo suele cumplir
-    "unknown ref",  # WhatsApp Web se redibujo entre el snapshot y el clic: pasa solo
-    "no hay noticias de videojuegos", "ningun medio de videojuegos",  # sin noticias nuevas / sin internet: se reintenta mas tarde
-    "no cierra con comenta ebook",  # el modelo olvido el llamado a la accion: otro intento suele cumplir
-    "guion de historia fuera de formato",  # largo o cierre fuera del formato de ~90 s: otro intento suele cumplir
-    "guion fuera de largo",  # el modelo respondio un guion mas corto o mas largo que el de ~90 s: otro intento suele cumplir
-    "imágenes fuera de rango",  # el modelo respondio con otra cantidad de imagenes (16-20): otro intento suele cumplir
-    "video más corto que 1:20",  # la voz salio mas corta de lo esperado: otro audio suele pasar de 1:20
-    "remotion falló",  # el render del clip falla por el clip elegido: otro clip suele salir bien
-    "respuesta truncada por max_tokens",  # modelo de razonamiento que no alcanzo a contestar: otro modelo/momento suele
-    "cuota agotada (429)",  # limite por minuto del proveedor de texto: se repone en minutos
-    "no trae bloques imagen",  # razonamiento volcado o formato roto: otra respuesta suele traerlos
-    "timed out",  # el proveedor de texto no termino a tiempo una respuesta larga: otro momento/modelo suele
-    "fallo tras",  # el proveedor de texto agoto sus reintentos internos (red/timeout/5xx): suele pasar solo
+# Errores que reintentar NO arregla porque hace falta una accion humana (iniciar sesion, configurar una
+# key, nombre de proyecto mal puesto, archivo o voz que ya no existen). Todo otro error de generacion se
+# considera transitorio (red, proveedor, un guion/audio/imagen mal salido) y se sana solo con cooldown.
+_PERMANENT_ERROR_MARKERS = (
+    "no encontre el proyecto",  # nombre mal puesto
+    "pide iniciar sesión", "pide iniciar sesion",  # Flow/Google: hay que entrar a mano
+    "falta una key",  # sin key de vision/proveedor en el .env
+    "system prompt",  # prompts/<kind>_system.md no encontrado (configuracion)
+    "no existe el archivo", "ya no existe",  # archivo borrado / voz clonada eliminada
 )
+
+# Sanado de videos cuya PUBLICACION agoto MAX_AUTO_RETRIES (publish_error): una caida de internet, de Meta o de
+# YouTube dura mas de los ~3 min que gastan esos intentos. Espera creciente (15, 30, 60, 120 min). Los errores
+# de autenticacion (token vencido, cuenta) no se sanan solos: hace falta renovar el token.
+PUBLISH_HEAL_COOLDOWN_SECONDS = 900
+MAX_PUBLISH_HEAL_CYCLES = 4
 
 # Perfil de proyecto para historias de rescate animal (Manual maestro v3.2):
 # activa el filtro de vocabulario del guion, copy por red, rotulo de IA,
@@ -503,8 +491,9 @@ def rescue_story_block(pattern: str) -> str:
 
 
 def _is_healable_error(message: "str | None") -> bool:
-    msg = (message or "").lower()
-    return any(m in msg for m in _TRANSIENT_ERROR_MARKERS + _HEALABLE_EXTRA_MARKERS) or GEMINI_QUOTA_MARKER in msg
+    """True si reintentar puede arreglar el error: cualquiera salvo los que piden una accion humana."""
+    msg = (message or "").strip().lower()
+    return bool(msg) and not any(m in msg for m in _PERMANENT_ERROR_MARKERS)
 
 
 def _reset_session(session: str) -> None:
@@ -1127,14 +1116,14 @@ def retry_video(project_id: str, index: int) -> bool:
     return True
 
 
-def retry_publish_video(project_id: str, index: int) -> bool:
+def retry_publish_video(project_id: str, index: int, reset_heal: bool = True) -> bool:
     """Reintenta solo la publicacion de un video que ya se genero (video_path
     intacto) pero fallo publicando en alguna red: lo vuelve a "ready" sin
     tocar published_at, asi el proximo intento (_publish_batch_video) salta
     las redes que ya tuvieron exito y reintenta solo las que fallaron. NO usa
     "pending"/retry_video porque eso dispararia una regeneracion completa
     desde cero (nuevo guion, nuevas imagenes) para un video que solo fallo al
-    subirse, no al crearse."""
+    subirse, no al crearse. `reset_heal=False` (reintentos automaticos) conserva el conteo de ciclos de sanado."""
     with _lock:
         projects = _load()
         project = projects.get(project_id)
@@ -1147,6 +1136,8 @@ def retry_publish_video(project_id: str, index: int) -> bool:
         video["error"] = None
         video["publish_attempts"] = 0
         video["last_publish_auth_error"] = False
+        if reset_heal:
+            video["publish_heal_cycles"] = 0
         _save(projects)
     return True
 
@@ -1223,11 +1214,22 @@ def _record_generation_failure(project_id: str, index: int, exc: Exception) -> N
         _save(projects)
 
 
+def _cooldown_elapsed(since_iso: Optional[str], wait: timedelta, now: datetime) -> bool:
+    """True si ya paso `wait` desde `since_iso`; sin fecha (o ilegible) se considera cumplido."""
+    if not since_iso:
+        return True
+    try:
+        return now - datetime.fromisoformat(since_iso) >= wait
+    except (TypeError, ValueError):
+        return True
+
+
 def _requeue_healable_errors() -> None:
-    """Vuelve a "pending" los videos en "error" cuyo fallo pinta de caida
-    externa transitoria (ver _is_healable_error), respetando un cooldown
-    exponencial y MAX_HEAL_CYCLES. Un video sin `error_at` (quedo en error
-    antes de existir este mecanismo) es elegible de inmediato."""
+    """Vuelve a "pending" los videos en "error" salvo que el fallo pida una accion humana
+    (ver _is_healable_error), respetando un cooldown exponencial y MAX_HEAL_CYCLES. Un video sin
+    `error_at` (quedo en error antes de existir este mecanismo) es elegible de inmediato.
+    Igual con la publicacion: un "publish_error" que no es de autenticacion vuelve a "ready"
+    (solo reintenta las redes que fallaron) con cooldown exponencial y MAX_PUBLISH_HEAL_CYCLES."""
     now = datetime.now()
     with _lock:
         projects = _load()
@@ -1236,6 +1238,19 @@ def _requeue_healable_errors() -> None:
             if project.get("status") != "running":
                 continue
             for v in project.get("videos", []):
+                if v["status"] == "publish_error" and not v.get("last_publish_auth_error"):
+                    cycles = v.get("publish_heal_cycles", 0)
+                    wait = timedelta(seconds=PUBLISH_HEAL_COOLDOWN_SECONDS * 2 ** cycles)
+                    if cycles < MAX_PUBLISH_HEAL_CYCLES and _cooldown_elapsed(v.get("publish_error_at"), wait, now):
+                        v["status"] = "ready"
+                        v["publish_attempts"] = 0
+                        v["publish_heal_cycles"] = cycles + 1
+                        changed = True
+                        logger.info(
+                            "batch %s item %d: auto-reintento de publicacion %d/%d tras error: %s",
+                            project["id"], v["index"], cycles + 1, MAX_PUBLISH_HEAL_CYCLES, (v.get("error") or "")[:120],
+                        )
+                    continue
                 if v["status"] != "error" or not _is_healable_error(v.get("error")):
                     continue
                 cycles = v.get("heal_cycles", 0)
@@ -2438,6 +2453,7 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
             # Token vencido/cuenta baneada: reintentar no arregla nada, va
             # directo a terminal sin gastar el presupuesto de auto-retry.
             v["status"] = "publish_error"
+            v["publish_error_at"] = datetime.now().isoformat()
             v["last_publish_auth_error"] = True
         elif error_parts:
             # Fallo real (no solo espera de espaciado): auto-reintenta hasta
@@ -2449,6 +2465,7 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                 v["status"] = "ready"
             else:
                 v["status"] = "publish_error"
+                v["publish_error_at"] = datetime.now().isoformat()
         else:
             v["status"] = "ready"
             if rescheduled:
@@ -2703,6 +2720,8 @@ def _record_publish_failure(project_id: str, index: int, exc: Exception) -> None
         v["publish_attempts"] = v.get("publish_attempts", 0) + 1
         v["error"] = str(exc)
         v["status"] = "ready" if v["publish_attempts"] < MAX_AUTO_RETRIES else "publish_error"
+        if v["status"] == "publish_error":
+            v["publish_error_at"] = datetime.now().isoformat()
         _save(projects)
 
 

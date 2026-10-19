@@ -26,8 +26,15 @@ def memory_store(monkeypatch):
 
 
 def vid(status, error=None, error_at=None, **extra):
-    return {"status": status, "scheduled_at": None, "error": error,
-            "error_at": error_at.isoformat() if error_at else None, **extra}
+    """Por defecto un ítem en error / publish_error ya agoto el auto-sanado de los lotes (si no, ese sanado
+    se hace cargo y las reglas del agente lo dejan pasar)."""
+    base = {"status": status, "scheduled_at": None, "error": error,
+            "error_at": error_at.isoformat() if error_at else None}
+    if status == "error":
+        base["heal_cycles"] = office_agents.batch_pipeline.MAX_HEAL_CYCLES
+    if status == "publish_error":
+        base["publish_heal_cycles"] = office_agents.batch_pipeline.MAX_PUBLISH_HEAL_CYCLES
+    return {**base, **extra}
 
 
 def proj(videos=(), page="MACRAME CREATIVO", pid="p1"):
@@ -201,6 +208,15 @@ def test_republish_needs_a_valid_token_for_that_page_and_no_auth_error():
     assert office_agents._scan(data(projects=[p], tokens=[]), NOW) == []
 
 
+def test_republish_leaves_the_item_to_the_publish_healer_until_it_gives_up():
+    bp = office_agents.batch_pipeline
+    ok = [{"page_name": "macrame creativo", "ok": True}]
+    p = proj([vid("publish_error", publish_heal_cycles=0)])
+    assert office_agents._scan(data(projects=[p], tokens=ok), NOW) == []
+    p = proj([vid("publish_error", publish_heal_cycles=bp.MAX_PUBLISH_HEAL_CYCLES)])
+    assert keys(office_agents._scan(data(projects=[p], tokens=ok), NOW)) == ["republish:p1:0"]
+
+
 def test_release_stuck_uses_the_stuck_threshold_and_remembers_the_expected_status():
     p = proj([vid("generating"), vid("publishing")])
     seen = {office_state.stuck_key("p1", 0, "generating"): NOW - timedelta(minutes=50),
@@ -227,7 +243,7 @@ def test_executors_call_the_existing_batch_functions(monkeypatch):
     calls = []
     monkeypatch.setattr(office_agents.batch_pipeline, "retry_video", lambda pid, i: calls.append(("retry", pid, i)) or True)
     monkeypatch.setattr(office_agents.batch_pipeline, "retry_publish_video",
-                        lambda pid, i: calls.append(("republish", pid, i)) or False)
+                        lambda pid, i, reset_heal=True: calls.append(("republish", pid, i, reset_heal)) or False)
     monkeypatch.setattr(office_agents.batch_pipeline, "release_stuck_item",
                         lambda pid, i, s: calls.append(("release", pid, i, s)) or True)
     t = office_agents.Target("k", "l", {"project_id": "p1", "index": 2, "status": "generating"})
@@ -235,7 +251,7 @@ def test_executors_call_the_existing_batch_functions(monkeypatch):
     ok, message = office_agents.RULES_BY_ID["republish"].execute(t)
     assert ok is False and "ya no" in message.lower()
     assert office_agents.RULES_BY_ID["release_stuck"].execute(t)[0] is True
-    assert calls == [("retry", "p1", 2), ("republish", "p1", 2), ("release", "p1", 2, "generating")]
+    assert calls == [("retry", "p1", 2), ("republish", "p1", 2, False), ("release", "p1", 2, "generating")]
 
 
 def test_default_modes_and_limits_follow_the_spec():
