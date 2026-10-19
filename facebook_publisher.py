@@ -9,6 +9,7 @@ a publicar en esa Página.
 """
 
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -157,6 +158,16 @@ def _parse_response(response) -> tuple[Optional[dict], Optional[dict]]:
     return payload, None
 
 
+def feed_targeting_fields() -> dict:
+    """Campo `feed_targeting` (audiencia PREFERIDA: Meta prioriza esos paises en el feed, sin ocultar el post al
+    resto) segun FB_FEED_TARGET_COUNTRIES (codigos ISO separados por coma, ej. "US"). Apagado si la variable
+    no esta definida."""
+    countries = [c.strip().upper() for c in os.environ.get("FB_FEED_TARGET_COUNTRIES", "").split(",") if c.strip()]
+    if not countries:
+        return {}
+    return {"feed_targeting": json.dumps({"geo_locations": {"countries": countries}})}
+
+
 def _resolve_schedule(requested_ts: Optional[float]) -> tuple[Optional[datetime], float]:
     """
     Si vino un horario pedido explícitamente (elegido a mano o sugerido por
@@ -287,23 +298,26 @@ def publish_video(
 
     # Fase 3: "finish" — cierra la sesión y publica (o programa) el video.
     notify("Finalizando publicación en Facebook...")
+    finish_data = {
+        "access_token": access_token,
+        "upload_phase": "finish",
+        "upload_session_id": upload_session_id,
+        "title": title,
+        "description": description,
+        **finish_extra,
+    }
+    targeting = feed_targeting_fields()
     try:
-        finish_response = _post_with_retry(
-            url,
-            data={
-                "access_token": access_token,
-                "upload_phase": "finish",
-                "upload_session_id": upload_session_id,
-                "title": title,
-                "description": description,
-                **finish_extra,
-            },
-            timeout=60,
-        )
+        finish_response = _post_with_retry(url, data={**finish_data, **targeting}, timeout=60)
+        _, err = _parse_response(finish_response)
+        if err and targeting and not err.get("auth_error"):
+            # Meta rechazo el publico preferido: no se publico nada, asi que se reintenta sin el (mejor sin
+            # preferencia de pais que un video sin publicar).
+            finish_response = _post_with_retry(url, data=finish_data, timeout=60)
+            _, err = _parse_response(finish_response)
     except requests.RequestException as e:
         return {"ok": False, "error": f"No se pudo finalizar la publicación en Facebook: {e}"}
 
-    _, err = _parse_response(finish_response)
     if err:
         return err
 
@@ -353,18 +367,22 @@ def publish_photo(
 
     notify = on_status or (lambda msg: None)
     notify("Subiendo imagen a Facebook...")
-    try:
+
+    def upload(extra: dict):
         with open(path, "rb") as f:
             response = _post_with_retry(
-                PHOTO_UPLOAD_URL.format(page_id=page_id),
-                data=data,
-                files={"source": f},
-                timeout=120,
+                PHOTO_UPLOAD_URL.format(page_id=page_id), data={**data, **extra}, files={"source": f}, timeout=120,
             )
+        return _parse_response(response)
+
+    targeting = feed_targeting_fields()
+    try:
+        payload, err = upload(targeting)
+        if err and targeting and not err.get("auth_error"):
+            payload, err = upload({})  # Meta rechazo el publico preferido: se publica sin el
     except requests.RequestException as e:
         return {"ok": False, "error": f"No se pudo publicar la imagen en Facebook: {e}"}
 
-    payload, err = _parse_response(response)
     if err:
         return err
 
