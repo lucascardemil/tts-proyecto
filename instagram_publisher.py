@@ -137,7 +137,7 @@ def _get_ig_user_id(page_id: str, access_token: str) -> tuple[Optional[str], Opt
     return ig_account["id"], None
 
 
-def publish_video(
+def prepare_video(
     video_path: str,
     title: str,
     description: str,
@@ -146,13 +146,13 @@ def publish_video(
     ai_generated: bool = True,
 ) -> dict:
     """
-    Sube un video como Reel a la cuenta de Instagram vinculada a la Página
-    de Facebook indicada (o la primera configurada si no se pasa page_id),
-    marcado como contenido generado con IA salvo que ai_generated=False
-    (p. ej. clips de gameplay reales, solo editados).
+    Fases 1-3: crea el container del Reel, sube el video y espera a que
+    Instagram termine de procesarlo (FINISHED). No publica: eso lo hace
+    publish_prepared. Separado para poder subir el video con anticipacion y
+    publicar en el horario exacto (Instagram no tiene programacion nativa).
 
     Returns:
-        {"ok": True, "media_id": str} si se publicó, o
+        {"ok": True, "container_id": str, "page_id": str} o
         {"ok": False, "error": str} si algo falló.
     """
     page_id, access_token, err = meta_auth.get_credentials(page_id)
@@ -272,6 +272,45 @@ def publish_video(
             return {"ok": False, "error": "Instagram: se alcanzó el límite de solicitudes de la app. Esperá unos minutos y volvé a intentar."}
         return {"ok": False, "error": "Instagram tardó demasiado en procesar el video."}
 
+    return {"ok": True, "container_id": container_id, "page_id": page_id}
+
+
+def publish_prepared(
+    container_id: str,
+    page_id: Optional[str] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """Fase 4 sola: publica un container que prepare_video dejo en FINISHED.
+    Tarda segundos (no sube nada), asi el Reel sale puntual en su horario.
+
+    Si el container ya no sirve (vencio -- Instagram los descarta a las ~24 h --
+    o quedo en otro estado) devuelve {"ok": False, "stale": True}: el que llama
+    puede caer a publish_video completo."""
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return err
+    token_check = meta_auth.validate(page_id)
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
+
+    notify = on_status or (lambda msg: None)
+    try:
+        status_response = _request_with_retry(
+            "GET",
+            f"{GRAPH_URL}/{container_id}",
+            params={"fields": "status_code", "access_token": access_token},
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"Error consultando el estado en Instagram: {e}"}
+    status_payload, err = _parse_response(status_response)
+    if err or status_payload.get("status_code") != "FINISHED":
+        return {"ok": False, "stale": True, "error": "El video preparado en Instagram ya no esta disponible."}
+
+    ig_user_id, err = _get_ig_user_id(page_id, access_token)
+    if err:
+        return err
+
     # Fase 4: publicar el container ya procesado.
     notify("Publicando en Instagram...")
     try:
@@ -353,3 +392,28 @@ def publish_photo(
     if err:
         return err
     return {"ok": True, "media_id": publish_payload["id"]}
+
+
+def publish_video(
+    video_path: str,
+    title: str,
+    description: str,
+    page_id: Optional[str] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+    ai_generated: bool = True,
+) -> dict:
+    """
+    Sube un video como Reel a la cuenta de Instagram vinculada a la Página
+    de Facebook indicada (o la primera configurada si no se pasa page_id),
+    marcado como contenido generado con IA salvo que ai_generated=False
+    (p. ej. clips de gameplay reales, solo editados). Hace todo seguido:
+    prepare_video + publish_prepared.
+
+    Returns:
+        {"ok": True, "media_id": str} si se publicó, o
+        {"ok": False, "error": str} si algo falló.
+    """
+    prepared = prepare_video(video_path, title, description, page_id, on_status, ai_generated)
+    if not prepared["ok"]:
+        return prepared
+    return publish_prepared(prepared["container_id"], prepared["page_id"], on_status)

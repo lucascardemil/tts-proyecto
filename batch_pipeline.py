@@ -2031,6 +2031,56 @@ _NETWORK_PUBLISHED_PATH_ATTR = {
 # esperando el horario real y respetando _gap_ok, igual que siempre.
 _NATIVE_SCHEDULE_NETWORKS = {"facebook", "youtube"}
 
+# Instagram no programa de forma nativa, pero subir y procesar el Reel es lo lento (minutos): se hace
+# con IG_PREPARE_LEAD de anticipacion (container en FINISHED, ver instagram_publisher.prepare_video) y en
+# el horario real solo queda el media_publish (segundos). Los containers vencen a las ~24 h: pasado
+# IG_CONTAINER_MAX_AGE se descartan y se publica por el camino completo. Si preparar falla, se
+# reintenta recien tras IG_PREPARE_RETRY (el publish del horario real funciona igual sin container).
+IG_PREPARE_LEAD = timedelta(minutes=60)
+IG_CONTAINER_MAX_AGE = timedelta(hours=20)
+IG_PREPARE_RETRY = timedelta(minutes=10)
+_ig_prepare_lock = threading.Lock()  # una subida de preparacion a la vez
+
+
+def _recent(iso: Optional[str], within: timedelta) -> bool:
+    try:
+        return datetime.now() - datetime.fromisoformat(iso) < within
+    except (TypeError, ValueError):
+        return False
+
+
+def _ig_container_id(video: dict) -> Optional[str]:
+    """Id del container de Instagram ya preparado y todavia vigente, o None."""
+    container = video.get("ig_container")
+    if isinstance(container, dict) and _recent(container.get("prepared_at"), IG_CONTAINER_MAX_AGE):
+        return container.get("id")
+    return None
+
+
+def _prepare_ahead(project_id: str, index: int, prepare_fn: Callable, page_id: Optional[str]) -> None:
+    """Prepara el Reel de Instagram antes de su horario (ver IG_PREPARE_LEAD) y guarda el container en el
+    item. Un fallo solo se registra: el publish del horario real cae al camino completo."""
+    with _lock:
+        video = _load()[project_id]["videos"][index]
+        if _ig_container_id(video) or _recent(video.get("ig_prepare_failed_at"), IG_PREPARE_RETRY):
+            return
+    with _ig_prepare_lock:
+        try:
+            result = prepare_fn(video, page_id)
+        except Exception as e:
+            logger.exception("batch %s item %d: fallo preparando Instagram", project_id, index)
+            result = {"ok": False, "error": str(e)}
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        if result.get("ok"):
+            v["ig_container"] = {"id": result["container_id"], "prepared_at": datetime.now().isoformat()}
+            v.pop("ig_prepare_failed_at", None)
+        else:
+            v["ig_prepare_failed_at"] = datetime.now().isoformat()
+            logger.warning("batch %s item %d: no se pudo preparar Instagram: %s", project_id, index, result.get("error"))
+        _save(projects)
+
 
 # Anticipacion minima para programar de forma nativa: el minimo de Facebook
 # (10 min) mas un margen para que la subida del archivo no lo deje justo debajo.
@@ -2320,12 +2370,14 @@ def _build_publish_content(script_text: str, fallback_title: str, rescue: bool =
     }
 
 
-def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
+def _publish_networks(project_id: str, index: int, publishers: dict, preparers: Optional[dict] = None) -> None:
     """Nucleo compartido de publicacion (gap-check + registro + resolucion de
     estado final), agnostico de que red hace que -- reusado por
     _publish_batch_video (video, hasta 3 redes) y _publish_batch_image_post
     (imagen, solo Facebook/Instagram). `publishers` mapea network -> callable
-    (video, page_id) -> result dict {"ok": bool, "error": str, ...}."""
+    (video, page_id) -> result dict {"ok": bool, "error": str, ...}. `preparers` (opcional) mapea una red sin
+    scheduling nativo -> callable (video, page_id) que adelanta el trabajo lento: se llama mientras la red
+    espera su horario, dentro de IG_PREPARE_LEAD (ver _prepare_ahead)."""
     projects = _load()
     project = projects.get(project_id)
     if not project:
@@ -2368,6 +2420,9 @@ def _publish_networks(project_id: str, index: int, publishers: dict) -> None:
             scheduled_dt += timedelta(seconds=project.get("network_offsets", {}).get(network, 0))
             if scheduled_dt > datetime.now():
                 waiting = True
+                prepare_fn = (preparers or {}).get(network)
+                if prepare_fn and scheduled_dt - datetime.now() <= IG_PREPARE_LEAD:
+                    _prepare_ahead(project_id, index, prepare_fn, cfg.get("page_id") if isinstance(cfg, dict) else None)
                 continue
         published_path = getattr(app, _NETWORK_PUBLISHED_PATH_ATTR[network])
         page_id = cfg.get("page_id") if isinstance(cfg, dict) else None
@@ -2471,6 +2526,16 @@ def reschedule_published_video(project_id: str, index: int, new_slot: datetime) 
     return results
 
 
+def _publish_prepared_instagram(video: dict, page_id: Optional[str]) -> Optional[dict]:
+    """Publica el container que _prepare_ahead dejo listo. None si no hay uno vigente o si Instagram ya lo
+    descarto (stale): el que llama publica por el camino completo."""
+    container_id = _ig_container_id(video)
+    if not container_id:
+        return None
+    result = instagram_publisher.publish_prepared(container_id, page_id)
+    return None if result.get("stale") else result
+
+
 def _publish_batch_video(project_id: str, index: int) -> None:
     import app
 
@@ -2518,15 +2583,23 @@ def _publish_batch_video(project_id: str, index: int) -> None:
             app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
         return result
 
-    def _ig(v, page_id):
-        result = instagram_publisher.publish_video(
+    def _ig_prep(v, page_id):
+        return instagram_publisher.prepare_video(
             v["video_path"], title, content["instagram_description"], page_id=page_id
         )
+
+    def _ig(v, page_id):
+        result = _publish_prepared_instagram(v, page_id)
+        if result is None:
+            result = instagram_publisher.publish_video(
+                v["video_path"], title, content["instagram_description"], page_id=page_id
+            )
         if result.get("ok"):
             app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
         return result
 
-    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig})
+    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig},
+                      preparers={"instagram": _ig_prep})
 
 
 def _publish_batch_image_post(project_id: str, index: int) -> None:
@@ -2576,12 +2649,20 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
             app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
         return result
 
-    def _ig(v, page_id):
-        # Es gameplay real, no contenido generado con IA: sin la etiqueta "AI info".
-        result = instagram_publisher.publish_video(
+    def _ig_prep(v, page_id):
+        return instagram_publisher.prepare_video(
             v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["instagram"]),
             page_id=page_id, ai_generated=False,
         )
+
+    def _ig(v, page_id):
+        # Es gameplay real, no contenido generado con IA: sin la etiqueta "AI info".
+        result = _publish_prepared_instagram(v, page_id)
+        if result is None:
+            result = instagram_publisher.publish_video(
+                v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["instagram"]),
+                page_id=page_id, ai_generated=False,
+            )
         if result.get("ok"):
             app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
         return result
@@ -2602,7 +2683,8 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
                 _save(projects)
         return result
 
-    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig})
+    _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig},
+                      preparers={"instagram": _ig_prep})
 
 
 def gaming_youtube_fields(seo: Optional[dict], title: str, caption: str) -> tuple:
