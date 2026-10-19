@@ -99,3 +99,24 @@ def test_us_hours_follow_each_countrys_daylight_saving():
 def test_default_schedule_without_us_audience_is_unchanged():
     schedule = bp._compute_schedule(3, 3, None, taken=[])
     assert sorted(datetime.fromisoformat(s).hour for s in schedule[:3]) == [9, 15, 20]
+
+
+def test_every_fixed_profile_publishes_at_its_eastern_time_slots():
+    from datetime import date
+    profiles = {"gaming": bp.GAMING_SLOT_HOURS, "ninio": bp.NINIO_SLOT_HOURS,
+                "historias": bp.HISTORIAS_SLOT_HOURS, "macrame": bp.MACRAME_SLOT_HOURS}
+    for name, et_slots in profiles.items():
+        schedule = [datetime.fromisoformat(s) for s in
+                    bp._compute_schedule(4, 2, None, taken=[], us_audience=True, et_hours=et_slots)]
+        assert {_et_hour(s) for s in schedule} == set(et_slots), name
+
+
+def test_howbig_hours_are_eastern_time_converted_to_local_and_stay_inside_its_cap():
+    from datetime import date
+    launch = date(2026, 10, 20)
+    for day in (launch, date(2026, 11, 10), date(2027, 5, 10)):
+        hours = bp.howbig_hours_for_date(day, day)  # primer dia de la fase 1 en cada fecha
+        assert len(hours) == 3 and all(bp.BATCH_HOUR_START <= h <= bp.HOWBIG_HOUR_END for h in hours)
+        assert [_et_hour(datetime(day.year, day.month, day.day, h)) for h in hours] == bp.HOWBIG_PHASE1_HOURS
+    later = bp.howbig_hours_for_date(launch + timedelta(days=30), launch)
+    assert len(later) == 2

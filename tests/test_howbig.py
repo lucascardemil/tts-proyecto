@@ -70,6 +70,16 @@ def test_topic_block_has_the_fact_and_only_listed_sources():
 # ── Perfil howbig_image: prompt, plantilla y generacion del post ───────────────
 
 import batch_pipeline as bp
+
+
+@pytest.fixture(autouse=True)
+def eastern_is_local(monkeypatch):
+    """Los horarios de la pagina estan en hora del Este: en estos tests la hora local es la del Este (sin conversion),
+    asi no dependen de la zona de la maquina."""
+    monkeypatch.setattr(
+        bp, "us_hours_for_date",
+        lambda day, et_hours=bp.US_SLOT_HOURS_ET, hour_end=bp.BATCH_HOUR_END:
+            [h for h in et_hours if bp.BATCH_HOUR_START <= h <= hour_end])
 import meme_maker
 from PIL import Image
 
@@ -97,7 +107,7 @@ Source: NOAA"""
 def test_howbig_profile_and_prompt():
     p = bp.IMAGE_POST_PROFILES["howbig_image"]
     assert p["kind"] == "howbig_post" and p["templates"] is howbig.TEMPLATE_LABELS and p["week"] is None
-    assert p["slot_hours"] == [11, 15, 22] and p["network_offsets"] == {}
+    assert p["slot_hours"] == [11, 15, 20] and p["network_offsets"] == {}
     assert p["history_store"] == "howbig_post_history" and p["composition"] == "" and p["text_fill"] == (255, 255, 255)
     assert p["ai_design"] == "scale" and p["topics"] is True and p["max_hashtags"] == {"instagram": 0, "facebook": 1}
     assert p["default_trigger"] == "give me the next How Big Really post" and p["label"] == "Post How Big Really"
@@ -319,12 +329,12 @@ def _freeze_now(monkeypatch, now):
 def test_howbig_hours_for_date_phases():
     launch = date(2026, 10, 1)
     assert bp.HOWBIG_PHASE1_DAYS == 14
-    assert bp.HOWBIG_PHASE1_HOURS == [11, 15, 22] and bp.HOWBIG_PHASE2_HOURS == [11, 22]
+    assert bp.HOWBIG_PHASE1_HOURS == [11, 15, 20] and bp.HOWBIG_PHASE2_HOURS == [11, 20]
     assert bp.HOWBIG_HOUR_END == 22
-    assert bp.howbig_hours_for_date(launch, launch) == [11, 15, 22]
-    assert bp.howbig_hours_for_date(launch + timedelta(days=13), launch) == [11, 15, 22]
-    assert bp.howbig_hours_for_date(launch + timedelta(days=14), launch) == [11, 22]
-    assert bp.howbig_hours_for_date(launch + timedelta(days=60), launch) == [11, 22]
+    assert bp.howbig_hours_for_date(launch, launch) == [11, 15, 20]
+    assert bp.howbig_hours_for_date(launch + timedelta(days=13), launch) == [11, 15, 20]
+    assert bp.howbig_hours_for_date(launch + timedelta(days=14), launch) == [11, 20]
+    assert bp.howbig_hours_for_date(launch + timedelta(days=60), launch) == [11, 20]
 
 
 def _howbig_schedule(total, launch, taken):
@@ -341,7 +351,7 @@ def test_howbig_schedule_runs_3_a_day_then_2_a_day(monkeypatch):
     assert len(slots) == 30 and slots == sorted(slots) and len(set(slots)) == 30
     earliest = now + bp.NATIVE_SCHEDULE_MIN_LEAD
     assert all(s >= earliest for s in slots)
-    assert all(9 <= s.hour <= 22 and s.hour in (11, 15, 22) for s in slots)
+    assert all(9 <= s.hour <= 20 and s.hour in (11, 15, 20) for s in slots)
     per_day = Counter(s.date() for s in slots)
     days = sorted(per_day)
     assert all(per_day[d] <= 3 for d in days)
@@ -357,7 +367,7 @@ def test_howbig_schedule_skips_past_slots_of_today_without_shifting_the_batch(mo
     _freeze_now(monkeypatch, now)
     launch = now.date() - timedelta(days=10)
     slots = [datetime.fromisoformat(s) for s in _howbig_schedule(6, launch, [])]
-    assert slots[:3] == [datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 22), datetime(2026, 10, 16, 11)]
+    assert slots[:3] == [datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 20), datetime(2026, 10, 16, 11)]
     assert len(slots) == 6 and slots == sorted(slots)
 
 
@@ -365,11 +375,11 @@ def test_howbig_schedule_taken_22h_uses_up_a_daily_slot(monkeypatch):
     now = datetime(2026, 10, 15, 10, 30)
     _freeze_now(monkeypatch, now)
     launch = now.date() - timedelta(days=10)
-    taken = [datetime(2026, 10, 15, 22)]
+    taken = [datetime(2026, 10, 15, 20)]
     slots = [datetime.fromisoformat(s) for s in _howbig_schedule(3, launch, taken)]
-    # el 22:00 ocupado gasta uno de los 3 cupos del dia: el post no se reubica a otra hora, pasa al dia siguiente
+    # el 20:00 ocupado gasta uno de los 3 cupos del dia: el post no se reubica a otra hora, pasa al dia siguiente
     assert slots == [datetime(2026, 10, 15, 11), datetime(2026, 10, 15, 15), datetime(2026, 10, 16, 11)]
-    assert all(abs((s - datetime(2026, 10, 15, 22)).total_seconds()) >= bp.BATCH_MIN_GAP_SECONDS for s in slots)
+    assert all(abs((s - datetime(2026, 10, 15, 20)).total_seconds()) >= bp.BATCH_MIN_GAP_SECONDS for s in slots)
 
 
 def test_free_slot_without_hour_end_keeps_the_21h_cap(monkeypatch):
@@ -416,7 +426,7 @@ def test_create_project_howbig_uses_the_phase_schedule(monkeypatch):
                                 content_type="howbig_image")
     assert project["per_day"] == 3 and len(project["videos"]) == 10
     slots = [datetime.fromisoformat(v["scheduled_at"]) for v in project["videos"]]
-    assert slots == sorted(slots) and all(s.hour in (11, 15, 22) for s in slots)
+    assert slots == sorted(slots) and all(s.hour in (11, 15, 20) for s in slots)
     assert Counter(s.date() for s in slots)[date(2026, 10, 15)] == 3
     assert store.saves == ["howbig_launch"]
     assert bp._howbig_launch_date() == date(2026, 10, 15) and store.saves == ["howbig_launch"]
@@ -478,9 +488,9 @@ def test_a_full_day_in_taken_is_skipped(monkeypatch):
     now = datetime(2026, 10, 15, 10, 30)
     _freeze_now(monkeypatch, now)
     launch = now.date() - timedelta(days=10)
-    taken = [datetime(2026, 10, 15, h) for h in (11, 15, 22)]
+    taken = [datetime(2026, 10, 15, h) for h in (11, 15, 20)]
     slots = [datetime.fromisoformat(s) for s in _howbig_schedule(3, launch, taken)]
-    assert slots == [datetime(2026, 10, 16, 11), datetime(2026, 10, 16, 15), datetime(2026, 10, 16, 22)]
+    assert slots == [datetime(2026, 10, 16, 11), datetime(2026, 10, 16, 15), datetime(2026, 10, 16, 20)]
 
 
 def test_an_external_post_removes_the_nearby_hour_and_uses_up_capacity(monkeypatch):
@@ -490,8 +500,8 @@ def test_an_external_post_removes_the_nearby_hour_and_uses_up_capacity(monkeypat
     external = datetime(2026, 10, 16, 11, 30)  # a 30 min de las 11:00: esa hora ya no sirve
     taken = [external]
     slots = [datetime.fromisoformat(s) for s in _howbig_schedule(6, launch, taken)]
-    assert slots == [datetime(2026, 10, 15, 11), datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 22),
-                     datetime(2026, 10, 16, 15), datetime(2026, 10, 16, 22), datetime(2026, 10, 17, 11)]
+    assert slots == [datetime(2026, 10, 15, 11), datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 20),
+                     datetime(2026, 10, 16, 15), datetime(2026, 10, 16, 20), datetime(2026, 10, 17, 11)]
     assert Counter(s.date() for s in slots + [external])[date(2026, 10, 16)] == 3
 
 
@@ -499,9 +509,9 @@ def test_day_14_boundary_with_prefilled_taken(monkeypatch):
     now = datetime(2026, 10, 15, 10, 30)
     _freeze_now(monkeypatch, now)
     launch = date(2026, 10, 2)  # 15/10 = dia 13 (fase 1), 16/10 = dia 14 (fase 2)
-    taken = [datetime(2026, 10, 15, 11), datetime(2026, 10, 16, 22)]
+    taken = [datetime(2026, 10, 15, 11), datetime(2026, 10, 16, 20)]
     slots = [datetime.fromisoformat(s) for s in _howbig_schedule(4, launch, taken[:])]
-    assert slots == [datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 22),
+    assert slots == [datetime(2026, 10, 15, 15), datetime(2026, 10, 15, 20),
                      datetime(2026, 10, 16, 11), datetime(2026, 10, 17, 11)]
 
 
@@ -509,7 +519,7 @@ def test_an_external_post_exactly_one_hour_away_only_uses_up_capacity(monkeypatc
     now = datetime(2026, 10, 15, 10, 30)
     _freeze_now(monkeypatch, now)
     launch = now.date() - timedelta(days=10)
-    taken = [datetime(2026, 10, 16, 12)]  # a exactamente 1 h de las 11:00 y las 22:00 queda libre: el hueco minimo se cumple
+    taken = [datetime(2026, 10, 16, 12)]  # a exactamente 1 h de las 11:00 y las 20:00 queda libre: el hueco minimo se cumple
     slots = [datetime.fromisoformat(x) for x in _howbig_schedule(5, launch, taken)]
     on_16 = [x for x in slots if x.date() == date(2026, 10, 16)]
     assert on_16 == [datetime(2026, 10, 16, 11), datetime(2026, 10, 16, 15)]  # 2 cupos + el externo = 3
@@ -535,7 +545,7 @@ def test_main_page_offers_howbig_in_both_selectors_with_the_schedule_note(monkey
     html = resp.get_data(as_text=True)
     assert html.count('<option value="howbig_image">') == 2  # "Crear video" y lote
     assert "How Big Really (4:5, solo Facebook)" in html
-    assert "Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora Chile). Solo Facebook." in html
+    assert "Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora del Este de EE. UU.). Solo Facebook." in html
     assert 'howbig_image: "give me the next How Big Really post"' in html
     assert 'howbig_image: "howbig"' in html
     assert 'type === "howbig_image"' in html  # isImagePostType

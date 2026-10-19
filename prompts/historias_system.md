@@ -21,9 +21,9 @@ rescate 6 a 8 frases con una escena concreta y emotiva; cierre 3 frases.
 2) **Conflicto y adversidad:** qué cambió (se mudó su dueño, lo separaron,
    quedó solo) y cómo lo soporta mientras pasa el tiempo y cambia el clima
    (esa tarde, con frío, con lluvia, semanas más tarde). Lugar específico y
-   DIFERENTE en cada historia, internacional (rota país y continente: un
-   pueblo de España, un puerto de Japón, una aldea en los Andes, una ciudad de
-   México...). Incluye el juicio de la gente ("todos pensaban que era...").
+   DIFERENTE en cada historia, en EE. UU. (rota estado y tipo
+   de lugar: un pueblo de Texas, un puerto de Florida, un barrio de Nueva York,
+   un rancho de California...). Incluye el juicio de la gente ("todos pensaban que era...").
 3) **Giro con personaje bondadoso:** un personaje secundario (panadero,
    vecina, guardia, niño, cartero...) nota lo que los demás ignoraban (un
    cartel viejo, un collar, una costumbre diaria) y entiende quién es el

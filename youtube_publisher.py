@@ -158,6 +158,7 @@ def publish_video(
     on_status: Optional[Callable[[str], None]] = None,
     publish_at: Optional[str] = None,
     channel_key: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> dict:
     """
     Sube un video al canal de YouTube conectado.
@@ -197,10 +198,10 @@ def publish_video(
         if publish_at:
             status["privacyStatus"] = "private"
             status["publishAt"] = publish_at
-        body = {
-            "snippet": {"title": title or path.stem, "description": description, "tags": tags or []},
-            "status": status,
-        }
+        snippet = {"title": title or path.stem, "description": description, "tags": tags or []}
+        if language:  # idioma del titulo/descripcion y del audio ("es" / "en"): ayuda a YouTube a mostrarlo al publico correcto
+            snippet["defaultLanguage"] = snippet["defaultAudioLanguage"] = language
+        body = {"snippet": snippet, "status": status}
         # Subida resumable en fragmentos (chunksize=-1 = un solo fragmento por
         # llamada a next_chunk, pero reintentable si se corta la conexión) —
         # evita mandar el archivo entero de una para videos grandes.

@@ -194,19 +194,22 @@ BATCH_MIN_GAP_SECONDS = 3600
 BATCH_HOUR_START = 9
 BATCH_HOUR_END = 21  # inclusive: las 21:00 en punto es el ultimo horario
 
-# How Big Really: horario por fase desde el primer lote de la pagina (hora de Chile). Dias 1-14: 3 posts
-# al dia (11:00, 15:00, 22:00); desde el dia 15: 2 al dia (11:00 y 22:00). Las 22:00 quedan fuera del rango
-# general 9-21, asi que esta pagina usa su propio tope (HOWBIG_HOUR_END).
+# How Big Really: horario por fase desde el primer lote de la pagina, en HORA DEL ESTE de EE. UU. (se convierte a la
+# hora local dia por dia, ver us_hours_for_date). Dias 1-14: 3 posts al dia (11:00, 15:00, 20:00); desde el dia 15:
+# 2 al dia (11:00 y 20:00). Las 20:00 del Este pueden caer pasadas las 21 locales, fuera del rango general 9-21,
+# asi que esta pagina usa su propio tope local (HOWBIG_HOUR_END).
 HOWBIG_PHASE1_DAYS = 14
-HOWBIG_PHASE1_HOURS = [11, 15, 22]
-HOWBIG_PHASE2_HOURS = [11, 22]
+HOWBIG_PHASE1_HOURS = [11, 15, 20]
+HOWBIG_PHASE2_HOURS = [11, 20]
 HOWBIG_HOUR_END = 22
 HOWBIG_LAUNCH_STORE = "howbig_launch"
 
+# Las horas de los posts de imagen (*_SLOT_HOURS) estan en HORA DEL ESTE de EE. UU. (publico objetivo) y se convierten
+# a la hora local dia por dia (ver us_hours_for_date).
 # Posts de imagen gaming (Workflow JugadasEpicasVideojuegos, sec. 4): Facebook
-# a las 13:00 y 20:00 (son el scheduled_at del video), Instagram una hora
-# antes (12:00 y 19:00, via network_offsets del proyecto).
-GAMING_SLOT_HOURS = [13, 20]
+# a las 12:00 y 19:00 (son el scheduled_at del video), Instagram una hora
+# antes (11:00 y 18:00, via network_offsets del proyecto).
+GAMING_SLOT_HOURS = [12, 19]
 GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_at
 # Plantillas de la "semana tipo" (sec. 2 y 4): [slot del mediodia, slot de la
 # noche] por dia, lunes=0. Domingo solo trae T1 en el workflow; el segundo
@@ -233,11 +236,11 @@ NINIO_TEMPLATES = {
     "N4": "Frase de paz",
 }
 NINIO_WEEK = [("N1", "N4"), ("N2", "N4"), ("N3", "N4"), ("N1", "N4"), ("N3", "N4"), ("N2", "N4"), ("N1", "N4")]
-# Posts de imagen de "MACRAME CREATIVO": uno al mediodia (13:00) y otro por la tarde (19:00), misma
+# Posts de imagen de "MACRAME CREATIVO": uno al mediodia (12:00) y otro por la tarde (19:00), misma
 # hora en Facebook e Instagram. Plantillas M1-M4 y semana tipo (mediodia, tarde) por dia, lunes=0.
 # Posts de imagen de "HISTORIAS" (rescates de animales): uno a media mañana y otro a la tarde, igual en
 # Facebook e Instagram. Plantillas H1-H4 y semana tipo (mañana, tarde) por dia, lunes=0.
-HISTORIAS_SLOT_HOURS = [11, 18]
+HISTORIAS_SLOT_HOURS = [11, 18]  # media manana y tarde
 HISTORIAS_TEMPLATES = {
     "H1": "Mini historia en collage",
     "H2": "El animal habla",
@@ -245,7 +248,7 @@ HISTORIAS_TEMPLATES = {
     "H4": "Foto limpia con caption largo",
 }
 HISTORIAS_WEEK = [("H1", "H3"), ("H2", "H4"), ("H3", "H2"), ("H1", "H4"), ("H2", "H3"), ("H3", "H1"), ("H4", "H2")]
-MACRAME_SLOT_HOURS = [13, 19]
+MACRAME_SLOT_HOURS = [12, 19]
 MACRAME_TEMPLATES = {
     "M1": "Pieza terminada del día",
     "M2": "Tip de nudo",
@@ -438,8 +441,8 @@ RESCUE_STORY_CRAFT = (
     "lleva un numero o plazo concreto y una consecuencia (\"Nuri esperó siete meses en el mismo banco. Todos "
     "pasaban... nadie la veía.\"). 2) Conflicto y adversidad: que cambio y como lo soporta con el tiempo y el "
     "clima (con frio, con lluvia, semanas mas tarde); lugar especifico y DIFERENTE en cada historia, "
-    "internacional (rota pais y continente: un pueblo de España, un puerto de Japón, una aldea en los Andes, "
-    "una ciudad de México, etc.; NUNCA siempre el mismo pais) y el juicio de la gente (\"todos pensaban "
+    "en EE. UU. (rota estado y tipo de lugar: un pueblo de Texas, un puerto de Florida, un barrio de Nueva York, "
+    "un rancho de California, etc.; NUNCA siempre el mismo estado) y el juicio de la gente (\"todos pensaban "
     "que era...\"). 3) Giro con personaje bondadoso: alguien (panadero, vecina, guardia, niño, cartero) nota lo "
     "que los demas ignoraban (un cartel viejo, un collar, una costumbre diaria) y entiende quien es el animal "
     "o que espera: no era lo que todos creian. 4) Reencuentro o rescate emotivo con una accion concreta y una "
@@ -637,11 +640,10 @@ def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime
 
 
 def howbig_hours_for_date(day, launch) -> list:
-    """Horas de publicacion de How Big Really para `day`: fase 1 (3 al dia) los primeros
+    """Horas LOCALES de publicacion de How Big Really para `day`: fase 1 (3 al dia) los primeros
     HOWBIG_PHASE1_DAYS dias desde `launch` (fecha del primer lote de la pagina), despues fase 2 (2 al dia)."""
-    if (day - launch).days < HOWBIG_PHASE1_DAYS:
-        return list(HOWBIG_PHASE1_HOURS)
-    return list(HOWBIG_PHASE2_HOURS)
+    et_hours = HOWBIG_PHASE1_HOURS if (day - launch).days < HOWBIG_PHASE1_DAYS else HOWBIG_PHASE2_HOURS
+    return us_hours_for_date(day, et_hours, HOWBIG_HOUR_END)
 
 
 def _howbig_launch_date():
@@ -713,13 +715,14 @@ US_AUDIENCE_TZ = "America/New_York"
 US_SLOT_HOURS_ET = (12, 19, 15, 17, 10, 21)
 
 
-def us_hours_for_date(day: date) -> list:
-    """Horas locales (en el orden de US_SLOT_HOURS_ET) que corresponden a las franjas del Este de EE. UU. ese dia."""
+def us_hours_for_date(day: date, et_hours=US_SLOT_HOURS_ET, hour_end: int = BATCH_HOUR_END) -> list:
+    """Horas locales (en el orden de `et_hours`) que corresponden a esas horas del Este de EE. UU. ese dia; se
+    descartan las que caen fuera de BATCH_HOUR_START-`hour_end` o en otra fecha."""
     tz = ZoneInfo(US_AUDIENCE_TZ)
     hours = []
-    for et_hour in US_SLOT_HOURS_ET:
+    for et_hour in et_hours:
         local = datetime(day.year, day.month, day.day, et_hour, tzinfo=tz).astimezone().replace(tzinfo=None)
-        if local.date() == day and BATCH_HOUR_START <= local.hour <= BATCH_HOUR_END:
+        if local.date() == day and BATCH_HOUR_START <= local.hour <= hour_end:
             hours.append(local.hour)
     return hours
 
@@ -727,7 +730,8 @@ def us_hours_for_date(day: date) -> list:
 def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue: bool = False,
                       fixed_hours: Optional[list] = None, skip_days: int = 0,
                       taken: Optional[list] = None, hours_for_date: Optional[Callable] = None,
-                      hour_end: int = BATCH_HOUR_END, us_audience: bool = False) -> list:
+                      hour_end: int = BATCH_HOUR_END, us_audience: bool = False,
+                      et_hours: Optional[list] = None) -> list:
     """Reparte `total` publicaciones en dias de `per_day`, usando los
     DAYPARTS fijos de feedback_analyzer como horarios del dia (filtrados a
     BATCH_HOUR_START-BATCH_HOUR_END -- nunca se publica en la madrugada,
@@ -749,8 +753,8 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     que `taken` ya tiene en esa fecha; un dia lleno se salta, y las horas a menos de BATCH_MIN_GAP_SECONDS de un
     horario ocupado no se usan); `per_day`/`skip_days`/`fixed_hours` no se usan. `hour_end` es
     el tope horario de _free_slot (How Big Really publica hasta las 22:00).
-    Con `us_audience` las horas del dia son las franjas del Este de EE. UU. (us_hours_for_date) en vez de los
-    DAYPARTS/best_hour/rescate.
+    Con `us_audience` las horas del dia son las franjas del Este de EE. UU. (`et_hours`, por defecto
+    US_SLOT_HOURS_ET; ver us_hours_for_date) en vez de los DAYPARTS/best_hour/rescate/fixed_hours.
     Devuelve `total` timestamps ISO."""
     if hours_for_date is not None:
         now = datetime.now()
@@ -790,7 +794,7 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
         base_hours = sorted(base_hours, key=lambda h: min(abs(h - best_hour), 24 - abs(h - best_hour)))
 
     def hours_of_day(day_date: date) -> list:
-        hours = (us_hours_for_date(day_date) if us_audience else []) or list(base_hours)
+        hours = (us_hours_for_date(day_date, et_hours or US_SLOT_HOURS_ET) if us_audience else []) or list(base_hours)
         while len(hours) < per_day:
             next_hour = hours[-1] + 1
             if next_hour > BATCH_HOUR_END:
@@ -924,7 +928,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         video_settings["copy_profile"] = RESCUE_PROFILE
     profile = IMAGE_POST_PROFILES.get(mixed[1] if mixed else content_type)
     clip_post = (mixed[0] if mixed else content_type) == "gaming_clip"
-    fixed_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None
+    et_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None  # hora del Este
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
     rescue_skip = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
@@ -943,10 +947,10 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     else:
         schedule = _compute_schedule(
             total_videos, per_day, best_hour, rescue=rescue,
-            fixed_hours=fixed_hours,
             skip_days=skip_days,
             taken=existing_slots(page_name, networks),
-            us_audience=fixed_hours is None,  # los perfiles con horas fijas (gaming...) mantienen las suyas
+            us_audience=True,
+            et_hours=et_hours,  # None = las dos franjas generales (12:00 y 19:00 del Este)
         )
 
     project = {
@@ -2553,7 +2557,7 @@ def _publish_batch_video(project_id: str, index: int) -> None:
                 slot = v.get("scheduled_at")
         result = youtube_publisher.publish_video(
             v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True,
-            publish_at=_rfc3339_utc(slot),
+            publish_at=_rfc3339_utc(slot), language="es",
         )
         if result.get("ok"):
             app._record_published_video(result["video_id"], title, Path(v["video_path"]).name)
@@ -2662,7 +2666,7 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
         yt_title, yt_description, yt_tags = gaming_youtube_fields(v.get("yt_seo"), title, caption)
         result = youtube_publisher.publish_video(
             v["video_path"], yt_title, yt_description, "public", yt_tags, False,
-            publish_at=_rfc3339_utc(v.get("scheduled_at")), channel_key=GAMING_YT_CHANNEL,
+            publish_at=_rfc3339_utc(v.get("scheduled_at")), channel_key=GAMING_YT_CHANNEL, language="en",
         )
         if result.get("ok"):
             app._record_published_video(result["video_id"], yt_title, Path(v["video_path"]).name)

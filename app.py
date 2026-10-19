@@ -1490,7 +1490,7 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
-      <p class="pub-hint" id="lote-howbig-note" style="display:none">Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora Chile). Solo Facebook.</p>
+      <p class="pub-hint" id="lote-howbig-note" style="display:none">Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora del Este de EE. UU.). Solo Facebook.</p>
       <div id="lote-page-wrap" style="margin-top:10px">
         <label for="lote-page">Página</label>
         <select id="lote-page"></select>

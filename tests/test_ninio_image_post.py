@@ -84,7 +84,9 @@ def test_create_project_ninio_image_uses_meal_slots_and_no_offsets(monkeypatch):
         video_settings={}, trigger_message="t", content_type="ninio_image",
     )
     assert project["type"] == "ninio_image" and project["network_offsets"] == {}
-    hours = {datetime.fromisoformat(v["scheduled_at"]).hour for v in project["videos"]}
+    from zoneinfo import ZoneInfo  # los horarios son franjas del Este de EE. UU., guardadas en hora local
+    hours = {datetime.fromisoformat(v["scheduled_at"]).astimezone(ZoneInfo(batch_pipeline.US_AUDIENCE_TZ)).hour
+             for v in project["videos"]}
     assert hours <= {12, 19}
 
 

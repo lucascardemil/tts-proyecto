@@ -51,6 +51,13 @@ def _stub_create(monkeypatch):
     monkeypatch.setattr(bp, "existing_slots", lambda *a, **k: [])
 
 
+def _et_hours(project):
+    """Horas del Este de EE. UU. de los horarios del proyecto (los horarios se guardan en hora local)."""
+    from zoneinfo import ZoneInfo
+    return {datetime.fromisoformat(v["scheduled_at"]).astimezone(ZoneInfo(bp.US_AUDIENCE_TZ)).hour
+            for v in project["videos"]}
+
+
 def test_mixed_macrame_batch_alternates_video_and_post(monkeypatch):
     _stub_create(monkeypatch)
     project = bp.create_project(
@@ -58,7 +65,7 @@ def test_mixed_macrame_batch_alternates_video_and_post(monkeypatch):
     )
     assert [bp.item_type(project, v) for v in project["videos"]] == ["video", "macrame_image"] * 3
     assert project["type"] == "mix_macrame" and project["network_offsets"] == {}
-    assert {datetime.fromisoformat(v["scheduled_at"]).hour for v in project["videos"]} <= {13, 19}
+    assert _et_hours(project) <= set(bp.MACRAME_SLOT_HOURS)
 
 
 def test_next_mixed_kind_alternates_and_only_advances_on_request(monkeypatch):
@@ -157,7 +164,7 @@ def test_mixed_historias_alternates_video_and_post_with_rescue_profile(monkeypat
     )
     assert [bp.item_type(project, v) for v in project["videos"]] == ["video", "historias_image"] * 2
     assert project["video_settings"].get("copy_profile") == bp.RESCUE_PROFILE  # el video sigue siendo de rescate
-    assert {datetime.fromisoformat(v["scheduled_at"]).hour for v in project["videos"]} <= set(bp.HISTORIAS_SLOT_HOURS)
+    assert _et_hours(project) <= set(bp.HISTORIAS_SLOT_HOURS)
     p = bp.IMAGE_POST_PROFILES["historias_image"]
     assert (bp._PROMPTS_DIR / "historias_post_system.md").exists() and p["ai_design"] == "story"
     for day in range(7):
