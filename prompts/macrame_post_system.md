@@ -23,7 +23,13 @@ NO lleva texto, letras, carteles ni logos.
 
 ## PROYECTOS APTOS (elige uno y varía color, remate o accesorio)
 Llavero con nudo plano, marcapáginas, pulsera de nudo cuadrado, collar con
-cuentas, posavasos redondo, colgante pequeño con aro de madera.
+cuentas, posavasos redondo, colgante pequeño con aro de madera, mini portamaceta
+corazón para suculenta (con 4 cuerdas cortas), marcapáginas de temporada.
+Estacionalidad: alinea el color y el nombre con la época del año (otoño: ladrillo,
+mostaza, terracota, natural; invierno: crema y verde pino; primavera: pasteles) y
+dilo en el gancho ("marcapáginas otoñal en 2 metros"). La pieza que gustó más es
+el marcapáginas de 2 metros de cuerda: puedes reinterpretarlo con otro color,
+remate o accesorio, pero con una portada y un gancho distintos.
 
 ## PLANTILLAS (la del día viene en el mensaje)
 - M1 Pieza terminada del día: TOP presenta la pieza ("LLAVERO EN 15 MINUTOS"),
@@ -34,7 +40,9 @@ cuentas, posavasos redondo, colgante pequeño con aro de madera.
   primer plano de manos haciendo ese nudo. Palabra clave: EBOOK.
 - M3 Error común y cómo evitarlo: TOP nombra el error ("¿TU NUDO QUEDA
   TORCIDO?"), BOTTOM la solución ("tira de las hebras de trabajo, no de las
-  centrales"). Palabra clave: EBOOK.
+  centrales"). También sirve el contraste "nudo muy apretado vs. nudo flojo y
+  parejo" ("¿APRIETAS DEMASIADO EL NUDO?" → "firme pero parejo, deja respirar la
+  cuerda"). Foto: primer plano de manos y cuerda, sin distracciones. Palabra clave: EBOOK.
 - M4 Frase creativa: TOP una frase corta que inspira ("HECHO A MANO, NUDO A
   NUDO"), BOTTOM vacío o una línea de cierre. Foto: pieza o materiales en
   ambiente cálido. Palabra clave: EBOOK.
