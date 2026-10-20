@@ -56,6 +56,7 @@ import office_state
 import office_agents
 import gaming_clip
 import gaming_reel
+import gaming_memes
 import cloudflare_tunnel
 import text_provider
 from tts_engine import (
@@ -1039,6 +1040,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
+        <option value="gaming_meme">Memes — Videojuegos (Memedroid, imagen, español)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (video + post de imagen)</option>
         <option value="mix_gaming">Mixto — Gaming (alterna clip y post)</option>
         <option value="mix_macrame">Mixto — Macramé (video + post de imagen)</option>
@@ -1425,6 +1427,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
+        <option value="gaming_meme">Memes — Videojuegos (Memedroid, imagen, español)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (1 video, 1 post, 1 video, 1 post…)</option>
         <option value="mix_gaming">Mixto — Gaming (1 clip, 1 post, 1 clip, 1 post…)</option>
         <option value="mix_macrame">Mixto — Macramé (1 video, 1 post, 1 video, 1 post…)</option>
@@ -2506,11 +2509,11 @@ let gamingJobId = null;
 let lastGamingJobType = null; // tipo del ultimo post renderizado (para regenerar en un mixto)
 try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
 // Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
-const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "howbig_image";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "howbig_image" || type === "gaming_meme";
 const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
-  gaming_reel: "dame el próximo reel de noticias gaming",
+  gaming_reel: "dame el próximo reel de noticias gaming", gaming_meme: "dame el próximo meme de videojuegos",
   ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
   historias_image: "dame el próximo post de historias de rescate", mix_historias: "dame una historia",
   howbig_image: "give me the next How Big Really post",
@@ -2526,10 +2529,10 @@ function updatePipelineTypeVisibility() {
   const isGaming = isPostType(type);
   const mixed = isMixedType(type);
   $("pipeline-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
-  $("pipeline-gaming-only-fields").style.display = (isImagePostType(type) || type === "mix_gaming") ? "" : "none";
+  $("pipeline-gaming-only-fields").style.display = ((isImagePostType(type) && type !== "gaming_meme") || type === "mix_gaming") ? "" : "none";
   $("pipeline-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
   $("pipeline-mixed-hint").style.display = mixed ? "" : "none";
-  $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : type === "gaming_reel" ? "Generar reel de noticias" : isGaming ? "Generar post" : "Generar video";
+  $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : type === "gaming_reel" ? "Generar reel de noticias" : type === "gaming_meme" ? "Buscar meme" : isGaming ? "Generar post" : "Generar video";
   $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
   if ((isGaming || mixed) && gamingJobId) pollGamingJob();
   updatePipelineStyleVisibility();
@@ -2847,7 +2850,7 @@ $("pipeline-retry-btn").addEventListener("click", async () => {
 // y se publica ya o se programa, sin pasar por un lote.
 const GAMING_STAGE_LABELS = {
   idea: "Pidiendo la idea a la IA…", imagen: "Generando la imagen…",
-  clip: "Buscando el clip más viral en Medal…", descarga: "Descargando el clip…",
+  meme: "Buscando el mejor meme en Memedroid…", clip: "Buscando el clip más viral en Medal…", descarga: "Descargando el clip…",
   subtitulos: "Detectando voz para los subtítulos…",
   render: "Editando el clip con Remotion (tarda unos 5 minutos)…",
   noticia: "Buscando la noticia más reciente…", guion: "Escribiendo el guion del reel…", voz: "Generando la narración…",
@@ -2952,6 +2955,7 @@ async function startGamingPost(pageName, triggerMessage, type, withVideo = false
     const res = await fetch("/api/gaming/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(type === "gaming_reel" ? { kind: "reel", text_provider: "auto" }
+      : type === "gaming_meme" ? { kind: "meme" }
       : type === "gaming_clip" ? {
         kind: "clip", game: $("pipeline-game").value, medal_url: $("pipeline-medal-url").value.trim(),
       } : {
@@ -3427,7 +3431,7 @@ function updateLoteTypeVisibility() {
   const type = $("lote-type").value;
   const isGaming = isPostType(type);
   $("lote-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
-  $("lote-gaming-only-fields").style.display = (isImagePostType(type) || isMixedType(type)) ? "" : "none";
+  $("lote-gaming-only-fields").style.display = ((isImagePostType(type) && type !== "gaming_meme") || isMixedType(type)) ? "" : "none";
   $("lote-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
   $("lote-mixed-hint").style.display = isMixedType(type) ? "" : "none";
   // YouTube: videos normales y clips gaming (canal de gaming); no imagen.
@@ -3486,7 +3490,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     every_n_days: parseInt($("lote-every-days").value, 10) || 1,
     networks,
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
-      : contentType === "gaming_reel" ? {}
+      : contentType === "gaming_reel" || contentType === "gaming_meme" ? {}
       : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
       : isGaming ? { image_provider: $("lote-image-provider").value } : {
       ...(contentType === "mix_ninio" || contentType === "mix_macrame" || contentType === "mix_historias" ? { image_provider: $("lote-provider").value } : {}),
@@ -5780,6 +5784,20 @@ def _run_gaming_reel_generate(job_id: str, text_provider_pref: str) -> None:
     )
 
 
+def _run_gaming_meme_generate(job_id: str) -> None:
+    """Meme de videojuegos de Memedroid (gaming_memes): imagen tal cual con credito al autor en el caption."""
+    try:
+        meme = gaming_memes.generate_gaming_meme(_gaming_dir(job_id) / "cover.jpg")
+    except Exception as e:
+        logger.exception("gaming %s: fallo el meme", job_id)
+        _gaming_update(job_id, status="error", stage=None, error=str(e))
+        return
+    _gaming_update(
+        job_id, status="ready", stage=None, error=None, hook=meme["hook"], top="", bottom="",
+        caption=meme["caption"], image_path=meme["image_path"], source_meme=meme["source_meme"],
+    )
+
+
 @app.route("/api/gaming/games")
 def api_gaming_games():
     """Juegos para los selectores de clips (los mas populares de Medal primero)."""
@@ -5819,7 +5837,7 @@ def api_gaming_start():
     kind = "clip" if data.get("kind") in ("clip", "reel") else "image"
     # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
     profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image",
-                   "howbig": "howbig_image"}.get(
+                   "howbig": "howbig_image", "meme": "gaming_meme"}.get(
         data.get("kind"), "gaming_image")
     if reel:
         profile_key = "gaming_reel"
@@ -5827,6 +5845,8 @@ def api_gaming_start():
         if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
             text_provider_pref = ""
         target, args = _run_gaming_reel_generate, (text_provider_pref,)
+    elif profile_key == "gaming_meme":
+        target, args = _run_gaming_meme_generate, ()
     elif kind == "clip":
         game_key = data.get("game") or ""
         if game_key not in gaming_clip.GAMES:
@@ -5856,7 +5876,7 @@ def api_gaming_start():
         if any(j["status"] == "generating" for j in _gaming_jobs.values()):
             return jsonify({"ok": False, "error": "Ya hay un post gaming generándose. Esperá a que termine."}), 409
         _gaming_jobs[job_id] = {
-            "kind": kind, "profile": profile_key, "status": "generating", "stage": "noticia" if reel else "clip" if kind == "clip" else "idea",
+            "kind": kind, "profile": profile_key, "status": "generating", "stage": "noticia" if reel else "meme" if profile_key == "gaming_meme" else "clip" if kind == "clip" else "idea",
             "error": None, "networks": {}, "created_at": time.time(),
         }
         job_store.save("gaming", _gaming_jobs)

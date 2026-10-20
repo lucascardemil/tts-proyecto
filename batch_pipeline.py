@@ -165,6 +165,7 @@ import feedback_analyzer
 import gaming_clip
 import gaming_reel
 import gaming_news
+import gaming_memes
 import howbig
 import job_store
 import meme_maker
@@ -216,6 +217,7 @@ HOWBIG_LAUNCH_STORE = "howbig_launch"
 # antes (11:00 y 18:00, via network_offsets del proyecto).
 GAMING_SLOT_HOURS = [12, 19]
 GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_at
+GAMING_MEME_SLOT_HOURS = [14, 17]  # memes de Memedroid (hora del Este): entre los posts de las 12 y las 19; sin pasar de las 21 locales
 # Plantillas de la "semana tipo" (sec. 2 y 4): [slot del mediodia, slot de la
 # noche] por dia, lunes=0. Domingo solo trae T1 en el workflow; el segundo
 # slot repite T2 (la otra plantilla mas usada).
@@ -264,7 +266,7 @@ MACRAME_TEMPLATES = {
 MACRAME_WEEK = [("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4")]
 # Tipos de lote de la pagina gaming: mismos horarios. YouTube solo para los
 # videos 9:16 (clip de Medal y reel de noticias con motion graphics -> Short), nunca para la imagen.
-GAMING_TYPES = {"gaming_image", "gaming_clip", "gaming_reel"}
+GAMING_TYPES = {"gaming_image", "gaming_clip", "gaming_reel", "gaming_meme"}
 GAMING_VIDEO_TYPES = ("gaming_clip", "gaming_reel")
 # Lotes mixtos: alternan un video y un post de imagen del mismo nicho (video, post, video, post...);
 # el reparto sale solo del total (10 -> 5 y 5; 11 -> 6 videos y 5 posts). Cada item guarda su
@@ -1571,6 +1573,14 @@ IMAGE_POST_PROFILES = {
         "default_trigger": "dame la próxima noticia de videojuegos", "label": "Noticia gaming",
         "ai_design": "news",
     },
+    "gaming_meme": {
+        # Meme de Memedroid tal cual (gaming_memes.py): sin IA ni plantillas; imagen + credito al autor.
+        "kind": gaming_memes.KIND, "ai_design": None,
+        "slot_hours": GAMING_MEME_SLOT_HOURS, "network_offsets": GAMING_NETWORK_OFFSETS,
+        "history_store": "gaming_meme_history",
+        "max_hashtags": {"instagram": GAMING_MAX_HASHTAGS["instagram"], "facebook": GAMING_MAX_HASHTAGS["facebook"]},
+        "default_trigger": "dame el próximo meme de videojuegos", "label": "Meme gaming",
+    },
     "ninio_image": {
         "kind": "ninio_post",  # prompts/ninio_post_system.md
         "templates": NINIO_TEMPLATES, "week": NINIO_WEEK,
@@ -1952,6 +1962,41 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         v["template"] = post.get("template", template)
         v["idea"] = post["idea"]
         v["caption"] = post["caption"]
+        v["gen_attempts"] = 0
+        v["heal_cycles"] = 0
+        _save(projects)
+
+
+def _generate_batch_meme(project_id: str, index: int) -> None:
+    """Meme de videojuegos de Memedroid (gaming_memes): el mejor reciente sin publicar, como imagen + credito."""
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return
+        project["videos"][index]["status"] = "generating"
+        project["videos"][index]["stage"] = "meme"
+        project["videos"][index]["error"] = None
+        _save(projects)
+
+    story_id = f"gmeme_{project_id}_{index:03d}"
+    try:
+        meme = gaming_memes.generate_gaming_meme(video_maker.VIDEO_PUBLIC_DIR / story_id / "cover.jpg", index)
+    except Exception as e:
+        logger.exception("batch %s meme %d: fallo la generacion", project_id, index)
+        _record_generation_failure(project_id, index, e)
+        return
+
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        v["status"] = "ready"
+        v["stage"] = None
+        v["story_id"] = story_id
+        v["video_path"] = meme["image_path"]
+        v["idea"] = meme["hook"]
+        v["caption"] = meme["caption"]
+        v["source_meme"] = meme["source_meme"]
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -2759,6 +2804,8 @@ def _generate_batch_item(project_id: str, index: int, content_type: str) -> None
         _generate_batch_clip(project_id, index)
     elif content_type == "gaming_reel":
         _generate_batch_reel(project_id, index)
+    elif content_type == "gaming_meme":
+        _generate_batch_meme(project_id, index)
     elif content_type in IMAGE_POST_PROFILES:
         _generate_batch_image_post(project_id, index)
     else:
