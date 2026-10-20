@@ -91,7 +91,9 @@ def parse_value(value: str) -> Optional[dict]:
 
 def _need_known_number(parsed: Optional[dict], value: str, known: set, where: str) -> dict:
     if not parsed:
-        raise ReelError(f"{where}: el valor '{value}' no es un numero")
+        raise ReelError(
+            f"{where}: el valor '{value}' no es un numero: usa UN solo numero con digitos (p. ej. '1800', '$70', '40%'); "
+            "un rango ('1200 to 1800') no vale: elige una cifra o usa una escena versus '<A> vs <B>'")
     if parsed["key"] not in known:
         raise ReelError(f"{where}: la cifra '{value}' no aparece en la noticia")
     return parsed
@@ -246,7 +248,11 @@ def render_reel(props: dict, props_path: Path, output_path: Path) -> None:
 def write_script(item: dict, text_fn: Callable[[str], str]) -> dict:
     """Pide el guion al modelo (text_fn(mensaje) -> respuesta) y lo valida; reintenta contando el error anterior."""
     source = " ".join([item["title"], item.get("summary", ""), item.get("body", "")])
-    base = TRIGGER + gaming_news.reel_news_block(item)
+    allowed = sorted(_source_numbers(source), key=lambda n: (len(n), n))
+    base = TRIGGER + gaming_news.reel_news_block(item) + (
+        "\nFIGURES you may use in stat, versus and timeline scenes (the only ones present in the data): "
+        + ", ".join(allowed) + ". Any other figure is rejected." if allowed
+        else "\nThe data contains NO figures: do NOT use stat or versus scenes, and no numbers in timeline scenes.")
     problem = ""
     for attempt in range(1, SCRIPT_ATTEMPTS + 1):
         message = base + (f"\n\nYour previous answer was rejected: {problem}. Fix exactly that." if problem else "")

@@ -23,7 +23,7 @@ SCENE <n> | <type> | <on_screen> | <value> | <narration>
 
 ## SCENE TYPES
 - hook (always scene 1): on_screen = the same hook text, ALL CAPS. value = "-".
-- stat: ONE big number from the data. on_screen = what the number measures, 2-6 words, ALL CAPS. value = the number written with digits, optionally with a currency symbol before and a short suffix after, for example "100M", "$70", "2.5 million", "40%". The digits MUST appear in the data. Skip stat scenes if the data has no number.
+- stat: ONE big number from the data. on_screen = what the number measures, 2-6 words, ALL CAPS. value = the number written with digits, optionally with a currency symbol before and a short suffix after, for example "100M", "$70", "2.5 million", "40%". The digits MUST appear in the data. value is ONE single number, never a range, a word or text ("1200 to 1800" or "1200-1800" are WRONG: pick one figure from the range, or use a versus scene for "1200 vs 1800"). Skip stat scenes if the data has no number.
 - versus: compares two numbers from the data. on_screen = "<label A> vs <label B>", ALL CAPS, short labels. value = "<number A> vs <number B>" with digits that appear in the data. Skip it if the data has no two comparable numbers.
 - timeline: 2-4 dated steps taken from the data. on_screen = steps separated by " / ", each like "May 2025: Announced". value = "-". Skip it if the data has no dates.
 - quote: a short quote copied WORD FOR WORD from the article excerpt or summary (max 20 words). on_screen = the quote text. value = who said it, or "-". Skip it if there is no real quote.
