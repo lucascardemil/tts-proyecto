@@ -32,6 +32,9 @@ FEEDS = {
     "GamesRadar": "https://www.gamesradar.com/rss/",
 }
 FRESH_HOURS = (36, 72)  # primero lo de las ultimas 36 h; si no hay nada nuevo, hasta 72 h
+REEL_FRESH_HOURS = (72, 7 * 24, 14 * 24)  # reels: lo mas reciente primero, nunca mas de 2 semanas
+TRENDING_BONUS = 2  # "medios" extra que suma una noticia que nombra un juego en tendencia
+ARTICLE_MAX = 2000  # caracteres del articulo que se le dan al generador de texto
 SAME_STORY = 0.4  # similitud de titulos (Jaccard) a partir de la cual dos medios cuentan la misma noticia
 ALREADY_USED = 0.5  # idem frente a lo ya publicado
 USED_STORE = "gaming_news_used"
@@ -137,12 +140,15 @@ def mark_used(item: dict) -> None:
         job_store.save(USED_STORE, store)
 
 
-def pick_news(news: list, used: list, now: Optional[datetime] = None) -> dict:
-    """La noticia mas cubierta por los medios (empate: la mas reciente) entre las frescas y sin usar."""
+def pick_news(news: list, used: list, now: Optional[datetime] = None,
+              fresh_hours: tuple = FRESH_HOURS, trending: tuple = ()) -> dict:
+    """La noticia mas cubierta por los medios (empate: la mas reciente) entre las frescas y sin usar.
+    `trending` (nombres de juegos en tendencia) suma TRENDING_BONUS a la que nombra alguno en el titular."""
     now = now or datetime.now(timezone.utc)
     used_links = {u["link"] for u in used}
     used_tokens = [_tokens(u["title"]) for u in used]
-    for hours in FRESH_HOURS:
+    hot = [_plain(g) for g in trending if _plain(g).strip()]
+    for hours in fresh_hours:
         cutoff = now - timedelta(hours=hours)
         fresh = [n for n in news if n["published"] >= cutoff]
         candidates = []
@@ -151,7 +157,9 @@ def pick_news(news: list, used: list, now: Optional[datetime] = None) -> dict:
             if n["link"] in used_links or any(_similar(toks, u) >= ALREADY_USED for u in used_tokens):
                 continue
             outlets = {o["source"] for o in fresh if _similar(toks, _tokens(o["title"])) >= SAME_STORY}
-            candidates.append((len(outlets), n["published"], n))
+            title = _plain(n["title"])
+            bonus = TRENDING_BONUS if any(g in title for g in hot) else 0
+            candidates.append((len(outlets) + bonus, n["published"], n))
         if candidates:
             return max(candidates, key=lambda c: (c[0], c[1]))[2]
     raise NoNewsError("no hay noticias de videojuegos nuevas sin usar (todas ya se publicaron o los medios no respondieron)")
@@ -173,4 +181,65 @@ def news_block(item: dict) -> str:
         f"Headline: {item['title']}\n"
         f"Summary: {item['summary'] or '(no summary)'}\n"
         f"Source: {item['source']} · published {local}"
+    )
+
+
+_RECORD_WORDS = ("record", "sold", "sales", "million", "billion", "peak", "players", "fastest", "most ", "biggest", "highest", "best-selling")
+_FACT_WORDS = ("secret", "hidden", "behind the scenes", "turns out", "years later", "easter egg", "reveals", "cut content", "originally")
+
+
+def reel_angle(item: dict) -> str:
+    """Enfoque del reel segun la noticia: RECORD (cifras/records), FACT (curiosidad) o NEWS."""
+    text = _plain(item["title"] + " " + item.get("summary", ""))
+    if any(w in text for w in _RECORD_WORDS):
+        return "RECORD"
+    if any(w in text for w in _FACT_WORDS):
+        return "FACT"
+    return "NEWS"
+
+
+def fetch_article_text(link: str, limit: int = ARTICLE_MAX) -> str:
+    """Primeros parrafos del articulo (el resumen del RSS es muy corto para un reel de 40-50 s).
+    "" si la pagina no responde: el reel se arma entonces con el resumen."""
+    try:
+        resp = requests.get(link, headers=_HEADERS, timeout=20)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.warning("gaming_news: no se pudo leer el articulo %s: %s", link, e)
+        return ""
+    page = re.sub(r"(?is)<(script|style|noscript|nav|footer|aside)[^>]*>.*?</\1>", " ", resp.text)
+    paragraphs = [_clean(p) for p in re.findall(r"(?is)<p[^>]*>(.*?)</p>", page)]
+    text = ""
+    for p in paragraphs:
+        if len(p) < 60:  # menus, pies de foto, avisos
+            continue
+        if len(text) + len(p) > limit:
+            break
+        text += p + "\n"
+    return text.strip()
+
+
+def next_reel_news(trending: tuple = ()) -> dict:
+    """Proxima noticia para un reel: de las ultimas 2 semanas, sin usar, priorizando juegos en tendencia.
+    Devuelve el item con `angle` (RECORD/FACT/NEWS) y `body` (texto del articulo, puede ir vacio)."""
+    news = fetch_news()
+    if not news:
+        raise NoNewsError("ningun medio de videojuegos respondio (¿sin conexión?)")
+    item = dict(pick_news(news, _load_used(), fresh_hours=REEL_FRESH_HOURS, trending=trending))
+    item["angle"] = reel_angle(item)
+    item["body"] = fetch_article_text(item["link"])
+    return item
+
+
+def reel_news_block(item: dict) -> str:
+    """Datos de la noticia para el guion del reel (el modelo solo puede usar esto)."""
+    local = item["published"].astimezone().strftime("%d/%m/%Y")
+    body = item.get("body") or ""
+    return (
+        "\n\nNEWS ITEM (use ONLY this data, invent nothing):\n"
+        f"Angle: {item.get('angle', 'NEWS')}\n"
+        f"Headline: {item['title']}\n"
+        f"Summary: {item['summary'] or '(no summary)'}\n"
+        + (f"Article excerpt: {body}\n" if body else "")
+        + f"Source: {item['source']} · published {local}"
     )

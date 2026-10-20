@@ -197,6 +197,23 @@ def test_chain_retries_a_short_script_of_any_long_kind_but_not_of_the_posts(monk
     assert out == short and len(calls) == 1
 
 
+def test_a_rejected_script_gives_the_next_model_the_reason_to_fix_it(monkeypatch):
+    short = _story_text(" ".join(GOOD.split()[:60]) + " deja un corazón para Nuri.")
+    users = []
+    replies = iter([short, GOOD_ANY])
+    monkeypatch.setattr(bp.text_provider, "available_backends", lambda: ["freellm:auto"])
+    monkeypatch.setattr(bp.text_provider, "model_chain", lambda: ["m1", "m2"])
+
+    def fake(system, user, **k):
+        users.append(user)
+        return next(replies), "freellm"
+
+    monkeypatch.setattr(bp.text_provider, "generate_text", fake)
+    assert bp._generate_text_with_chain("macrame", "MACRAME CREATIVO", "msg", "t") == GOOD_ANY
+    assert users[0] == "msg"  # el primer intento va limpio
+    assert "fue rechazada" in users[1] and "fuera de largo" in users[1] and users[1].startswith("msg")
+
+
 def test_recent_story_patterns_counts_historias_pages_without_the_rescue_profile():
     projects = {
         "a": {"page_name": "HISTORIAS", "video_settings": {}, "videos": [

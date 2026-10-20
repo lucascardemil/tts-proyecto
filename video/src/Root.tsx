@@ -2,7 +2,8 @@ import React from "react";
 import { Composition } from "remotion";
 import { StoryVideo } from "./StoryVideo";
 import { ClipEdit, buildTimeline, clipEditDefaultProps, type ClipEditProps } from "./ClipEdit";
-import { storyVideoSchema, type StoryVideoProps } from "./schema";
+import { GamingReel, gamingReelDefaultProps } from "./GamingReel";
+import { gamingReelSchema, storyVideoSchema, type GamingReelProps, type StoryVideoProps } from "./schema";
 
 const FPS = 30;
 
@@ -61,6 +62,20 @@ export const RemotionRoot: React.FC = () => {
         schema={storyVideoSchema}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="GamingReel"
+        component={GamingReel}
+        durationInFrames={FPS * 21}
+        fps={FPS}
+        width={1080}
+        height={1920}
+        schema={gamingReelSchema}
+        defaultProps={gamingReelDefaultProps}
+        // la duración es la del audio de la narración (mas la cola)
+        calculateMetadata={({ props }: { props: GamingReelProps }) => ({
+          durationInFrames: Math.max(FPS * 5, Math.round(props.totalDurationSeconds * FPS)),
+        })}
       />
       <Composition
         id="ClipEdit"

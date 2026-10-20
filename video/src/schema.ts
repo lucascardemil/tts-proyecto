@@ -104,3 +104,46 @@ export type SubtitleFontId = z.infer<typeof subtitleFontId>;
 export type SubtitlePosition = z.infer<typeof subtitlePosition>;
 export type KenBurnsDirection = z.infer<typeof kenBurnsDirection>;
 export type VideoMood = z.infer<typeof videoMood>;
+
+// ---- Reel de noticias de videojuegos (GamingReel): solo motion graphics, sin imagenes de juego ----
+const reelFrames = { startFrame: z.number(), endFrame: z.number() };
+
+export const reelSceneSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("hook"), text: z.string(), ...reelFrames }),
+  z.object({
+    type: z.literal("stat"),
+    text: z.string(), // que mide el numero
+    prefix: z.string().default(""),
+    number: z.number(),
+    decimals: z.number().default(0),
+    suffix: z.string().default(""),
+    ...reelFrames,
+  }),
+  z.object({
+    type: z.literal("versus"),
+    labelA: z.string(),
+    labelB: z.string(),
+    valueA: z.number(),
+    valueB: z.number(),
+    prefix: z.string().default(""),
+    suffix: z.string().default(""),
+    ...reelFrames,
+  }),
+  z.object({ type: z.literal("timeline"), items: z.array(z.string()), ...reelFrames }),
+  z.object({ type: z.literal("quote"), text: z.string(), by: z.string().default(""), ...reelFrames }),
+  z.object({ type: z.literal("outro"), text: z.string(), ...reelFrames }),
+]);
+
+export const gamingReelSchema = z.object({
+  scenes: z.array(reelSceneSchema),
+  subtitles: z.array(subtitleWordSchema),
+  subtitleStyle: subtitleStyleSchema,
+  accent: z.string().default("#ffd60a"),
+  angle: z.enum(["RECORD", "FACT", "NEWS"]).default("NEWS"),
+  sourceName: z.string().default(""),
+  audioSrc: z.string(),
+  totalDurationSeconds: z.number().default(10),
+});
+
+export type ReelScene = z.infer<typeof reelSceneSchema>;
+export type GamingReelProps = z.infer<typeof gamingReelSchema>;

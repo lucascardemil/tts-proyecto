@@ -55,6 +55,7 @@ import batch_pipeline
 import office_state
 import office_agents
 import gaming_clip
+import gaming_reel
 import cloudflare_tunnel
 import text_provider
 from tts_engine import (
@@ -1037,6 +1038,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
         <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
+        <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (video + post de imagen)</option>
         <option value="mix_gaming">Mixto — Gaming (alterna clip y post)</option>
         <option value="mix_macrame">Mixto — Macramé (video + post de imagen)</option>
@@ -1422,6 +1424,7 @@ HTML = r"""<!DOCTYPE html>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
         <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
+        <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
         <option value="mix_ninio">Mixto — Niño selectivo (1 video, 1 post, 1 video, 1 post…)</option>
         <option value="mix_gaming">Mixto — Gaming (1 clip, 1 post, 1 clip, 1 post…)</option>
         <option value="mix_macrame">Mixto — Macramé (1 video, 1 post, 1 video, 1 post…)</option>
@@ -1606,6 +1609,24 @@ HTML = r"""<!DOCTYPE html>
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn-sm" id="ajustes-check-whatsapp-btn">Comprobar conexión</button>
         <button class="btn-sm" id="ajustes-reconnect-whatsapp-btn" style="display:none">Reconectar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de Google Flow</h2>
+      <p class="card-desc">Usada para generar imágenes con Google Flow. Flow corre en un navegador propio de esta PC (perfil dedicado): tocá «Abrir Flow» e iniciá sesión en Google a mano una sola vez; la sesión queda guardada.</p>
+      <div class="status-rows">
+        <div class="status-row" id="ajustes-row-flow">
+          <div class="status-row-text">
+            <strong>Google Flow</strong>
+            <span id="ajustes-msg-flow">Sin comprobar todavía.</span>
+          </div>
+          <div class="ring pending" id="ajustes-ring-flow"></div>
+        </div>
+      </div>
+      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn-sm" id="ajustes-check-flow-btn">Comprobar conexión</button>
+        <button class="btn-sm" id="ajustes-open-flow-btn">Abrir Flow</button>
       </div>
     </div>
 
@@ -2178,6 +2199,7 @@ function activateTab(tab) {
   }
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
+    checkFlowSettings();
     checkYoutubeSettings();
     loadPublicUrl();
   }
@@ -2488,6 +2510,7 @@ const isImagePostType = (type) => type === "gaming_image" || type === "ninio_ima
 const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
+  gaming_reel: "dame el próximo reel de noticias gaming",
   ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
   historias_image: "dame el próximo post de historias de rescate", mix_historias: "dame una historia",
   howbig_image: "give me the next How Big Really post",
@@ -2506,7 +2529,7 @@ function updatePipelineTypeVisibility() {
   $("pipeline-gaming-only-fields").style.display = (isImagePostType(type) || type === "mix_gaming") ? "" : "none";
   $("pipeline-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
   $("pipeline-mixed-hint").style.display = mixed ? "" : "none";
-  $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : isGaming ? "Generar post" : "Generar video";
+  $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : type === "gaming_reel" ? "Generar reel de noticias" : isGaming ? "Generar post" : "Generar video";
   $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
   if ((isGaming || mixed) && gamingJobId) pollGamingJob();
   updatePipelineStyleVisibility();
@@ -2827,6 +2850,7 @@ const GAMING_STAGE_LABELS = {
   clip: "Buscando el clip más viral en Medal…", descarga: "Descargando el clip…",
   subtitulos: "Detectando voz para los subtítulos…",
   render: "Editando el clip con Remotion (tarda unos 5 minutos)…",
+  noticia: "Buscando la noticia más reciente…", guion: "Escribiendo el guion del reel…", voz: "Generando la narración…",
 };
 const GAMING_NETWORKS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube" };
 const GAMING_JOB_KEY = "gamingJobId";
@@ -2863,13 +2887,14 @@ function renderGamingJob(job) {
   const busy = Object.values(job.networks).some((n) => n.status === "waiting" || n.status === "running");
   const isClip = job.kind === "clip";
   const selected = $("pipeline-type").value;
-  const jobType = isClip ? "gaming_clip" : job.profile || "gaming_image";
+  const isReel = job.profile === "gaming_reel";
+  const jobType = isReel ? "gaming_reel" : isClip ? "gaming_clip" : job.profile || "gaming_image";
   lastGamingJobType = jobType;
   $("gaming-panel").style.display = selected === jobType || (isMixedType(selected) && MIXED_PAIRS[selected].includes(jobType)) ? "" : "none";
   $("gaming-preview").style.display = job.status === "ready" ? "" : "none";
   $("gaming-status").textContent = job.status === "generating"
     ? GAMING_STAGE_LABELS[job.stage] || "Generando…"
-    : job.status === "error" ? `❌ ${job.error || "Falló la generación."}` : `✅ ${isClip ? "Clip" : "Post"} listo: «${job.hook}»`;
+    : job.status === "error" ? `❌ ${job.error || "Falló la generación."}` : `✅ ${isReel ? "Reel" : isClip ? "Clip" : "Post"} listo: «${job.hook}»`;
   $("pipeline-start-btn").disabled = job.status === "generating";
   if (job.status !== "ready") return;
 
@@ -2884,7 +2909,7 @@ function renderGamingJob(job) {
     $("gaming-youtube").checked = isClip;
     $("gaming-instagram").checked = jobType !== "howbig_image";
     checkGamingYoutube(isClip);
-    if (isClip) loadGamingGames();  // la generación del clip actualizó la lista de juegos
+    if (isClip && !isReel) loadGamingGames();  // la generación del clip actualizó la lista de juegos
   }
   $("gaming-youtube-wrap").style.display = isClip ? "" : "none";
   for (const key of Object.keys(GAMING_NETWORKS)) {
@@ -2926,7 +2951,8 @@ async function startGamingPost(pageName, triggerMessage, type, withVideo = false
   try {
     const res = await fetch("/api/gaming/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(type === "gaming_clip" ? {
+      body: JSON.stringify(type === "gaming_reel" ? { kind: "reel", text_provider: "auto" }
+      : type === "gaming_clip" ? {
         kind: "clip", game: $("pipeline-game").value, medal_url: $("pipeline-medal-url").value.trim(),
       } : {
         kind: GAMING_START_KIND[type] || "image",
@@ -3460,6 +3486,7 @@ $("lote-create-btn").addEventListener("click", async () => {
     every_n_days: parseInt($("lote-every-days").value, 10) || 1,
     networks,
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
+      : contentType === "gaming_reel" ? {}
       : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
       : isGaming ? { image_provider: $("lote-image-provider").value } : {
       ...(contentType === "mix_ninio" || contentType === "mix_macrame" || contentType === "mix_historias" ? { image_provider: $("lote-provider").value } : {}),
@@ -4130,6 +4157,29 @@ $("ajustes-check-whatsapp-btn").addEventListener("click", () => checkSessionStat
 
 $("ajustes-reconnect-whatsapp-btn").addEventListener("click", () => reconnectSession("whatsapp"));
 
+
+// ── Ajustes: conexión de Google Flow ──
+async function checkFlowSettings() {
+  $("ajustes-ring-flow").className = "ring indeterminate";
+  let state = "unreachable", message = "No se pudo consultar Flow.";
+  try {
+    const data = await (await fetch("/api/flow/status")).json();
+    if (data.ok) ({ state, message } = data);
+  } catch (e) {}
+  $("ajustes-ring-flow").className = state === "ok" ? "ring done" : "ring error";
+  $("ajustes-msg-flow").textContent = message;
+}
+$("ajustes-check-flow-btn").addEventListener("click", checkFlowSettings);
+$("ajustes-open-flow-btn").addEventListener("click", async () => {
+  const btn = $("ajustes-open-flow-btn");
+  btn.disabled = true;
+  try {
+    const data = await (await fetch("/api/flow/launch", { method: "POST" })).json();
+    if (!data.ok) alert(data.error || "No se pudo abrir Flow.");
+  } catch (e) { alert("No se pudo abrir Flow."); }
+  btn.disabled = false;
+  setTimeout(checkFlowSettings, 4000);
+});
 
 // ── Ajustes: conexión de YouTube (OAuth) ──
 // Una fila por canal de .env (YT_CHANNEL_<N>_NAME): estado + botón Conectar/Reconectar propio.
@@ -5706,6 +5756,30 @@ def _run_gaming_clip_generate(job_id: str, game_key: str, medal_url: Optional[st
     )
 
 
+def _run_gaming_reel_generate(job_id: str, text_provider_pref: str) -> None:
+    """Reel de noticias de videojuegos con motion graphics (gaming_reel): mismo trabajo que un clip suelto
+    (video 9:16 con titulo, caption y SEO de YouTube), pero sin juego ni link de Medal."""
+    def text_fn(message: str) -> str:
+        return batch_pipeline._generate_text_with_chain(
+            gaming_reel.KIND, "JUGADASEPICASVIDEOJUEGOS", message, f"{gaming_reel.KIND}_manual_{job_id}",
+            prefer=text_provider_pref or "auto",
+        )
+
+    try:
+        reel = gaming_reel.generate_gaming_reel(
+            f"manual_{job_id}", text_fn, on_stage=lambda stage: _gaming_update(job_id, stage=stage),
+        )
+    except Exception as e:
+        logger.exception("gaming %s: fallo el reel de noticias", job_id)
+        _gaming_update(job_id, status="error", stage=None, error=str(e))
+        return
+    _gaming_update(
+        job_id, status="ready", stage=None, error=None, hook=reel["hook"], title=reel["title"],
+        caption=reel["caption"], video_path=reel["video_path"], source_news=reel["news_link"],
+        yt_seo=reel["youtube"],
+    )
+
+
 @app.route("/api/gaming/games")
 def api_gaming_games():
     """Juegos para los selectores de clips (los mas populares de Medal primero)."""
@@ -5741,12 +5815,19 @@ def api_mixed_next():
 @app.route("/api/gaming/start", methods=["POST"])
 def api_gaming_start():
     data = request.get_json(force=True)
-    kind = "clip" if data.get("kind") == "clip" else "image"
+    reel = data.get("kind") == "reel"  # reel de noticias: viaja como un video (kind "clip") con perfil propio
+    kind = "clip" if data.get("kind") in ("clip", "reel") else "image"
     # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
     profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image",
                    "howbig": "howbig_image"}.get(
         data.get("kind"), "gaming_image")
-    if kind == "clip":
+    if reel:
+        profile_key = "gaming_reel"
+        text_provider_pref = (data.get("text_provider") or "").strip().lower()
+        if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
+            text_provider_pref = ""
+        target, args = _run_gaming_reel_generate, (text_provider_pref,)
+    elif kind == "clip":
         game_key = data.get("game") or ""
         if game_key not in gaming_clip.GAMES:
             return jsonify({"ok": False, "error": "Elegí un juego."}), 400
@@ -5775,7 +5856,7 @@ def api_gaming_start():
         if any(j["status"] == "generating" for j in _gaming_jobs.values()):
             return jsonify({"ok": False, "error": "Ya hay un post gaming generándose. Esperá a que termine."}), 409
         _gaming_jobs[job_id] = {
-            "kind": kind, "profile": profile_key, "status": "generating", "stage": "clip" if kind == "clip" else "idea",
+            "kind": kind, "profile": profile_key, "status": "generating", "stage": "noticia" if reel else "clip" if kind == "clip" else "idea",
             "error": None, "networks": {}, "created_at": time.time(),
         }
         job_store.save("gaming", _gaming_jobs)
@@ -5888,13 +5969,14 @@ def _run_gaming_clip_publish(job_id: str, job: dict, network: str, page_id: str,
     de gaming, como Short) programan nativo; Instagram duerme hasta la hora,
     igual que con la imagen."""
     title = job.get("title") or "Gaming clip"
+    ai = job.get("profile") == "gaming_reel"  # voz sintetica y graficos generados; el clip de Medal es gameplay real
     on_status = lambda st: _gaming_net_update(job_id, network, stage=st)
     if network == "youtube":
         yt_title, yt_description, yt_tags = batch_pipeline.gaming_youtube_fields(job.get("yt_seo"), title, caption)
         publish_at = batch_pipeline._rfc3339_utc(datetime.fromtimestamp(target_ts).isoformat()) if target_ts else None
         result = youtube_publisher.publish_video(
-            job["video_path"], yt_title, yt_description, "public", yt_tags, False,
-            on_status=on_status, publish_at=publish_at, channel_key=batch_pipeline.GAMING_YT_CHANNEL,
+            job["video_path"], yt_title, yt_description, "public", yt_tags, ai,
+            on_status=on_status, publish_at=publish_at, channel_key=batch_pipeline.GAMING_YT_CHANNEL, language="en",
         )
         if result.get("ok"):
             if publish_at:
@@ -5914,7 +5996,7 @@ def _run_gaming_clip_publish(job_id: str, job: dict, network: str, page_id: str,
             time.sleep(max(0, target_ts - time.time()))
             _gaming_net_update(job_id, network, status="running")
         result = instagram_publisher.publish_video(
-            job["video_path"], title, caption, page_id=page_id, on_status=on_status, ai_generated=False,
+            job["video_path"], title, caption, page_id=page_id, on_status=on_status, ai_generated=ai,
         )
         item_id = result.get("media_id")
         record = _record_published_instagram

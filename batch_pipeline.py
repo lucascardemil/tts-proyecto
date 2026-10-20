@@ -101,11 +101,12 @@ def _generate_text_with_chain(
             # o se queda razonando, el que sigue lo cubre (en vez de repetir el mismo).
             models = text_provider.model_chain()
             attempts = max(TEXT_FORMAT_ATTEMPTS, len(models))
+            feedback = ""  # motivo del rechazo anterior: el siguiente intento lo recibe para corregirlo
             for attempt in range(1, attempts + 1):
                 try:
                     text, backend = text_provider.generate_text(
                         system,
-                        trigger_message,
+                        trigger_message + feedback,
                         max_tokens=16384,  # la salida son ~7-8 mil tokens y el router "auto" razona ~3 mil antes de contestar
                         temperature=0.8,
                         model=models[(attempt - 1) % len(models)],
@@ -137,6 +138,9 @@ def _generate_text_with_chain(
                     if not retryable or attempt == attempts:
                         raise
                     logger.warning("batch: %s; reintento %d/%d con otro modelo", e, attempt, attempts)
+                    if any(m in str(e) for m in ("fuera de largo", "fuera de rango", "fuera de formato", "formato de historia")):
+                        feedback = (f"\n\nTu respuesta anterior fue rechazada: {e}. Reescribe todo corrigiendo exactamente eso "
+                                    "y cuenta las palabras del guion antes de responder.")
                     continue
                 logger.info("batch: texto generado por %s (story_id=%s)", backend, story_id)
                 return text
@@ -159,6 +163,7 @@ import instagram_publisher
 import youtube_publisher
 import feedback_analyzer
 import gaming_clip
+import gaming_reel
 import gaming_news
 import howbig
 import job_store
@@ -258,8 +263,9 @@ MACRAME_TEMPLATES = {
 }
 MACRAME_WEEK = [("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4"), ("M2", "M4"), ("M3", "M4"), ("M1", "M4")]
 # Tipos de lote de la pagina gaming: mismos horarios. YouTube solo para los
-# clips (video 9:16 -> Short), nunca para la imagen.
-GAMING_TYPES = {"gaming_image", "gaming_clip"}
+# videos 9:16 (clip de Medal y reel de noticias con motion graphics -> Short), nunca para la imagen.
+GAMING_TYPES = {"gaming_image", "gaming_clip", "gaming_reel"}
+GAMING_VIDEO_TYPES = ("gaming_clip", "gaming_reel")
 # Lotes mixtos: alternan un video y un post de imagen del mismo nicho (video, post, video, post...);
 # el reparto sale solo del total (10 -> 5 y 5; 11 -> 6 videos y 5 posts). Cada item guarda su
 # `item_type` y se genera/publica como ese tipo; los horarios son los del post de imagen del nicho.
@@ -928,7 +934,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     if rescue:
         video_settings["copy_profile"] = RESCUE_PROFILE
     profile = IMAGE_POST_PROFILES.get(mixed[1] if mixed else content_type)
-    clip_post = (mixed[0] if mixed else content_type) == "gaming_clip"
+    clip_post = (mixed[0] if mixed else content_type) in GAMING_VIDEO_TYPES
     et_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None  # hora del Este
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
@@ -1992,6 +1998,53 @@ def _generate_batch_clip(project_id: str, index: int) -> None:
         _save(projects)
 
 
+def _generate_batch_reel(project_id: str, index: int) -> None:
+    """Reel de noticias de videojuegos con motion graphics (gaming_reel.generate_gaming_reel): una noticia real
+    de las ultimas 2 semanas -> guion en ingles -> voz -> render. Mismos campos que un clip de gaming."""
+    with _lock:
+        projects = _load()
+        project = projects.get(project_id)
+        if not project:
+            return
+        project["videos"][index]["status"] = "generating"
+        project["videos"][index]["stage"] = "noticia"
+        project["videos"][index]["error"] = None
+        _save(projects)
+
+    provider_pref = (project.get("video_settings", {}).get("text_provider") or "auto")
+    attempted: list = []
+
+    def text_fn(message: str) -> str:
+        return _generate_text_with_chain(
+            gaming_reel.KIND, project["page_name"], message, f"{gaming_reel.KIND}_{project_id}_{index:03d}",
+            prefer=provider_pref if provider_pref in TEXT_PROVIDER_CHOICES else "auto", attempted=attempted,
+        )
+
+    try:
+        reel = gaming_reel.generate_gaming_reel(
+            f"{project_id}_{index:03d}", text_fn, on_stage=lambda stage: _set_stage(project_id, index, stage),
+        )
+    except Exception as e:
+        logger.exception("batch %s reel %d: fallo la generacion", project_id, index)
+        _record_generation_failure(project_id, index, e)
+        return
+
+    with _lock:
+        projects = _load()
+        v = projects[project_id]["videos"][index]
+        v["status"] = "ready"
+        v["stage"] = None
+        v["story_id"] = f"greel_{project_id}_{index:03d}"
+        v["video_path"] = reel["video_path"]
+        v["title"] = reel["title"]
+        v["caption"] = reel["caption"]
+        v["yt_seo"] = reel["youtube"]
+        v["source_news"] = reel["news_link"]
+        v["gen_attempts"] = 0
+        v["heal_cycles"] = 0
+        _save(projects)
+
+
 def _last_published_at(path: Path) -> Optional[datetime]:
     timestamps = []
     for item in _read_json_list(path):
@@ -2494,7 +2547,7 @@ def reschedule_published_video(project_id: str, index: int, new_slot: datetime) 
     with _lock:
         projects = _load()
         video = projects[project_id]["videos"][index]
-        gaming_clip_project = item_type(projects[project_id], video) == "gaming_clip"
+        gaming_clip_project = item_type(projects[project_id], video) in GAMING_VIDEO_TYPES
         # El canal de gaming no sigue la regla de 1 video/dia del de historias
         # (y _youtube_slot consultaria el canal equivocado).
         yt_slot = new_slot if gaming_clip_project else _youtube_slot(projects, (project_id, index), new_slot.isoformat())
@@ -2633,6 +2686,8 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
     video = project["videos"][index]
     title = video.get("title") or project["name"]
     caption = video.get("caption", "")
+    # El clip es gameplay real (sin etiqueta de IA); el reel de noticias lleva voz sintetica y graficos generados.
+    ai_generated = item_type(project, video) == "gaming_reel"
 
     def _fb(v, page_id):
         result = facebook_publisher.publish_video(
@@ -2646,16 +2701,15 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
     def _ig_prep(v, page_id):
         return instagram_publisher.prepare_video(
             v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["instagram"]),
-            page_id=page_id, ai_generated=False,
+            page_id=page_id, ai_generated=ai_generated,
         )
 
     def _ig(v, page_id):
-        # Es gameplay real, no contenido generado con IA: sin la etiqueta "AI info".
         result = _publish_prepared_instagram(v, page_id)
         if result is None:
             result = instagram_publisher.publish_video(
                 v["video_path"], title, _limit_hashtags(caption, GAMING_MAX_HASHTAGS["instagram"]),
-                page_id=page_id, ai_generated=False,
+                page_id=page_id, ai_generated=ai_generated,
             )
         if result.get("ok"):
             app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
@@ -2666,7 +2720,7 @@ def _publish_batch_clip(project_id: str, index: int) -> None:
         # scheduled_at a un horario futuro valido. El canal es el de gaming, no el de historias.
         yt_title, yt_description, yt_tags = gaming_youtube_fields(v.get("yt_seo"), title, caption)
         result = youtube_publisher.publish_video(
-            v["video_path"], yt_title, yt_description, "public", yt_tags, False,
+            v["video_path"], yt_title, yt_description, "public", yt_tags, ai_generated,
             publish_at=_rfc3339_utc(v.get("scheduled_at")), channel_key=GAMING_YT_CHANNEL, language="en",
         )
         if result.get("ok"):
@@ -2703,6 +2757,8 @@ def shorts_text(title: str, description: str) -> tuple:
 def _generate_batch_item(project_id: str, index: int, content_type: str) -> None:
     if content_type == "gaming_clip":
         _generate_batch_clip(project_id, index)
+    elif content_type == "gaming_reel":
+        _generate_batch_reel(project_id, index)
     elif content_type in IMAGE_POST_PROFILES:
         _generate_batch_image_post(project_id, index)
     else:
@@ -2732,7 +2788,7 @@ def _record_publish_failure(project_id: str, index: int, exc: Exception) -> None
 
 def _publish_batch_item(project_id: str, index: int, content_type: str) -> None:
     try:
-        if content_type == "gaming_clip":
+        if content_type in GAMING_VIDEO_TYPES:
             _publish_batch_clip(project_id, index)
         elif content_type in IMAGE_POST_PROFILES:
             _publish_batch_image_post(project_id, index)
