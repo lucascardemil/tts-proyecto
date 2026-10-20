@@ -44,7 +44,7 @@ def test_start_route_creates_a_reel_job_that_travels_as_a_video(monkeypatch):
     resp = client.post("/api/gaming/start", json={"kind": "reel", "text_provider": "auto"}, headers=auth)
     assert resp.get_json()["ok"]
     (target, args), = _FakeThread.started
-    assert target is app_module._run_gaming_reel_generate and args[1:] == ("auto",)
+    assert target is app_module._run_gaming_reel_generate and args[1:] == ("auto", "", "", True)
     (job,) = app_module._gaming_jobs.values()
     assert job["kind"] == "clip" and job["profile"] == "gaming_reel" and job["stage"] == "noticia"
 
@@ -57,7 +57,7 @@ def test_reel_runner_stores_the_result_like_a_clip(monkeypatch):
     monkeypatch.setattr(app_module.batch_pipeline, "_generate_text_with_chain", lambda *a, **k: "reply")
     seen = {}
 
-    def fake(key, text_fn, on_stage=None):
+    def fake(key, text_fn, on_stage=None, **kw):
         seen["text"] = text_fn("hello")
         on_stage("guion")
         return {"video_path": "v.mp4", "title": "T", "caption": "C", "hook": "H", "news_link": "https://x",

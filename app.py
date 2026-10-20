@@ -1168,6 +1168,23 @@ HTML = r"""<!DOCTYPE html>
 
 
 
+      <div id="pipeline-reel-fields" style="display:none">
+        <div class="row-2col" style="margin-top:14px">
+          <div>
+            <div class="field-label-row"><label for="pipeline-reel-voice">Voz (inglés)</label></div>
+            <select id="pipeline-reel-voice"><option>Cargando...</option></select>
+          </div>
+          <div>
+            <div class="field-label-row"><label for="pipeline-reel-subtitle">Subtítulos — estilo</label></div>
+            <select id="pipeline-reel-subtitle"><option>Cargando...</option></select>
+          </div>
+        </div>
+        <label class="checkbox-row" for="pipeline-reel-images">
+          <input type="checkbox" id="pipeline-reel-images" checked>
+          Fondos con imágenes de Google Flow relacionadas con la noticia (tarda más; si Flow falla, sale sin ellas)
+        </label>
+      </div>
+
       <div id="pipeline-clip-only-fields" style="display:none">
         <div class="field-label-row" style="margin-top:14px">
           <label for="pipeline-game">Juego (se elige el clip más viral de Medal)</label>
@@ -1447,6 +1464,23 @@ HTML = r"""<!DOCTYPE html>
           <span data-flow-status></span>
           <button class="btn-sm" type="button" data-flow-open>Abrir Flow</button>
         </div>
+      </div>
+
+      <div id="lote-reel-fields" style="display:none">
+        <div class="row-2col" style="margin-top:14px">
+          <div>
+            <div class="field-label-row"><label for="lote-reel-voice">Voz (inglés)</label></div>
+            <select id="lote-reel-voice"><option>Cargando...</option></select>
+          </div>
+          <div>
+            <div class="field-label-row"><label for="lote-reel-subtitle">Subtítulos — estilo</label></div>
+            <select id="lote-reel-subtitle"><option>Cargando...</option></select>
+          </div>
+        </div>
+        <label class="checkbox-row" for="lote-reel-images">
+          <input type="checkbox" id="lote-reel-images" checked>
+          Fondos con imágenes de Google Flow relacionadas con la noticia (tarda más; si Flow falla, sale sin ellas)
+        </label>
       </div>
 
       <div id="lote-clip-only-fields" style="display:none">
@@ -2531,6 +2565,7 @@ function updatePipelineTypeVisibility() {
   $("pipeline-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
   $("pipeline-gaming-only-fields").style.display = ((isImagePostType(type) && type !== "gaming_meme") || type === "mix_gaming") ? "" : "none";
   $("pipeline-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
+  $("pipeline-reel-fields").style.display = type === "gaming_reel" ? "" : "none";
   $("pipeline-mixed-hint").style.display = mixed ? "" : "none";
   $("pipeline-start-label").textContent = type === "mix_gaming" ? "Generar el que toca" : mixed ? "Generar video + post" : type === "gaming_clip" ? "Generar clip" : type === "gaming_reel" ? "Generar reel de noticias" : type === "gaming_meme" ? "Buscar meme" : isGaming ? "Generar post" : "Generar video";
   $("gaming-panel").style.display = "none"; // lo muestra renderGamingJob si el post guardado es de este tipo
@@ -2854,6 +2889,7 @@ const GAMING_STAGE_LABELS = {
   subtitulos: "Detectando voz para los subtítulos…",
   render: "Editando el clip con Remotion (tarda unos 5 minutos)…",
   noticia: "Buscando la noticia más reciente…", guion: "Escribiendo el guion del reel…", voz: "Generando la narración…",
+  imagenes: "Generando las imágenes de fondo con Flow (tarda unos minutos)…",
 };
 const GAMING_NETWORKS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube" };
 const GAMING_JOB_KEY = "gamingJobId";
@@ -2954,7 +2990,7 @@ async function startGamingPost(pageName, triggerMessage, type, withVideo = false
   try {
     const res = await fetch("/api/gaming/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(type === "gaming_reel" ? { kind: "reel", text_provider: "auto" }
+      body: JSON.stringify(type === "gaming_reel" ? { kind: "reel", text_provider: "auto", ...reelChoices("pipeline"), images: $("pipeline-reel-images").checked }
       : type === "gaming_meme" ? { kind: "meme" }
       : type === "gaming_clip" ? {
         kind: "clip", game: $("pipeline-game").value, medal_url: $("pipeline-medal-url").value.trim(),
@@ -3187,6 +3223,27 @@ $("lote-voice-preview-btn").addEventListener("click", () => {
   $("lote-voice-preview-btn").textContent = "■ Detener";
   audio.addEventListener("ended", () => { if (loteVoiceAudio === audio) stopLoteVoicePreview(); });
   audio.play().catch(() => { if (loteVoiceAudio === audio) stopLoteVoicePreview(); });
+});
+
+// Voz (inglesa) y estilo de subtítulos del reel de noticias: mismos selectores en "Crear video" y en el lote.
+async function loadReelOptions() {
+  try {
+    const [voices, presets] = await Promise.all([
+      fetch("/api/voices?lang=en").then((r) => r.json()), fetch("/api/subtitle-presets").then((r) => r.json()),
+    ]);
+    const voiceOpts = Object.entries(voices).map(([key, info]) =>
+      `<option value="${key}">${info.custom ? "🎙️ " : ""}${_escapeHtml(info.label)}</option>`).join("");
+    const styleOpts = presets.map((p) => `<option value="${p.id}">${p.label}</option>`).join("");
+    for (const prefix of ["pipeline", "lote"]) {
+      $(`${prefix}-reel-voice`).innerHTML = voiceOpts;
+      $(`${prefix}-reel-subtitle`).innerHTML = styleOpts;
+      $(`${prefix}-reel-subtitle`).value = "hormozi";
+    }
+  } catch (e) { console.error("No se pudieron cargar las voces del reel", e); }
+}
+loadReelOptions();
+const reelChoices = (prefix) => ({
+  voice: $(`${prefix}-reel-voice`).value, subtitle_preset: $(`${prefix}-reel-subtitle`).value,
 });
 
 async function loadLoteSubtitlePresets() {
@@ -3433,6 +3490,7 @@ function updateLoteTypeVisibility() {
   $("lote-video-only-fields").style.display = (isGaming || type === "mix_gaming") ? "none" : "";
   $("lote-gaming-only-fields").style.display = ((isImagePostType(type) && type !== "gaming_meme") || isMixedType(type)) ? "" : "none";
   $("lote-clip-only-fields").style.display = (type === "gaming_clip" || type === "mix_gaming") ? "" : "none";
+  $("lote-reel-fields").style.display = type === "gaming_reel" ? "" : "none";
   $("lote-mixed-hint").style.display = isMixedType(type) ? "" : "none";
   // YouTube: videos normales y clips gaming (canal de gaming); no imagen.
   const noYoutube = isImagePostType(type);
@@ -3490,7 +3548,8 @@ $("lote-create-btn").addEventListener("click", async () => {
     every_n_days: parseInt($("lote-every-days").value, 10) || 1,
     networks,
     video_settings: contentType === "gaming_clip" ? { gaming_game: $("lote-game").value }
-      : contentType === "gaming_reel" || contentType === "gaming_meme" ? {}
+      : contentType === "gaming_reel" ? { ...reelChoices("lote"), reel_images: $("lote-reel-images").checked }
+      : contentType === "gaming_meme" ? {}
       : contentType === "mix_gaming" ? { gaming_game: $("lote-game").value, image_provider: $("lote-image-provider").value }
       : isGaming ? { image_provider: $("lote-image-provider").value } : {
       ...(contentType === "mix_ninio" || contentType === "mix_macrame" || contentType === "mix_historias" ? { image_provider: $("lote-provider").value } : {}),
@@ -4272,6 +4331,12 @@ def api_voices():
         result[CUSTOM_VOICE_PREFIX + slug] = {
             "label": info.get("label") or slug, "gentle": False, "ready": True, "custom": True,
         }
+    lang = (request.args.get("lang") or "").strip().lower()
+    if lang:  # voces de un idioma (reel en ingles): las clonadas y las de la biblioteca de ese idioma
+        for key, info in VOICE_LIBRARY.items():
+            if info.get("lang", "es") == lang:
+                result[key] = {"label": info["label"], "gentle": info["gentle"], "ready": voice_is_ready(key)}
+        return jsonify(result)
     if not result:  # sin voces clonadas el selector no puede quedar vacio: biblioteca de respaldo
         for key, info in VOICE_LIBRARY.items():
             result[key] = {
@@ -5760,7 +5825,8 @@ def _run_gaming_clip_generate(job_id: str, game_key: str, medal_url: Optional[st
     )
 
 
-def _run_gaming_reel_generate(job_id: str, text_provider_pref: str) -> None:
+def _run_gaming_reel_generate(job_id: str, text_provider_pref: str, voice: str = "", subtitle_preset: str = "",
+                              images: bool = True) -> None:
     """Reel de noticias de videojuegos con motion graphics (gaming_reel): mismo trabajo que un clip suelto
     (video 9:16 con titulo, caption y SEO de YouTube), pero sin juego ni link de Medal."""
     def text_fn(message: str) -> str:
@@ -5772,6 +5838,8 @@ def _run_gaming_reel_generate(job_id: str, text_provider_pref: str) -> None:
     try:
         reel = gaming_reel.generate_gaming_reel(
             f"manual_{job_id}", text_fn, on_stage=lambda stage: _gaming_update(job_id, stage=stage),
+            voice=voice, subtitle_preset=subtitle_preset,
+            image_fn=batch_pipeline.flow_background_images if images else None,
         )
     except Exception as e:
         logger.exception("gaming %s: fallo el reel de noticias", job_id)
@@ -5844,7 +5912,12 @@ def api_gaming_start():
         text_provider_pref = (data.get("text_provider") or "").strip().lower()
         if text_provider_pref not in batch_pipeline.TEXT_PROVIDER_CHOICES:
             text_provider_pref = ""
-        target, args = _run_gaming_reel_generate, (text_provider_pref,)
+        voice = (data.get("voice") or "").strip()
+        voice_error = _voice_error(voice)
+        if voice_error:
+            return jsonify({"ok": False, "error": voice_error}), 400
+        target, args = _run_gaming_reel_generate, (
+            text_provider_pref, voice, (data.get("subtitle_preset") or "").strip(), data.get("images") is not False)
     elif profile_key == "gaming_meme":
         target, args = _run_gaming_meme_generate, ()
     elif kind == "clip":

@@ -2043,6 +2043,23 @@ def _generate_batch_clip(project_id: str, index: int) -> None:
         _save(projects)
 
 
+def flow_background_images(prompts: list, dest_dir: Path, on_progress: Optional[Callable[[str], None]] = None) -> list:
+    """Imagenes de fondo del reel con Google Flow (9:16): bg_000.jpg... dentro de `dest_dir`. Devuelve los nombres
+    creados. Usa el mismo candado que el resto de generaciones de imagen: Flow y WhatsApp comparten navegador."""
+    import app
+    import flow_images
+
+    story = {"prompts": [{"index": i, "prompt": p, "frase": p} for i, p in enumerate(prompts)]}
+    with app._clipgen_lock:
+        paths = flow_images.generate_scene_images(story, dest_dir, on_progress, aspect="9:16")
+    names = []
+    for i, path in enumerate(sorted(paths)):
+        target = dest_dir / f"bg_{i:03d}.jpg"
+        Path(path).replace(target)
+        names.append(target.name)
+    return names
+
+
 def _generate_batch_reel(project_id: str, index: int) -> None:
     """Reel de noticias de videojuegos con motion graphics (gaming_reel.generate_gaming_reel): una noticia real
     de las ultimas 2 semanas -> guion en ingles -> voz -> render. Mismos campos que un clip de gaming."""
@@ -2066,8 +2083,11 @@ def _generate_batch_reel(project_id: str, index: int) -> None:
         )
 
     try:
+        settings = project.get("video_settings", {})
         reel = gaming_reel.generate_gaming_reel(
             f"{project_id}_{index:03d}", text_fn, on_stage=lambda stage: _set_stage(project_id, index, stage),
+            voice=settings.get("voice") or "", subtitle_preset=settings.get("subtitle_preset") or "",
+            image_fn=flow_background_images if settings.get("reel_images", True) else None,
         )
     except Exception as e:
         logger.exception("batch %s reel %d: fallo la generacion", project_id, index)

@@ -60,7 +60,7 @@ def store(monkeypatch):
 def test_generate_batch_reel_fills_the_item_like_a_clip(store, monkeypatch):
     seen = {}
 
-    def fake(key, text_fn, on_stage=None):
+    def fake(key, text_fn, on_stage=None, **kw):
         seen["key"] = key
         on_stage("guion")
         return {"video_path": "video/out/greel_x.mp4", "title": "T", "caption": "C\nSource: IGN",
@@ -97,7 +97,7 @@ def test_text_function_uses_the_reel_prompt_kind(store, monkeypatch):
 
     monkeypatch.setattr(bp, "_generate_text_with_chain", fake_chain)
 
-    def fake(key, text_fn, on_stage=None):
+    def fake(key, text_fn, on_stage=None, **kw):
         assert text_fn("hello") == "reply"
         return {"video_path": "v.mp4", "title": "T", "caption": "C", "hook": "H", "news_link": "l", "youtube": {}}
 

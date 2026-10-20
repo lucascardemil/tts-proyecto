@@ -20,6 +20,8 @@ line 4: "Source: <outlet>";
 and at the end, on its own line, 5-7 hashtags: the game or franchise, the platform or company, and #gaming #videogames #gamingnews.
 Then 6 to 8 scene lines, one per line, each exactly like this (the fields are separated by " | "):
 SCENE <n> | <type> | <on_screen> | <value> | <narration>
+After the last scene, on a new line write "IMAGES:" and then 3 or 4 background image prompts, one per line:
+IMAGE <n>: <prompt>
 
 ## SCENE TYPES
 - hook (always scene 1): on_screen = the same hook text, ALL CAPS. value = "-".
@@ -29,12 +31,16 @@ SCENE <n> | <type> | <on_screen> | <value> | <narration>
 - quote: a short quote copied WORD FOR WORD from the article excerpt or summary (max 20 words). on_screen = the quote text. value = who said it, or "-". Skip it if there is no real quote.
 - outro (always the last scene): on_screen = a short call to action in ALL CAPS, for example "FOLLOW FOR MORE GAMING NEWS". value = "-". The narration ends by naming the source.
 
+## IMAGE PROMPTS (backgrounds shown dimmed behind the graphics)
+- 3 or 4 prompts, 20-45 words each, ENGLISH, describing a cinematic atmospheric scene that fits the news topic and the game's genre or mood (for example a lone astronaut on an alien planet for a space game, a ruined castle in fog for a dark fantasy game, a neon city at night for a cyberpunk game).
+- Use generic scenery, objects and silhouettes. NEVER ask for text, letters, logos, game titles, user interfaces, real people's faces or exact copies of a game's characters or art. Do not mention the news headline.
+
 ## NARRATION RULES
 - The narration is spoken by a text-to-speech voice. Write numbers, dates and symbols as spoken words ("one hundred million", "seventy dollars", "May twenty twenty-five", "forty percent"). No digits, no symbols, no hashtags, no emojis, no vertical bars in the narration.
 - Total narration across all scenes: 110 to 140 words. Each scene's narration is 1-2 short sentences, at most 40 words.
 - Neutral, factual wording. A leak or rumor must be called a leak or rumor out loud.
 
 ## RULES
-- Nothing before "HOOK:" and nothing after the last scene.
+- Nothing before "HOOK:" and nothing after the last IMAGE line.
 - Use 6 to 8 scenes, starting with hook and ending with outro; the middle scenes may repeat a type but vary them.
 - Everything in English.

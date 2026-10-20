@@ -212,3 +212,33 @@ def test_next_reel_news_marks_angle_and_body_without_marking_used(monkeypatch):
     assert item["angle"] == "RECORD" and item["body"] == "Article body"
     block = gn.reel_news_block(item)
     assert "Angle: RECORD" in block and "Article excerpt: Article body" in block and "Source: IGN" in block
+
+
+# ---- imagenes de fondo, voz y subtitulos elegidos ------------------------------------------------------------------
+
+def test_the_script_may_carry_background_image_prompts():
+    images = ("IMAGES:\nIMAGE 1: A lone astronaut walking across a red alien desert under two small moons at dusk\n"
+              "IMAGE 2: A ruined castle wrapped in fog at night with a faint blue light in the tallest tower\n"
+              "IMAGE 3: short one\n")
+    parsed = gr.parse_reel_script(SCRIPT.rstrip() + "\n" + images, SOURCE)
+    assert len(parsed["images"]) == 2 and parsed["images"][0].startswith("A lone astronaut")
+    assert gr.parse_reel_script(SCRIPT, SOURCE)["images"] == []  # sin imagenes sigue siendo valido
+
+
+def test_backgrounds_split_the_reel_evenly():
+    frames = gr.background_frames(["a.jpg", "b.jpg", "c.jpg"], 9.4)
+    assert [f["src"] for f in frames] == ["a.jpg", "b.jpg", "c.jpg"]
+    assert frames[0]["startFrame"] == 0 and frames[-1]["endFrame"] == round((9.4 + gr.TAIL_SECONDS) * gr.FPS)
+    assert all(a["endFrame"] == b["startFrame"] for a, b in zip(frames, frames[1:]))
+    assert gr.background_frames([], 9.4) == []
+
+
+def test_props_use_the_chosen_subtitle_preset_and_backgrounds():
+    parsed = gr.parse_reel_script(SCRIPT, SOURCE)
+    words = [{"word": "w", "start": i * 0.3, "end": i * 0.3 + 0.2} for i in range(80)]
+    props = gr.build_props(parsed, words, "greel_x/n.wav", 20.0, "IGN", "RECORD", "#fff", "mrbeast", ["greel_x/bg_000.jpg"])
+    assert props["subtitleStyle"]["fontFamily"] == "bebas" and "label" not in props["subtitleStyle"]
+    assert props["backgrounds"][0]["src"] == "greel_x/bg_000.jpg"
+    default = gr.build_props(parsed, words, "greel_x/n.wav", 20.0, "IGN", "RECORD", "#fff")
+    assert default["subtitleStyle"]["fontFamily"] == "montserrat" and default["backgrounds"] == []
+    assert gr.build_props(parsed, words, "a", 20.0, "IGN", "RECORD", "#fff", "no-existe")["subtitleStyle"]["fontFamily"] == "montserrat"

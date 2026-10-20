@@ -3,6 +3,7 @@ import {
   AbsoluteFill,
   Audio,
   Easing,
+  Img,
   Sequence,
   interpolate,
   spring,
@@ -51,11 +52,31 @@ const Sfx: React.FC<{ file: string; volume?: number }> = ({ file, volume = 0.5 }
   <Audio src={staticFile(`sfx/${file}.wav`)} volume={volume} />
 );
 
-const Background: React.FC<{ accent: string }> = ({ accent }) => {
+// Imagen de fondo con zoom lento; cada una entra con fundido sobre la anterior (que sigue debajo).
+const BG_FADE = 15;
+const BackdropImage: React.FC<{ src: string; duration: number }> = ({ src, duration }) => {
+  const frame = useCurrentFrame();
+  const fadeIn = interpolate(frame, [0, BG_FADE], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const zoom = interpolate(frame, [0, duration], [1, 1.14], { extrapolateRight: "clamp" });
+  return (
+    <AbsoluteFill style={{ opacity: fadeIn }}>
+      <Img src={staticFile(src)} style={{ width: W, height: H, objectFit: "cover", transform: `scale(${zoom})` }} />
+    </AbsoluteFill>
+  );
+};
+
+const Background: React.FC<{ accent: string; backgrounds: GamingReelProps["backgrounds"] }> = ({ accent, backgrounds }) => {
   const frame = useCurrentFrame();
   const drift = (frame * 0.6) % 120;
+  const hasImages = backgrounds.length > 0;
   return (
     <AbsoluteFill style={{ background: "linear-gradient(180deg, #05060c 0%, #0b0d1a 55%, #05060c 100%)" }}>
+      {backgrounds.map((bg, i) => (
+        <Sequence key={bg.src} from={bg.startFrame} durationInFrames={Math.max(1, bg.endFrame - bg.startFrame) + (i < backgrounds.length - 1 ? BG_FADE : 0)} layout="none">
+          <BackdropImage src={bg.src} duration={Math.max(1, bg.endFrame - bg.startFrame)} />
+        </Sequence>
+      ))}
+      {hasImages ? <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(5,6,12,0.66) 0%, rgba(5,6,12,0.42) 50%, rgba(5,6,12,0.74) 100%)" }} /> : null}
       <AbsoluteFill
         style={{
           backgroundImage:
@@ -64,7 +85,7 @@ const Background: React.FC<{ accent: string }> = ({ accent }) => {
           backgroundPosition: `0px ${drift}px`,
           transform: "perspective(900px) rotateX(50deg) scale(2.2)",
           transformOrigin: "50% 100%",
-          opacity: 0.55,
+          opacity: hasImages ? 0.2 : 0.55,
         }}
       />
       {[0, 1].map((i) => (
@@ -400,10 +421,10 @@ const SceneView: React.FC<{ scene: ReelScene; props: GamingReelProps; duration: 
 };
 
 export const GamingReel: React.FC<GamingReelProps> = (props) => {
-  const { scenes, subtitles, subtitleStyle, accent, angle, audioSrc } = props;
+  const { scenes, backgrounds, subtitles, subtitleStyle, accent, angle, audioSrc } = props;
   return (
     <AbsoluteFill style={{ backgroundColor: "#05060c", width: W, height: H }}>
-      <Background accent={accent} />
+      <Background accent={accent} backgrounds={backgrounds} />
       <Header accent={accent} angle={angle} />
       {scenes.map((scene, i) => {
         const duration = Math.max(1, scene.endFrame - scene.startFrame);
@@ -431,6 +452,7 @@ export const gamingReelDefaultProps: GamingReelProps = {
     { type: "quote", text: "We are overwhelmed by the response from players", by: "Team Cherry", startFrame: 430, endFrame: 540 },
     { type: "outro", text: "FOLLOW FOR MORE GAMING NEWS", startFrame: 540, endFrame: 630 },
   ],
+  backgrounds: [],
   subtitles: [],
   subtitleStyle: {
     fontFamily: "montserrat",

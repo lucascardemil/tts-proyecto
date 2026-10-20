@@ -134,8 +134,12 @@ export const reelSceneSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("outro"), text: z.string(), ...reelFrames }),
 ]);
 
+// Imagenes de fondo (generadas con Flow) repartidas a lo largo del reel; `src` es relativo a video/public.
+export const reelBackgroundSchema = z.object({ src: z.string(), ...reelFrames });
+
 export const gamingReelSchema = z.object({
   scenes: z.array(reelSceneSchema),
+  backgrounds: z.array(reelBackgroundSchema).default([]),
   subtitles: z.array(subtitleWordSchema),
   subtitleStyle: subtitleStyleSchema,
   accent: z.string().default("#ffd60a"),

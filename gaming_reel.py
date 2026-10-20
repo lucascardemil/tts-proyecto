@@ -31,8 +31,14 @@ SCENE_TYPES = ("hook", "stat", "versus", "timeline", "quote", "outro")
 MIN_SCENES, MAX_SCENES = 6, 8
 MIN_WORDS, MAX_WORDS = 90, 160  # palabras de narracion (el prompt pide 110-140, ~45 s)
 MAX_SCENE_WORDS = 45
+MAX_BACKGROUNDS = 4  # imagenes de fondo (Flow) por reel
+MIN_IMAGE_WORDS = 8
+IMAGE_STYLE = ("Vertical 9:16, cinematic, dark moody lighting, high detail, no text, no letters, no logos, "
+               "no user interface, no watermark.")
+BG_FADE_FRAMES = 15
 SCRIPT_ATTEMPTS = 3
 DEFAULT_VOICE = "en_us_hombre"
+DEFAULT_SUBTITLE_PRESET = "hormozi"
 KIND = "gaming_reel"  # prompts/gaming_reel_system.md
 TRIGGER = "Write the Reel script for this news item."
 
@@ -63,6 +69,7 @@ _SECTIONS_RE = re.compile(
 _SCENE_RE = re.compile(r"^\s*SCENE\s*(\d+)\s*\|(.*)$", re.MULTILINE | re.IGNORECASE)
 _VALUE_RE = re.compile(r"^([$€£]?)\s*(\d[\d,]*(?:\.\d+)?)\s*([A-Za-z%+ ]{0,12}?)$")
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_IMAGE_RE = re.compile(r"^\s*IMAGE\s*\d+\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 
 
 def _alnum(text: str) -> str:
@@ -161,6 +168,7 @@ def parse_reel_script(text: str, source: str) -> dict:
         raise ReelError("la primera escena debe ser hook y la ultima outro")
     scenes = [_build_scene(n, kind, on_screen, value, narration, source, known)
               for n, kind, on_screen, value, narration in raw]
+    images = [i for i in _IMAGE_RE.findall(rest) if len(i.split()) >= MIN_IMAGE_WORDS][:MAX_BACKGROUNDS]
     narration = " ".join(s["narration"] for s in scenes)
     words = len(narration.split())
     if not MIN_WORDS <= words <= MAX_WORDS:
@@ -169,7 +177,8 @@ def parse_reel_script(text: str, source: str) -> dict:
         raise ReelError("la narracion no puede llevar digitos (cifras escritas con letras)")
     if len(caption.splitlines()) < 4 or "source:" not in caption.lower():
         raise ReelError("el caption debe traer titular, explicacion, pregunta, fuente y hashtags")
-    return {"hook": hook, "title": title[:100], "caption": caption, "scenes": scenes, "narration": narration}
+    return {"hook": hook, "title": title[:100], "caption": caption, "scenes": scenes, "narration": narration,
+            "images": images}
 
 
 # ---- tiempos y props -------------------------------------------------------------------------------------------------
@@ -198,18 +207,30 @@ def accent_for(seed: str) -> str:
     return "#{:02x}{:02x}{:02x}".format(round(r * 255), round(g * 255), round(b * 255))
 
 
+def background_frames(sources: list, duration: float, fps: int = FPS) -> list:
+    """Reparte las imagenes de fondo en partes iguales a lo largo del reel: [{src, startFrame, endFrame}]."""
+    if not sources:
+        return []
+    total = round((duration + TAIL_SECONDS) * fps)
+    edges = [round(total * i / len(sources)) for i in range(len(sources) + 1)]
+    return [{"src": s, "startFrame": edges[i], "endFrame": edges[i + 1]} for i, s in enumerate(sources)]
+
+
 def build_props(parsed: dict, words: list, audio_src: str, duration: float, source_name: str, angle: str,
-                accent: str) -> dict:
-    """Props de la composicion GamingReel (ver video/src/schema.ts: gamingReelSchema)."""
+                accent: str, subtitle_preset: str = "", backgrounds: Optional[list] = None) -> dict:
+    """Props de la composicion GamingReel (ver video/src/schema.ts: gamingReelSchema). `backgrounds` = rutas
+    (relativas a video/public) de las imagenes de fondo; sin ellas el fondo es solo el degradado animado."""
     frames = scene_frames(parsed["scenes"], words, duration)
     scenes = []
     for scene, (start, end) in zip(parsed["scenes"], frames):
         item = {k: v for k, v in scene.items() if k != "narration"}
         item["startFrame"], item["endFrame"] = start, end
         scenes.append(item)
-    style = {k: v for k, v in video_maker.SUBTITLE_PRESETS["hormozi"].items() if k != "label"}
+    style = video_maker.get_subtitle_preset_style(
+        subtitle_preset if subtitle_preset in video_maker.SUBTITLE_PRESETS else DEFAULT_SUBTITLE_PRESET)
     return {
         "scenes": scenes,
+        "backgrounds": background_frames(backgrounds or [], duration),
         "subtitles": words,
         "subtitleStyle": style,
         "accent": accent,
@@ -265,10 +286,14 @@ def write_script(item: dict, text_fn: Callable[[str], str]) -> dict:
 
 
 def generate_gaming_reel(job_key: str, text_fn: Callable[[str], str],
-                         on_stage: Optional[Callable[[str], None]] = None) -> dict:
-    """Noticia -> guion -> voz -> subtitulos -> render. Devuelve
-    {video_path, title, caption, hook, news_link, youtube} (como generate_gaming_clip). La noticia solo se marca
-    como usada si el reel sale completo; la carpeta de trabajo se borra siempre."""
+                         on_stage: Optional[Callable[[str], None]] = None, voice: str = "",
+                         subtitle_preset: str = "", image_fn: Optional[Callable[[list, Path], list]] = None) -> dict:
+    """Noticia -> guion -> voz -> (imagenes de fondo) -> subtitulos -> render. Devuelve
+    {video_path, title, caption, hook, news_link, youtube, images} (como generate_gaming_clip). La noticia solo se
+    marca como usada si el reel sale completo; la carpeta de trabajo se borra siempre.
+    `voice` / `subtitle_preset` eligen la voz y el estilo de subtitulos (vacio = los de por defecto).
+    `image_fn(prompts, carpeta)` genera las imagenes de fondo y devuelve los nombres de archivo creados en la
+    carpeta; si falla o no devuelve nada, el reel sale igual con el fondo animado."""
     import tts_engine
 
     def stage(name: str) -> None:
@@ -284,10 +309,20 @@ def generate_gaming_reel(job_key: str, text_fn: Callable[[str], str],
         parsed = write_script(item, text_fn)
 
         stage("voz")
-        audio = tts_engine.text_to_speech_long(parsed["narration"], voice=reel_voice(), language="en")
+        audio = tts_engine.text_to_speech_long(parsed["narration"], voice=voice or reel_voice(), language="en")
         if not audio:
             raise ReelError("Error al generar el audio del reel.")
         duration = video_maker.get_audio_duration(audio)
+
+        backgrounds: list = []
+        if image_fn and parsed["images"]:
+            stage("imagenes")
+            folder.mkdir(parents=True, exist_ok=True)
+            try:
+                backgrounds = [f"greel_{job_key}/{name}" for name in image_fn(
+                    [f"{p.rstrip('. ')}. {IMAGE_STYLE}" for p in parsed["images"]], folder)]
+            except Exception:
+                logger.warning("gaming_reel: no se pudieron generar las imagenes de fondo; sigue sin ellas", exc_info=True)
 
         stage("subtitulos")
         words = video_maker.correct_words_with_script(
@@ -298,11 +333,12 @@ def generate_gaming_reel(job_key: str, text_fn: Callable[[str], str],
 
         stage("render")
         props = build_props(parsed, words, f"greel_{job_key}/narration.wav", duration, item["source"],
-                            item["angle"], accent_for(item["title"]))
+                            item["angle"], accent_for(item["title"]), subtitle_preset, backgrounds)
         video_maker.VIDEO_OUT_DIR.mkdir(parents=True, exist_ok=True)
         render_reel(props, folder / "props.json", out_path)
         gaming_news.mark_used(item)
         return {"video_path": str(out_path), "title": parsed["title"], "caption": parsed["caption"],
-                "hook": parsed["hook"], "news_link": item["link"], "youtube": youtube_seo(parsed)}
+                "hook": parsed["hook"], "news_link": item["link"], "youtube": youtube_seo(parsed),
+                "images": len(backgrounds)}
     finally:
         shutil.rmtree(folder, ignore_errors=True)
