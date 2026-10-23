@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Memes de videojuegos de Memedroid para JUGADASEPICASVIDEOJUEGOS.
 
-Lee las galerias publicas de es.memedroid.com (etiquetas de videojuegos y los mejores de la semana/dia;
-sin paginar: su robots.txt bloquea `?page=`), se queda con memes de imagen bien votados de los ultimos dias
-que no se hayan publicado, descarga la imagen y arma el caption en español con credito al autor y enlace al
+Lee las galerias publicas de es.memedroid.com (etiquetas de videojuegos/consolas/juegos y los mejores de la
+semana/dia; sin paginar: su robots.txt bloquea `?page=`), se queda con memes de imagen bien votados que no se
+hayan publicado: primero los de la ultima semana y, si no queda ninguno, hacia atras por tramos (30 y 90 dias), descarga la imagen y arma el caption en español con credito al autor y enlace al
 original. Los memes son de usuarios y no tienen licencia: el credito reduce el riesgo, no lo elimina.
 """
 import html as html_lib
@@ -27,13 +27,20 @@ BASE = "https://es.memedroid.com"
 SOURCES = (
     "/memes/tag/videojuegos",
     "/memes/tag/gaming",
+    "/memes/tag/gamer",
+    "/memes/tag/playstation",
+    "/memes/tag/nintendo",
+    "/memes/tag/minecraft",
+    "/memes/tag/pokemon",
+    "/memes/tag/gta",
     "/memes/top/week",
     "/memes/top/day",
 )
 KIND = "gaming_meme"
 USED_STORE = "gaming_meme_used"
 USED_MAX = 300
-WINDOW_DAYS = 7
+WINDOW_TIERS = (7, 30, 90)  # dias hacia atras: se prueba cada tramo en orden y se usa el primero con memes aptos
+CACHE_SECONDS = 600  # un lote pide varios memes seguidos: la lectura de las galerias se reutiliza
 MIN_VOTES = 15
 MIN_RATING_PCT = 80
 MIN_SIDE_PX = 600
@@ -120,8 +127,22 @@ def _get(url: str) -> requests.Response:
     raise MemeError(f"No pude leer Memedroid ({url}): {last}")
 
 
+_cache: dict = {"at": 0.0, "memes": []}
+
+
 def fetch_candidates() -> list:
-    """Memes de todas las galerias de SOURCES, sin repetir id. Una galeria caida no corta las demas."""
+    """Memes de todas las galerias de SOURCES, sin repetir id (cache de CACHE_SECONDS)."""
+    with _lock:
+        if _cache["memes"] and time.monotonic() - _cache["at"] < CACHE_SECONDS:
+            return list(_cache["memes"])
+    memes = _fetch_all()
+    with _lock:
+        _cache.update(at=time.monotonic(), memes=memes)
+    return list(memes)
+
+
+def _fetch_all() -> list:
+    """Lee todas las galerias de SOURCES. Una galeria caida no corta las demas."""
     seen, memes, failures = set(), [], 0
     for path in SOURCES:
         try:
@@ -162,16 +183,20 @@ def score(meme: dict) -> float:
 
 
 def pick_meme(memes: list, used: set, now: Optional[datetime] = None) -> Optional[dict]:
-    """El mejor meme de videojuegos reciente, bien votado y no publicado; None si no hay ninguno."""
+    """El mejor meme de videojuegos bien votado y no publicado; None si no hay ninguno. Prefiere lo reciente: prueba
+    la ultima semana y, si no hay nada apto, 30 y luego 90 dias hacia atras (el maximo)."""
     now = now or datetime.now()
-    oldest = now - timedelta(days=WINDOW_DAYS)
-    ok = [
+    eligible = [
         m for m in memes
-        if m["id"] not in used and is_gaming(m) and m["votes"] >= MIN_VOTES
-        and m["rating_pct"] >= MIN_RATING_PCT and datetime.fromisoformat(m["posted_at"]) >= oldest
+        if m["id"] not in used and is_gaming(m) and m["votes"] >= MIN_VOTES and m["rating_pct"] >= MIN_RATING_PCT
     ]
-    ok.sort(key=lambda m: (score(m), m["posted_at"]), reverse=True)
-    return ok[0] if ok else None
+    for days in WINDOW_TIERS:
+        oldest = now - timedelta(days=days)
+        ok = [m for m in eligible if datetime.fromisoformat(m["posted_at"]) >= oldest]
+        if ok:
+            ok.sort(key=lambda m: (score(m), m["posted_at"]), reverse=True)
+            return ok[0]
+    return None
 
 
 def download(meme: dict, dest: Path) -> Path:
@@ -206,7 +231,7 @@ def generate_gaming_meme(dest: Path, index: int = 0) -> dict:
     {image_path, caption, hook, source_meme, author}. MemeError si no hay ninguno apto."""
     meme = pick_meme(fetch_candidates(), _used_ids())
     if not meme:
-        raise MemeError("No hay memes nuevos de videojuegos bien votados en Memedroid ahora mismo.")
+        raise MemeError(f"No hay memes nuevos de videojuegos bien votados en Memedroid (revisé los últimos {WINDOW_TIERS[-1]} días).")
     download(meme, dest)
     mark_used(meme)  # solo con el archivo ya guardado
     caption = build_caption(meme, index)

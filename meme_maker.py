@@ -279,68 +279,123 @@ def render_card(
     return out_path
 
 
-# ---- infografia de marca (Everyday Explained) ------------------------------------------------------------------------
+# ---- identidad visual de Everyday Explained ---------------------------------------------------------------------------
 # Los generadores de imagen (WanGP/Flux, Flow) escriben mal el texto dentro de la imagen ("EXPLOKE"), asi que la IA solo
-# dibuja la ilustracion y el titular y la respuesta se componen aqui, con la ortografia exacta.
-INFO_NAVY = (20, 40, 62)  # #14283E
-INFO_YELLOW = (255, 211, 78)  # #FFD34E
-INFO_LIGHT = (222, 238, 250)  # blanco azulado
-INFO_HEADER_FRAC, INFO_FOOTER_FRAC = 0.185, 0.215
-INFO_SIDE_FRAC = 0.05
+# dibuja la ilustracion y TODO el texto (titular, explicacion, logotipo, numeracion) se compone aqui, con ortografia exacta.
+INFO_NAVY = (11, 30, 59)  # #0B1E3B
+INFO_BLUE = (0, 138, 255)  # #008AFF
+INFO_YELLOW = (255, 214, 0)  # #FFD600
+INFO_WHITE = (255, 255, 255)
+INFO_MARGIN_FRAC = 0.05
+EVERYDAY_TAGLINE = "Big questions. Simple answers."
 _SANS_BOLD = ("C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf",
               "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
-def infographic_art_size(size: tuple) -> tuple:
-    """(ancho, alto) del recuadro de la ilustracion dentro de la infografia `size`."""
-    w, h = size
-    side = int(w * INFO_SIDE_FRAC)
-    return w - 2 * side, h - int(h * INFO_HEADER_FRAC) - int(h * INFO_FOOTER_FRAC)
+def _fit_text(draw, text: str, font_for, max_width: int, max_height: int, start: int, floor: int, gap: float, max_lines: int):
+    """(font, lineas) con el texto mas grande que cabe en `max_width` x `max_height` y `max_lines` lineas."""
+    px = start
+    while True:
+        font = font_for(px)
+        lines = _wrap(draw, text, font, max_width)
+        if (len(lines) <= max_lines and len(lines) * px * gap <= max_height) or px <= floor:
+            return font, lines
+        px -= 2
 
 
-def _center_block(draw, lines: list, font, fill: tuple, cx: float, top: float, height: float, gap: float) -> None:
-    block = len(lines) * font.size * gap
-    y = top + (height - block) / 2
+def _draw_lines(draw, lines: list, font, fill: tuple, x: float, y: float, gap: float, anchor: str = "la") -> float:
     for line in lines:
-        draw.text((cx, y), line, font=font, fill=fill, anchor="ma")
+        draw.text((x, y), line, font=font, fill=fill, anchor=anchor)
         y += font.size * gap
+    return y
 
 
-def render_infographic(art_path: Path, headline: str, answer: str, out_path: Path, size: tuple = SIZE_IG) -> Path:
-    """JPEG `size` con la marca Everyday Explained: titular amarillo arriba, la ilustracion al centro (esquinas
-    redondeadas) y la respuesta en blanco abajo, sobre azul marino. Ortografia exacta: el texto lo dibuja Pillow."""
+def render_everyday_card(art_path: Path, headline: str, body: str, out_path: Path, size: tuple = SIZE_IG, *,
+                         tag_right: str = "", label_top: str = "", label_bottom: str = "", footer: str = "",
+                         footer_fill: tuple = INFO_YELLOW) -> Path:
+    """Tarjeta 4:5 de la marca: logotipo y numeracion arriba, etiqueta + titular (Anton, mayusculas), la ilustracion
+    (esquinas redondeadas) y, debajo, etiqueta + explicacion y un pie. La ilustracion ocupa todo el alto que sobra, asi
+    que sin explicacion (diapositiva de gancho) sale mas grande. Todo el texto lo dibuja Pillow: ortografia exacta."""
     w, h = size
-    side = int(w * INFO_SIDE_FRAC)
-    head_h, foot_h = int(h * INFO_HEADER_FRAC), int(h * INFO_FOOTER_FRAC)
-    art_w, art_h = infographic_art_size(size)
+    m = int(w * INFO_MARGIN_FRAC)
+    max_w = w - 2 * m
     img = Image.new("RGB", size, INFO_NAVY)
-    with Image.open(art_path) as art:
-        art = _crop_to(art.convert("RGB"), (art_w, art_h))
-    mask = Image.new("L", (art_w, art_h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, art_w - 1, art_h - 1), radius=int(w * 0.03), fill=255)
-    img.paste(art, (side, head_h), mask)
     draw = ImageDraw.Draw(img)
-    max_w = w - 2 * side
-    pad = int(h * 0.02)
 
+    # cabecera: logotipo (EVERYDAY amarillo + EXPLAINED blanco) y numeracion
+    logo_font = _font(int(w * 0.042))
+    draw.text((m, m * 0.8), "EVERYDAY", font=logo_font, fill=INFO_YELLOW, anchor="la")
+    x = m + draw.textlength("EVERYDAY ", font=logo_font)
+    draw.text((x, m * 0.8), "EXPLAINED", font=logo_font, fill=INFO_WHITE, anchor="la")
+    tag_font = _serif(_SANS_BOLD, int(w * 0.03))
+    if tag_right:
+        draw.text((w - m, m * 0.8 + logo_font.size * 0.12), tag_right, font=tag_font, fill=INFO_BLUE, anchor="ra")
+    y = m * 0.8 + logo_font.size * 1.55
+    draw.rectangle((m, y, m + int(w * 0.12), y + 5), fill=INFO_BLUE)
+    y += 22
+
+    label_font = _serif(_SANS_BOLD, int(w * 0.028))
+    if label_top:
+        draw.text((m, y), label_top.upper(), font=label_font, fill=INFO_BLUE, anchor="la")
+        y += label_font.size * 1.5
     title = (headline or "").strip().upper()
-    px = int(w * 0.11)
-    while True:
-        font = _font(px)
-        lines = _wrap(draw, title, font, max_w)
-        if (len(lines) <= 2 and len(lines) * px * 1.1 <= head_h - 2 * pad) or px <= int(w * 0.05):
-            break
-        px -= 2
-    _center_block(draw, lines, font, INFO_YELLOW, w / 2, 0, head_h, 1.1)
+    head_font, head_lines = _fit_text(draw, title, _font, max_w, int(h * 0.25), int(w * 0.105), int(w * 0.058), 1.08, 3)
+    y = _draw_lines(draw, head_lines, head_font, INFO_WHITE, m, y, 1.08)
+    art_top = y + int(h * 0.022)
 
-    text = (answer or "").strip()
-    px = int(w * 0.062)
-    while True:
-        font = _serif(_SANS_BOLD, px)
-        lines = _wrap(draw, text, font, max_w)
-        if (len(lines) <= 3 and len(lines) * px * 1.25 <= foot_h - 2 * pad) or px <= int(w * 0.035):
-            break
-        px -= 2
-    _center_block(draw, lines, font, INFO_LIGHT, w / 2, h - foot_h, foot_h, 1.25)
+    # bloque inferior (se mide primero para saber cuanto alto le queda a la ilustracion)
+    text = (body or "").strip()
+    gap = 1.28
+    body_font = body_lines = None
+    block_h = 0.0
+    if text:
+        body_font, body_lines = _fit_text(draw, text, lambda px: _serif(_SANS_BOLD, px), max_w, int(h * 0.19),
+                                          int(w * 0.046), int(w * 0.03), gap, 6)
+        block_h = len(body_lines) * body_font.size * gap + (label_font.size * 1.5 if label_bottom else 0) + 14
+    foot_font = _font(int(w * 0.036))
+    foot_h = foot_font.size * 1.4 if footer else 0
+    bottom_top = h - m * 0.7 - foot_h - block_h
+    art_h = int(bottom_top - art_top - 10)
+    art_w = max_w
+    with Image.open(art_path) as art:
+        art = _crop_to(art.convert("RGB"), (art_w, max(art_h, int(h * 0.2))))
+    mask = Image.new("L", art.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, art.size[0] - 1, art.size[1] - 1), radius=int(w * 0.025), fill=255)
+    img.paste(art, (m, int(art_top)), mask)
+
+    y = int(art_top) + art.size[1] + 14
+    if text:
+        if label_bottom:
+            draw.text((m, y), label_bottom.upper(), font=label_font, fill=INFO_BLUE, anchor="la")
+            y += label_font.size * 1.5
+        _draw_lines(draw, body_lines, body_font, INFO_WHITE, m, y, gap)
+    if footer:
+        draw.text((w / 2 if not text else m, h - m * 0.7), footer, font=foot_font, fill=footer_fill,
+                  anchor="ms" if not text else "ls")
     img.save(out_path, "JPEG", quality=94)
     return out_path
+
+
+def render_infographic(art_path: Path, headline: str, answer: str, out_path: Path, size: tuple = SIZE_IG,
+                       number: int = 1) -> Path:
+    """Formato A de Everyday Explained: publicacion individual (pregunta, ilustracion y respuesta simple)."""
+    return render_everyday_card(
+        art_path, headline, answer, out_path, size, tag_right=f"SCIENCE \u2022 {number:02d}", label_top="The question",
+        label_bottom="The simple answer", footer=EVERYDAY_TAGLINE,
+    )
+
+
+CAROUSEL_LABELS = ("The hook", "The observation", "The science", "The detail", "The takeaway")
+CAROUSEL_FOLLOW = "Follow Everyday Explained for more."
+
+
+def render_carousel_slide(art_path: Path, title: str, text: str, out_path: Path, index: int, total: int = 5,
+                          size: tuple = SIZE_IG) -> Path:
+    """Formato B: diapositiva `index` (1..total) del carrusel. La 1 es el gancho (solo titular e ilustracion); la ultima
+    cierra con la llamada a seguir la pagina."""
+    label = CAROUSEL_LABELS[min(index, len(CAROUSEL_LABELS)) - 1] if total == len(CAROUSEL_LABELS) else f"Part {index}"
+    footer = "SWIPE \u2192" if index == 1 else CAROUSEL_FOLLOW if index == total else ""
+    return render_everyday_card(
+        art_path, title, "" if index == 1 else text, out_path, size, tag_right=f"{index:02d} / {total:02d}",
+        label_top=label, footer=footer,
+    )

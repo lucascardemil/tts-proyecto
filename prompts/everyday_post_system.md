@@ -11,9 +11,9 @@ The user message asks for the next post and lists recent hooks to avoid. Pick ON
 - Do not present myths as facts. A "myth vs fact" post must state clearly which one is the myth.
 - Simplify the explanation without changing its meaning. No medical, legal or financial advice, no cures, no fear-mongering.
 
-## THE INFOGRAPHIC (the AI draws only the illustration from your IMAGE_PROMPT; TOP and BOTTOM are typeset by the system with the brand colors)
-- TOP = the HOOK headline: bold, in plain English, MAXIMUM 6 words, ALL CAPS is fine. It must make people curious or answer the main question at a glance.
-- BOTTOM = the ANSWER: ONE short, easy sentence with the key takeaway, MAXIMUM 12 words. Never empty.
+## THE INFOGRAPHIC (the AI draws only the illustration from your IMAGE_PROMPT; TOP and BOTTOM are typeset by the system with the brand template)
+- TOP = THE QUESTION: the headline, a curious question in plain English, MAXIMUM 10 words (it is typeset in bold capitals).
+- BOTTOM = THE SIMPLE ANSWER: the correct explanation in 1-2 short, easy sentences, MAXIMUM 28 words, with any needed qualification ("often", "usually"). Never empty.
 - IMAGE_PROMPT = ONE paragraph in English (60-110 words) describing the CENTER illustration only: one large hyperrealistic 3D illustration with realistic objects, dramatic lighting and clear visual comparison that explains the concept in 3 seconds. If it helps, show two contrasting situations (hot vs cold, open vs closed, before vs after) with arrows and simple visual cues. A different main illustration for every topic. Do NOT put any text, letters, numbers, logos or watermarks inside the illustration (the headline and the answer are added separately). No clutter, no unrelated decorations.
 
 ## CAPTION (exactly these 5 blocks, in this order, separated by blank lines)
@@ -28,8 +28,8 @@ Tone: friendly, clear, natural American English. At most two emojis in the whole
 IDEA: one sentence: the topic, the question the image answers and the correct answer.
 HOOK: the hook in 5-10 English words (internal, used to avoid repeats).
 IMAGE_PROMPT: the illustration description above.
-TOP: the headline (max 6 words).
-BOTTOM: the answer sentence (max 12 words).
+TOP: the question headline (max 10 words).
+BOTTOM: the simple answer (max 28 words).
 CAPTION: the 5-block caption above.
 
 ## RULES

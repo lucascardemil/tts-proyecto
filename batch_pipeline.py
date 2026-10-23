@@ -220,12 +220,20 @@ BATCH_HOUR_END = 21  # inclusive: las 21:00 en punto es el ultimo horario
 GAMING_SLOT_HOURS = [12, 19]
 GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_at
 # Posts de imagen de "Everyday Explained" (infografias educativas en ingles, solo Facebook): 11:00 y 19:00 hora del Este.
-EVERYDAY_SLOT_HOURS = [11, 19]
+# Hora del Este. Individual: 10:00 y 19:00; carrusel: 14:00 (uno al dia, entre los dos); el mixto reparte los tres. El de las 19
+# queda dentro de 9-21 locales incluso con el cambio de hora.
+EVERYDAY_SINGLE_HOURS = [10, 19]
+EVERYDAY_CAROUSEL_HOURS = [14]
+EVERYDAY_SLOT_HOURS = [10, 14, 19]
 EVERYDAY_TEMPLATES = {"E1": "Explainer"}  # una sola plantilla: el modelo elige el tema
 EVERYDAY_WEEK = [("E1", "E1")] * 7
-EVERYDAY_TOP_MAX_WORDS = 6
-EVERYDAY_BOTTOM_MAX_WORDS = 12
+EVERYDAY_TOP_MAX_WORDS = 10  # la pregunta
+EVERYDAY_BOTTOM_MAX_WORDS = 28  # la respuesta simple
 EVERYDAY_HASHTAGS = (3, 5)
+EVERYDAY_SLIDES = 5  # Formato B: carrusel educativo
+EVERYDAY_SLIDE_TITLE_MAX_WORDS = 10
+EVERYDAY_SLIDE_TEXT_MAX_WORDS = 34  # el prompt pide 28: margen para no rechazar por una palabra
+EVERYDAY_MIX_PATTERN = ("everyday_image", "everyday_carousel", "everyday_image")  # cada dia: individual, carrusel, individual
 GAMING_MEME_SLOT_HOURS = [14, 17]  # memes de Memedroid (hora del Este): entre los posts de las 12 y las 19; sin pasar de las 21 locales
 # Plantillas de la "semana tipo" (sec. 2 y 4): [slot del mediodia, slot de la
 # noche] por dia, lunes=0. Domingo solo trae T1 en el workflow; el segundo
@@ -285,7 +293,9 @@ MIXED_TYPES = {
     "mix_gaming": ("gaming_clip", "gaming_image"),
     "mix_macrame": ("video", "macrame_image"),
     "mix_historias": ("video", "historias_image"),
+    "mix_everyday": ("everyday_image", "everyday_carousel"),  # el reparto real lo da EVERYDAY_MIX_PATTERN
 }
+MIXED_SLOT_HOURS = {"mix_everyday": EVERYDAY_SLOT_HOURS}  # un mixto con horario propio (si no, el del post de imagen del nicho)
 
 
 def item_type(project: dict, video: dict) -> str:
@@ -947,6 +957,8 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         # Solo Facebook: punto unico por el que pasa todo lote (la ruta, reintentos...).
         networks = {k: v for k, v in (networks or {}).items() if k == "facebook"}
     mixed = MIXED_TYPES.get(content_type)
+    if _facebook_only(content_type):  # pagina de horario propio: tantos posts al dia como franjas tiene
+        per_day = len(MIXED_SLOT_HOURS.get(content_type) or IMAGE_POST_PROFILES[content_type]["slot_hours"])
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
     best_hour = _best_hour_for_networks(networks)
@@ -967,7 +979,7 @@ def create_project(page_name: str, total_videos: int, per_day: int,
         video_settings["copy_profile"] = RESCUE_PROFILE
     profile = IMAGE_POST_PROFILES.get(mixed[1] if mixed else content_type)
     clip_post = (mixed[0] if mixed else content_type) in GAMING_VIDEO_TYPES
-    et_hours = profile["slot_hours"] if profile else GAMING_SLOT_HOURS if clip_post else None  # hora del Este
+    et_hours = (MIXED_SLOT_HOURS.get(content_type) or profile["slot_hours"]) if profile else GAMING_SLOT_HOURS if clip_post else None  # hora del Este
     # HISTORIAS con YouTube: 1 video cada 2 dias (independientemente de otras redes)
     youtube_on = bool(networks.get("youtube"))
     rescue_skip = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
@@ -1010,7 +1022,8 @@ def create_project(page_name: str, total_videos: int, per_day: int,
                 "gen_attempts": 0,
                 "publish_attempts": 0,
                 "last_publish_auth_error": False,
-                **({"item_type": mixed[i % 2]} if mixed else {}),
+                **({"item_type": EVERYDAY_MIX_PATTERN[i % len(EVERYDAY_MIX_PATTERN)] if content_type == "mix_everyday"
+                    else mixed[i % 2]} if mixed else {}),
             }
             for i in range(total_videos)
         ],
@@ -1255,7 +1268,13 @@ def _cooldown_elapsed(since_iso: Optional[str], wait: timedelta, now: datetime) 
         return True
 
 
-def _requeue_healable_errors() -> None:
+def auto_heal_enabled() -> bool:
+    """El sanado automatico de GENERACION solo corre con AUTO_HEAL=1 (por defecto apagado: cada reintento vuelve a
+    llamar al LLM). El reintento automatico de publicaciones fallidas no lo usa y sigue activo siempre."""
+    return os.environ.get("AUTO_HEAL", "0").strip().lower() in ("1", "true", "yes", "si", "sí")
+
+
+def _requeue_healable_errors(heal_generation: bool = True) -> None:
     """Vuelve a "pending" los videos en "error" salvo que el fallo pida una accion humana
     (ver _is_healable_error), respetando un cooldown exponencial y MAX_HEAL_CYCLES. Un video sin
     `error_at` (quedo en error antes de existir este mecanismo) es elegible de inmediato.
@@ -1282,7 +1301,7 @@ def _requeue_healable_errors() -> None:
                             project["id"], v["index"], cycles + 1, MAX_PUBLISH_HEAL_CYCLES, (v.get("error") or "")[:120],
                         )
                     continue
-                if v["status"] != "error" or not _is_healable_error(v.get("error")):
+                if not heal_generation or v["status"] != "error" or not _is_healable_error(v.get("error")):
                     continue
                 cycles = v.get("heal_cycles", 0)
                 if cycles >= MAX_HEAL_CYCLES:
@@ -1608,13 +1627,23 @@ IMAGE_POST_PROFILES = {
     "everyday_image": {
         "kind": "everyday_post",  # prompts/everyday_post_system.md: infografias educativas (Everyday Explained), en ingles
         "templates": EVERYDAY_TEMPLATES, "week": EVERYDAY_WEEK,
-        "slot_hours": EVERYDAY_SLOT_HOURS, "network_offsets": {},
+        "slot_hours": EVERYDAY_SINGLE_HOURS, "network_offsets": {},
         "history_store": "everyday_post_history",
         "composition": "", "text_fill": (255, 211, 78),
         "ai_design": "infographic",  # la IA dibuja la infografia completa con su titular y su respuesta
         "facebook_only": True,
         "max_hashtags": {"instagram": 0, "facebook": EVERYDAY_HASHTAGS[1]},
         "default_trigger": "give me the next Everyday Explained post", "label": "Post Everyday Explained",
+    },
+    "everyday_carousel": {
+        "kind": "everyday_carousel",  # prompts/everyday_carousel_system.md: Formato B, 5 diapositivas
+        "templates": EVERYDAY_TEMPLATES, "week": EVERYDAY_WEEK,
+        "slot_hours": EVERYDAY_CAROUSEL_HOURS, "network_offsets": {},
+        "history_store": "everyday_post_history",  # compartido con el individual: no repetir temas entre formatos
+        "composition": "", "text_fill": (255, 214, 0),
+        "ai_design": "infographic", "carousel": True, "facebook_only": True,
+        "max_hashtags": {"instagram": 0, "facebook": EVERYDAY_HASHTAGS[1]},
+        "default_trigger": "give me the next Everyday Explained carousel", "label": "Carrusel Everyday Explained",
     },
     "ninio_image": {
         "kind": "ninio_post",  # prompts/ninio_post_system.md
@@ -1666,7 +1695,8 @@ IMAGE_POST_PROFILES = {
 
 def _facebook_only(content_type: str) -> bool:
     """Perfiles de una pagina que solo publica en Facebook (p. ej. Everyday Explained)."""
-    return bool((IMAGE_POST_PROFILES.get(content_type) or {}).get("facebook_only"))
+    kinds = MIXED_TYPES.get(content_type) or (content_type,)
+    return any((IMAGE_POST_PROFILES.get(k) or {}).get("facebook_only") for k in kinds)
 
 
 def _hex(rgb: tuple) -> str:
@@ -1788,9 +1818,10 @@ def _ai_meme_layout(post: dict) -> str:
 
 
 EVERYDAY_ART_STYLE = (
-    "Hyperrealistic premium 3D educational illustration, deep navy blue (#14283E) and bright yellow (#FFD34E) accents "
-    "with white and light blue highlights, dramatic lighting, high contrast, clean composition with generous negative "
-    "space, one large clear subject. Landscape-friendly framing with every element inside the central 90% of the frame."
+    "Cinematic scientific photography or premium 3D educational illustration, realistic materials, dramatic lighting, "
+    "palette of deep navy blue (#0B1E3B), electric blue (#008AFF) and yellow (#FFD600) accents with white highlights, "
+    "high contrast, clean composition with generous negative space, one large clear subject. Every element inside the "
+    "central 90% of the frame."
 )
 
 
@@ -1812,13 +1843,53 @@ def _validate_everyday_post(post: dict) -> None:
         raise auto_pipeline.PipelineError(f"Everyday Explained: el titular debe tener 1-{EVERYDAY_TOP_MAX_WORDS} palabras y tiene {top_words}")
     if not 1 <= bottom_words <= EVERYDAY_BOTTOM_MAX_WORDS:
         raise auto_pipeline.PipelineError(f"Everyday Explained: la respuesta debe tener 1-{EVERYDAY_BOTTOM_MAX_WORDS} palabras y tiene {bottom_words}")
-    caption = post.get("caption") or ""
+    _validate_everyday_caption(post.get("caption") or "")
+
+
+def _validate_everyday_caption(caption: str) -> None:
     tags = re.findall(r"#\w+", caption)
     if not EVERYDAY_HASHTAGS[0] <= len(tags) <= EVERYDAY_HASHTAGS[1]:
         raise auto_pipeline.PipelineError(
             f"Everyday Explained: el caption debe llevar {EVERYDAY_HASHTAGS[0]}-{EVERYDAY_HASHTAGS[1]} hashtags y lleva {len(tags)}")
-    if "?" not in caption:
+    body = _TRAILING_HASHTAGS_RE.sub("", caption).strip()
+    last_block = body.split("\n\n")[-1] if body else ""
+    if "?" not in last_block:  # la pregunta de interaccion va justo antes de los hashtags
         raise auto_pipeline.PipelineError("Everyday Explained: el caption debe cerrar con una pregunta para comentar")
+
+
+_CAROUSEL_SLIDE_RE = re.compile(
+    r"SLIDE\s*(\d+)\s*\n\s*TITLE:\s*(.+?)\s*\n\s*TEXT:\s*(.+?)\s*\n\s*IMAGE_PROMPT:\s*(.+?)\s*(?=\n\s*SLIDE\s*\d|\n\s*CAPTION:|\Z)",
+    re.DOTALL | re.IGNORECASE)
+_CAROUSEL_HEAD_RE = re.compile(r"IDEA:\s*(.+?)\s*\n\s*HOOK:\s*(.+?)\s*\n\s*SLIDE", re.DOTALL | re.IGNORECASE)
+_CAROUSEL_CAPTION_RE = re.compile(r"\n\s*CAPTION:\s*(.+)\Z", re.DOTALL | re.IGNORECASE)
+
+
+def _parse_everyday_carousel(text: str) -> dict:
+    """Formato B de Everyday Explained: {idea, hook, slides: [{title, text, image_prompt} x5], caption}. PipelineError
+    (reintentable) si el formato o los limites no se cumplen."""
+    cleaned = (text or "").replace("**", "").strip()
+    head, cap = _CAROUSEL_HEAD_RE.search(cleaned), _CAROUSEL_CAPTION_RE.search(cleaned)
+    slides = _CAROUSEL_SLIDE_RE.findall(cleaned)
+    if not (head and cap and slides):
+        raise auto_pipeline.PipelineError(
+            "Everyday Explained: la respuesta del carrusel no viene en el formato IDEA/HOOK/SLIDE n/CAPTION. "
+            f"Respuesta recibida: {cleaned[:300]!r}")
+    if [int(n) for n, *_ in slides] != list(range(1, EVERYDAY_SLIDES + 1)):
+        raise auto_pipeline.PipelineError(f"Everyday Explained: el carrusel debe traer exactamente {EVERYDAY_SLIDES} diapositivas numeradas 1 a {EVERYDAY_SLIDES}")
+    out = []
+    for n, title, body, prompt in slides:
+        n, title, body, prompt = int(n), title.strip().strip("\"“”"), body.strip(), prompt.strip()
+        body = "" if body in ("-", "—", "–") else body
+        if not 1 <= len(title.split()) <= EVERYDAY_SLIDE_TITLE_MAX_WORDS:
+            raise auto_pipeline.PipelineError(f"Everyday Explained: el titulo de la diapositiva {n} debe tener 1-{EVERYDAY_SLIDE_TITLE_MAX_WORDS} palabras")
+        if n > 1 and not 3 <= len(body.split()) <= EVERYDAY_SLIDE_TEXT_MAX_WORDS:
+            raise auto_pipeline.PipelineError(f"Everyday Explained: el texto de la diapositiva {n} debe tener 3-{EVERYDAY_SLIDE_TEXT_MAX_WORDS} palabras")
+        if len(prompt.split()) < 8:
+            raise auto_pipeline.PipelineError(f"Everyday Explained: falta el prompt de imagen de la diapositiva {n}")
+        out.append({"title": title, "text": "" if n == 1 else body, "image_prompt": prompt})
+    caption = _GAMING_TRAILING_RE.split(cap.group(1))[0].strip()
+    _validate_everyday_caption(caption)
+    return {"idea": head.group(1).strip(), "hook": head.group(2).strip(), "slides": out, "caption": caption}
 
 
 def _image_post_template(profile_key: str, scheduled_at: Optional[str]) -> str:
@@ -1924,7 +1995,8 @@ def generate_gaming_post(
         stage_label="imagen",
     )
     if ai_design == "infographic":  # ilustracion sin texto + titular/respuesta compuestos con la marca
-        meme_maker.render_infographic(base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG)
+        meme_maker.render_infographic(base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG,
+                                      number=len(_load_gaming_history(profile["history_store"])) + 1)
     elif ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
         meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_SQUARE)
     elif profile.get("card"):  # tarjeta editorial: texto en un panel, no sobre la foto
@@ -1941,6 +2013,73 @@ def generate_gaming_post(
         gaming_news.mark_used(news_item)  # solo si el post salio completo
         post["news_link"] = news_item["link"]
     return post
+
+
+def generate_everyday_carousel(
+    page_name: str,
+    trigger_message: str,
+    image_provider: str,
+    dest_dir: Path,
+    on_stage: Optional[Callable[[str], None]] = None,
+    text_provider_pref: str = "",
+    profile_key: str = "everyday_carousel",
+) -> dict:
+    """Formato B: un texto del modelo (tema + 5 diapositivas + caption) -> 5 ilustraciones sin texto -> 5 tarjetas con la marca
+    (dest_dir/slide_1.jpg..slide_5.jpg; cover.jpg = la primera). Devuelve {idea, hook, caption, slides: [rutas]}."""
+    import app
+
+    profile = IMAGE_POST_PROFILES[profile_key]
+
+    def _stage(name: str) -> None:
+        if on_stage:
+            on_stage(name)
+
+    _stage("idea")
+    message = trigger_message + _gaming_history_block(store_name=profile["history_store"])
+    attempted: list = []
+    reply = _run_stage_with_retry(
+        lambda: _generate_text_with_chain(
+            profile["kind"], page_name, message, f"{profile['kind']}_{dest_dir.name}",
+            prefer=(text_provider_pref if text_provider_pref in TEXT_PROVIDER_CHOICES else "auto"), attempted=attempted,
+        ),
+        attempts=BROWSER_STAGE_RETRY_ATTEMPTS, on_retry=None, stage_label="idea",
+    )
+    carousel = _parse_everyday_carousel(reply)
+
+    _stage("imagen")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    art_dir = dest_dir / "art"
+    suffix = _ai_infographic_layout({})
+
+    def _do_generate_images():
+        with app._clipgen_lock:
+            story = {"prompts": [
+                {"index": i, "prompt": s["image_prompt"].rstrip() + suffix, "frase": s["title"]}
+                for i, s in enumerate(carousel["slides"])
+            ]}
+            return auto_pipeline.generate_clips(
+                story, art_dir, unattended=True, start_index=0,
+                provider=image_provider if image_provider in auto_pipeline.PROVIDERS else "whatsapp",
+                generate_video=False, aspect="1:1",
+            )
+
+    arts = _run_stage_with_retry(
+        _do_generate_images, attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+        on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider == "whatsapp" else None,
+        stage_label="imagen",
+    )
+    if len(arts) != len(carousel["slides"]):
+        raise auto_pipeline.PipelineError(f"Everyday Explained: se generaron {len(arts)} de {len(carousel['slides'])} imagenes")
+
+    _stage("diseño")
+    slides = []
+    for i, (art, slide) in enumerate(zip(arts, carousel["slides"]), 1):
+        out = dest_dir / f"slide_{i}.jpg"
+        meme_maker.render_carousel_slide(Path(art), slide["title"], slide["text"], out, i, len(carousel["slides"]))
+        slides.append(str(out))
+    shutil.copyfile(slides[0], dest_dir / "cover.jpg")
+    shutil.rmtree(art_dir, ignore_errors=True)
+    return {"idea": carousel["idea"], "hook": carousel["hook"], "caption": carousel["caption"], "slides": slides}
 
 
 def _generate_batch_image_post(project_id: str, index: int) -> None:
@@ -1962,17 +2101,22 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
     dest_path = dest_dir / "cover.jpg"  # con texto, cuadrada 1:1 (Facebook e Instagram)
 
     try:
-        post = generate_gaming_post(
-            _project_page_name(project),
-            profile["default_trigger"] if project.get("type") in MIXED_TYPES
-            else project.get("trigger_message", profile["default_trigger"]),
-            project.get("video_settings", {}).get("image_provider", "whatsapp"),
-            dest_dir,
-            template,
-            on_stage=lambda stage: _set_stage(project_id, index, stage),
-            text_provider_pref=project.get("video_settings", {}).get("text_provider", "auto"),
-            profile_key=profile_key,
-        )
+        trigger = (profile["default_trigger"] if project.get("type") in MIXED_TYPES
+                   else project.get("trigger_message", profile["default_trigger"]))
+        provider = project.get("video_settings", {}).get("image_provider", "whatsapp")
+        text_pref = project.get("video_settings", {}).get("text_provider", "auto")
+        if profile.get("carousel"):
+            post = generate_everyday_carousel(
+                _project_page_name(project), trigger, provider, dest_dir,
+                on_stage=lambda stage: _set_stage(project_id, index, stage), text_provider_pref=text_pref,
+                profile_key=profile_key,
+            )
+        else:
+            post = generate_gaming_post(
+                _project_page_name(project), trigger, provider, dest_dir, template,
+                on_stage=lambda stage: _set_stage(project_id, index, stage), text_provider_pref=text_pref,
+                profile_key=profile_key,
+            )
     except Exception as e:
         logger.exception("batch %s post %d: fallo la generacion", project_id, index)
         _record_generation_failure(project_id, index, e)
@@ -1996,6 +2140,8 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         v["template"] = post.get("template", template)
         v["idea"] = post["idea"]
         v["caption"] = post["caption"]
+        if post.get("slides"):
+            v["slides"] = post["slides"]
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -2810,9 +2956,11 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
     max_tags = IMAGE_POST_PROFILES[item_type(project, video)]["max_hashtags"]
 
     def _fb(v, page_id):
-        result = facebook_publisher.publish_photo(
-            v["video_path"], _limit_hashtags(caption, max_tags["facebook"]), page_id=page_id, scheduled_time=_scheduled_epoch(v),
-        )
+        text = _limit_hashtags(caption, max_tags["facebook"])
+        if v.get("slides"):  # carrusel: una sola publicacion con todas las diapositivas
+            result = facebook_publisher.publish_carousel(v["slides"], text, page_id=page_id, scheduled_time=_scheduled_epoch(v))
+        else:
+            result = facebook_publisher.publish_photo(v["video_path"], text, page_id=page_id, scheduled_time=_scheduled_epoch(v))
         if result.get("ok"):
             app._record_published_facebook(result["post_id"], project["name"], Path(v["video_path"]).name, page_id)
         return result
@@ -2954,7 +3102,7 @@ def _publish_batch_item(project_id: str, index: int, content_type: str) -> None:
 
 
 def _batch_scheduler_tick() -> None:
-    _requeue_healable_errors()
+    _requeue_healable_errors(heal_generation=auto_heal_enabled())
     projects = _load()
     running = sorted(
         (p for p in projects.values() if p.get("status") == "running"),

@@ -112,7 +112,7 @@ def test_ai_ad_prompt_carries_exact_text_and_layout():
     assert "COMENTA EBOOK" in macrame and "badges" not in macrame
     assert {k: bp.IMAGE_POST_PROFILES[k]["ai_design"] for k in bp.IMAGE_POST_PROFILES} == {
         "gaming_image": "news", "ninio_image": "ad", "macrame_image": "ad", "historias_image": "story",
-        "gaming_meme": None, "everyday_image": "infographic"}
+        "gaming_meme": None, "everyday_image": "infographic", "everyday_carousel": "infographic"}
     meme = bp._ai_meme_layout({"top": "me mato", "bottom": ""})
     assert '"ME MATO"' in meme and "bottom text" not in meme
 

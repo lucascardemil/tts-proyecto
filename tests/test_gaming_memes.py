@@ -61,6 +61,27 @@ def test_pick_meme_filters_and_ranks():
     assert gm.pick_meme([_m("102", votes=5, positive=5)], set(), NOW) is None
 
 
+def test_pick_meme_goes_back_by_tiers_up_to_three_months_and_prefers_recent():
+    week = _m("201", votes=20, positive=18, when="2026-10-18T10:00:00")
+    month = _m("202", votes=900, positive=880, when="2026-10-01T10:00:00")  # mejor puntaje, pero mas viejo
+    old = _m("203", votes=500, positive=480, when="2026-08-10T10:00:00")  # ~71 dias
+    too_old = _m("204", votes=900, positive=890, when="2026-07-01T10:00:00")  # >90 dias
+    assert gm.pick_meme([month, week], set(), NOW)["id"] == "201"  # lo reciente manda mientras haya algo
+    assert gm.pick_meme([month, old, too_old], set(), NOW)["id"] == "202"  # sin semana: tramo de 30 dias
+    assert gm.pick_meme([old, too_old], set(), NOW)["id"] == "203"  # sin mes: tramo de 90 dias
+    assert gm.pick_meme([too_old], set(), NOW) is None and gm.pick_meme([old], {"203"}, NOW) is None
+
+
+def test_fetch_candidates_is_cached_between_calls(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gm, "_cache", {"at": 0.0, "memes": []})
+    monkeypatch.setattr(gm, "_fetch_all", lambda: calls.append(1) or [_m("301")])
+    assert gm.fetch_candidates() == gm.fetch_candidates() and len(calls) == 1
+    gm._cache["at"] -= gm.CACHE_SECONDS + 1
+    gm.fetch_candidates()
+    assert len(calls) == 2
+
+
 def test_caption_credits_the_author_and_links_the_original():
     meme = _m("77", author="Striker_4")
     caption = gm.build_caption(meme)

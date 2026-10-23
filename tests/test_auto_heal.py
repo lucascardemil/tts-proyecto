@@ -116,3 +116,25 @@ def test_manual_retry_resets_the_publish_heal_but_the_agents_does_not(store):
     current(store)["status"] = "publish_error"
     assert bp.retry_publish_video("p1", 0)
     assert current(store)["publish_heal_cycles"] == 0
+
+
+# --- interruptor AUTO_HEAL: sin el, la generacion no se sana sola, la publicacion si ---------------------------
+
+def test_generation_heal_off_keeps_errors_but_publish_heal_still_runs(store):
+    video(store, status="error", error="ffmpeg murió", error_at=ago(days=3))
+    video(store, status="publish_error", publish_error_at=ago(hours=3), error="Meta caída")
+    bp._requeue_healable_errors(heal_generation=False)
+    assert current(store, 0)["status"] == "error" and "heal_cycles" not in current(store, 0)
+    assert current(store, 1)["status"] == "ready"
+
+
+def test_scheduler_tick_heals_generation_only_with_auto_heal_on(store, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bp, "_requeue_healable_errors", lambda heal_generation=True: calls.append(heal_generation))
+    monkeypatch.setattr(bp, "_load", lambda: {})
+    monkeypatch.delenv("AUTO_HEAL", raising=False)
+    bp._batch_scheduler_tick()
+    monkeypatch.setenv("AUTO_HEAL", "1")
+    bp._batch_scheduler_tick()
+    assert calls == [False, True]
+    assert bp.auto_heal_enabled()

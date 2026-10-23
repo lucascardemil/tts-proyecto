@@ -7,6 +7,7 @@ Reparar y las ejecuta o las propone. Todo el estado vive en job_store ("office_a
 (decide, sin efectos) esta separada de `apply` (ejecuta y persiste) para probar sin hilos ni red."""
 
 import logging
+import os
 import re
 import threading
 import traceback
@@ -31,6 +32,14 @@ LOG_MAX = 400
 LOG_SHOWN = 20
 STATUS_SHOWN = 5  # de las 20 filas de la bitacora, a lo mas 5 son cambios de estado: no tapan las acciones
 MODES = ("off", "propose", "auto")
+
+
+def automation_enabled() -> bool:
+    """Los agentes solo actuan solos con OFFICE_AUTOMATION=1 (por defecto apagado: cada reintento de generacion
+    vuelve a gastar el LLM y compite con las publicaciones reales)."""
+    return os.environ.get("OFFICE_AUTOMATION", "0").strip().lower() in ("1", "true", "yes", "si", "sí")
+
+
 # El ciclo de agentes no necesita los datos de Graph tan frescos como la pantalla: menos trafico a Meta.
 AGENT_READ_TTL = {"remote_times": 900, "tokens": 900, "metrics_rows": 900}
 
@@ -476,6 +485,7 @@ def automation_block(now: Optional[datetime] = None) -> dict:
     with _LOCK:
         state = _load_state()
     return {
+        "enabled": automation_enabled(),
         "paused": state["paused"],
         "rules": [{"id": r.id, "agent": r.agent, "label": r.label, "description": r.description,
                    "mode": _mode(state, r), "default_mode": r.default_mode} for r in RULES],

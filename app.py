@@ -1447,6 +1447,8 @@ HTML = r"""<!DOCTYPE html>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
         <option value="everyday_image">Post de imagen — Everyday Explained (4:5, solo Facebook)</option>
+        <option value="everyday_carousel">Carrusel de 5 imágenes — Everyday Explained (solo Facebook)</option>
+        <option value="mix_everyday">Mixto — Everyday Explained (individual, carrusel, individual: 3 al día)</option>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
@@ -1540,7 +1542,7 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
-      <p class="pub-hint" id="lote-everyday-note" style="display:none">Horario automático: 2 posts al día (11:00 y 19:00, hora del Este de EE. UU.). Solo Facebook.</p>
+      <p class="pub-hint" id="lote-everyday-note" style="display:none">Horario automático (hora del Este de EE. UU.): individual 10:00 y 19:00 · carrusel 14:00 · mixto los tres (3 al día). Solo Facebook.</p>
       <div id="lote-page-wrap" style="margin-top:10px">
         <label for="lote-page">Página</label>
         <select id="lote-page"></select>
@@ -2065,12 +2067,16 @@ function officeRenderAutomation(force) {
   const auto = officeState && officeState.automation;
   const box = $("office-automation");
   box.hidden = !auto;
-  const sig = JSON.stringify([auto && { paused: auto.paused, rules: auto.rules, proposals: auto.proposals, brake: auto.brake }, officeSelected]);
+  const sig = JSON.stringify([auto && { enabled: auto.enabled, paused: auto.paused, rules: auto.rules, proposals: auto.proposals, brake: auto.brake }, officeSelected]);
   if (!force && sig === officeAutoSig) return;
   officeAutoSig = sig;
   box.textContent = "";
   if (!auto) return;
   box.appendChild(officeEl("h2", "", "Agentes automáticos"));
+  if (auto.enabled === false) {
+    box.appendChild(officeEl("p", "card-desc", "Automatización desactivada (OFFICE_AUTOMATION=0 en .env): los agentes solo muestran alertas y no reintentan nada solos. Usa Reintentar a mano."));
+    return;
+  }
   const braked = auto.brake.used >= auto.brake.limit;
   const line = auto.paused ? "Agentes en pausa" : braked ? "Límite por hora alcanzado" : "Agentes activos";
   box.appendChild(officeEl("p", "card-desc", line + " · " + auto.brake.used + "/" + auto.brake.limit + " acciones esta hora"));
@@ -2599,13 +2605,13 @@ let gamingJobId = null;
 let lastGamingJobType = null; // tipo del ultimo post renderizado (para regenerar en un mixto)
 try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
 // Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
-const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "everyday_image" || type === "gaming_meme";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "everyday_image" || type === "everyday_carousel" || type === "mix_everyday" || type === "gaming_meme";
 const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
   gaming_reel: "dame el próximo reel de noticias gaming", gaming_meme: "dame el próximo meme de videojuegos",
   ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
-  historias_image: "dame el próximo post de historias de rescate", everyday_image: "give me the next Everyday Explained post", mix_historias: "dame una historia",
+  historias_image: "dame el próximo post de historias de rescate", everyday_image: "give me the next Everyday Explained post", everyday_carousel: "give me the next Everyday Explained carousel", mix_everyday: "give me the next Everyday Explained post", mix_historias: "dame una historia",
   mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming", mix_macrame: "dame una historia",
 };
 // Cada mixto alterna estos dos tipos (igual que MIXED_TYPES en batch_pipeline.py).
@@ -3564,6 +3570,7 @@ updateDurationOptions("pipeline-orientation", "pipeline-duration");
 updateDurationOptions("lote-orientation", "lote-duration");
 
 
+const EVERYDAY_TYPES = ["everyday_image", "everyday_carousel", "mix_everyday"]; // páginas solo-Facebook con 3 posts al día
 let loteIgSaved = null; // casilla de Instagram antes de elegir un tipo solo-Facebook (se restaura al cambiar de tipo)
 function updateLoteTypeVisibility() {
   const type = $("lote-type").value;
@@ -3578,7 +3585,7 @@ function updateLoteTypeVisibility() {
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
   $("lote-yt").closest("label").style.display = noYoutube ? "none" : "";
   // Everyday Explained: solo Facebook (Instagram bloqueado y desmarcado).
-  const fbOnly = type === "everyday_image";
+  const fbOnly = EVERYDAY_TYPES.includes(type);
   $("lote-everyday-note").style.display = fbOnly ? "" : "none";
   if (fbOnly) {
     if (loteIgSaved === null) loteIgSaved = $("lote-ig").checked;
@@ -3614,7 +3621,7 @@ $("lote-create-btn").addEventListener("click", async () => {
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
-  if (contentType !== "everyday_image" && $("lote-ig").checked) networks.instagram = { page_id: pageId };
+  if (!EVERYDAY_TYPES.includes(contentType) && $("lote-ig").checked) networks.instagram = { page_id: pageId };
   if (!isImagePostType(contentType) && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
@@ -7027,8 +7034,9 @@ if __name__ == "__main__":
     # video incluida) sin que nadie lo pida.
     batch_pipeline.start_scheduler()
 
-    # Los agentes actuan solos solo en el proceso dueño del programador (un unico proceso decide).
-    if batch_pipeline.holds_scheduler_lock():
+    # Los agentes actuan solos solo en el proceso dueño del programador (un unico proceso decide) y solo con
+    # OFFICE_AUTOMATION=1 (por defecto apagado: sus reintentos gastan el LLM).
+    if batch_pipeline.holds_scheduler_lock() and office_agents.automation_enabled():
         threading.Thread(target=office_agents.run_forever, args=(_office_readers, threading.Event()),
                          daemon=True, name="office-agents").start()
 

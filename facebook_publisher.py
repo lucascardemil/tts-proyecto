@@ -394,6 +394,77 @@ def publish_photo(
     }
 
 
+FEED_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{{page_id}}/feed"
+
+
+def publish_carousel(
+    image_paths: list,
+    caption: str,
+    page_id: Optional[str] = None,
+    scheduled_time: Optional[float] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """
+    Publicacion de varias imagenes en una sola (carrusel que se desliza): cada imagen se sube SIN publicar
+    (`published=false`) y luego un post de /feed las adjunta (`attached_media`) con el texto. Programado, el post
+    lleva `scheduled_publish_time` igual que publish_photo.
+
+    Returns: {"ok": True, "post_id": str} o {"ok": False, "error": str}.
+    """
+    page_id, access_token, err = meta_auth.get_credentials(page_id)
+    if err:
+        return err
+    paths = [Path(p) for p in image_paths or []]
+    if len(paths) < 2:
+        return {"ok": False, "error": "Un carrusel necesita al menos 2 imagenes."}
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        return {"ok": False, "error": f"No se encontró la imagen: {missing[0]}"}
+
+    token_check = meta_auth.validate(page_id)
+    if not token_check["ok"]:
+        return {"ok": False, "error": token_check["error"], "auth_error": token_check.get("auth_error", False)}
+
+    scheduled_time, effective_ts = _resolve_schedule(scheduled_time)
+    notify = on_status or (lambda msg: None)
+    photo_ids = []
+    try:
+        for n, path in enumerate(paths, 1):
+            notify(f"Subiendo imagen {n}/{len(paths)} a Facebook...")
+            with open(path, "rb") as f:
+                response = _post_with_retry(
+                    PHOTO_UPLOAD_URL.format(page_id=page_id),
+                    data={"access_token": access_token, "published": "false"}, files={"source": f}, timeout=120,
+                )
+            payload, err = _parse_response(response)
+            if err:
+                return err
+            photo_ids.append(payload["id"])
+
+        data = {"access_token": access_token, "message": caption}
+        for n, photo_id in enumerate(photo_ids):
+            data[f"attached_media[{n}]"] = json.dumps({"media_fbid": photo_id})
+        if scheduled_time is not None:
+            data["published"] = "false"
+            data["scheduled_publish_time"] = str(int(scheduled_time.timestamp()))
+        notify("Publicando el carrusel...")
+        targeting = feed_targeting_fields()
+        payload, err = _parse_response(_post_with_retry(FEED_URL.format(page_id=page_id), data={**data, **targeting}, timeout=120))
+        if err and targeting and not err.get("auth_error"):
+            payload, err = _parse_response(_post_with_retry(FEED_URL.format(page_id=page_id), data=data, timeout=120))
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"No se pudo publicar el carrusel en Facebook: {e}"}
+    if err:
+        return err
+
+    _save_next_slot(effective_ts + POST_SPACING_SECONDS)
+    return {
+        "ok": True,
+        "post_id": payload.get("id") or payload.get("post_id"),
+        "scheduled_time": scheduled_time.isoformat() if scheduled_time else None,
+    }
+
+
 def _graph_time(value: str) -> Optional[datetime]:
     """Hora de la Graph API ("2026-10-08T16:00:00+0000", o epoch en segundos como en scheduled_posts) ->
     datetime local naive."""

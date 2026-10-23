@@ -735,3 +735,20 @@ def test_exception_logs_do_not_leak_tokens(caplog, monkeypatch):
     with caplog.at_level(logging.ERROR, logger="office_agents"):
         run_once(office_agents._default_state(), flow_error_data())
     assert "RuntimeError" in caplog.text and "SECRET" not in caplog.text
+
+
+def test_automation_is_off_by_default_and_reported_in_the_block(monkeypatch):
+    monkeypatch.delenv("OFFICE_AUTOMATION", raising=False)
+    assert office_agents.automation_enabled() is False
+    assert office_agents.automation_block()["enabled"] is False
+    monkeypatch.setenv("OFFICE_AUTOMATION", "1")
+    assert office_agents.automation_enabled() is True and office_agents.automation_block()["enabled"] is True
+    monkeypatch.setenv("OFFICE_AUTOMATION", "0")
+    assert office_agents.automation_enabled() is False
+
+
+def test_app_only_starts_the_agents_thread_when_enabled():
+    from pathlib import Path
+    src = (Path(__file__).parent.parent / "app.py").read_bytes().decode("utf-8")
+    assert "holds_scheduler_lock() and office_agents.automation_enabled()" in src
+    assert "auto.enabled === false" in src
