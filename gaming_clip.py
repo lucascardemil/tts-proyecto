@@ -34,6 +34,7 @@ import requests
 
 import gaming_vision
 import job_store
+import hook_craft
 import video_maker
 
 logger = logging.getLogger(__name__)
@@ -405,11 +406,14 @@ YT_TAGS_MAX_CHARS = 450
 YT_MAX_HASHTAGS = 15
 YT_LANGUAGE = "en"
 _YT_HOOKS = ("INSANE PLAY", "NO WAY HE DID THAT", "WATCH TILL THE END", "LUCK OR SKILL?", "THIS IS CRAZY", "WAIT FOR IT")
+# Titulo de Shorts <= 60 caracteres (youtube-agent-skill/yt-package: la busqueda de escritorio corta ahi y el feed movil
+# cerca de 40, asi que juego y gancho van delante); las palabras clave largas viven en la descripcion y los tags.
+YT_TITLE_TARGET = hook_craft.DESKTOP
 _YT_TITLE_TEMPLATES = (
-    "{hook} 😱 {game} Best Moments & Epic Plays {year} #Shorts",
-    "{game} Epic Clip 🔥 {hook} | Best Plays {year} #Shorts",
-    "{hook} 🤯 {game} Gameplay Highlights {year} #Shorts",
-    "{game}: {hook} 🎮 Funniest & Craziest Clips {year} #Shorts",
+    "{game}: {hook} 😱 #Shorts",
+    "{hook} 🤯 {game} Best Plays {year} #Shorts",
+    "{game} Epic Clip 🔥 {hook} #Shorts",
+    "{hook} 🎮 {game} Highlights #Shorts",
 )
 
 
@@ -431,7 +435,10 @@ def build_youtube_seo(clip: dict, game: dict, hook: Optional[str] = None, summar
 
     custom_title = title
     template = rng.choice(_YT_TITLE_TEMPLATES)
-    title = template.format(hook=hook, game=name, year=year)
+    shown_hook = hook.capitalize()  # el gancho va en mayusculas en pantalla; en el titulo gritar baja la confianza
+    start = _YT_TITLE_TEMPLATES.index(template)
+    variants = [t.format(hook=shown_hook, game=name, year=year) for t in _YT_TITLE_TEMPLATES[start:] + _YT_TITLE_TEMPLATES[:start]]
+    title = next((v for v in variants if len(v) <= YT_TITLE_TARGET), variants[0])
     if len(title) > YT_TITLE_MAX:  # nombres de juego largos: se saca el gancho antes que el juego o #Shorts
         title = template.replace("{hook} ", "").replace(" {hook}", "").replace("{hook}", "").format(game=name, year=year)
     if custom_title:

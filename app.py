@@ -1036,8 +1036,8 @@ HTML = r"""<!DOCTYPE html>
         <option value="gaming_image">Post de noticias — Videojuegos (4:5, Facebook + Instagram)</option>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
+        <option value="everyday_image">Post de imagen — Everyday Explained (4:5, solo Facebook)</option>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
-        <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
         <option value="gaming_meme">Memes — Videojuegos (Memedroid, imagen, español)</option>
@@ -1446,8 +1446,8 @@ HTML = r"""<!DOCTYPE html>
         <option value="gaming_image">Post de noticias — Videojuegos (4:5, Facebook + Instagram)</option>
         <option value="ninio_image">Post de imagen — Niño selectivo (4:5, Facebook + Instagram)</option>
         <option value="macrame_image">Post de imagen — Macramé (4:5, Facebook + Instagram)</option>
+        <option value="everyday_image">Post de imagen — Everyday Explained (4:5, solo Facebook)</option>
         <option value="historias_image">Post de imagen — Historias (4:5, Facebook + Instagram)</option>
-        <option value="howbig_image">Post de imagen — How Big Really (4:5, solo Facebook)</option>
         <option value="gaming_clip">Clip viral de gaming editado (Medal, 9:16, Facebook + Instagram)</option>
         <option value="gaming_reel">Reel de noticias — Videojuegos (motion graphics, 9:16, inglés)</option>
         <option value="gaming_meme">Memes — Videojuegos (Memedroid, imagen, español)</option>
@@ -1540,7 +1540,7 @@ HTML = r"""<!DOCTYPE html>
         <label><input type="checkbox" id="lote-ig" checked> 📸 Instagram</label>
         <label><input type="checkbox" id="lote-yt"> ▶️ YouTube</label>
       </div>
-      <p class="pub-hint" id="lote-howbig-note" style="display:none">Horario automático: 3 posts al día los primeros 14 días y 2 al día después (hora del Este de EE. UU.). Solo Facebook.</p>
+      <p class="pub-hint" id="lote-everyday-note" style="display:none">Horario automático: 2 posts al día (11:00 y 19:00, hora del Este de EE. UU.). Solo Facebook.</p>
       <div id="lote-page-wrap" style="margin-top:10px">
         <label for="lote-page">Página</label>
         <select id="lote-page"></select>
@@ -2599,14 +2599,13 @@ let gamingJobId = null;
 let lastGamingJobType = null; // tipo del ultimo post renderizado (para regenerar en un mixto)
 try { gamingJobId = localStorage.getItem("gamingJobId"); } catch (e) {}
 // Tipos que no son "video completo": posts de imagen (gaming / niño selectivo) y clip gaming.
-const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "howbig_image" || type === "gaming_meme";
+const isImagePostType = (type) => type === "gaming_image" || type === "ninio_image" || type === "macrame_image" || type === "historias_image" || type === "everyday_image" || type === "gaming_meme";
 const isPostType = (type) => type.startsWith("gaming_") || isImagePostType(type);
 const PIPELINE_TRIGGER_DEFAULTS = {
   video: "dame una historia", gaming_image: "dame el próximo post gaming", gaming_clip: "dame el próximo post gaming",
   gaming_reel: "dame el próximo reel de noticias gaming", gaming_meme: "dame el próximo meme de videojuegos",
   ninio_image: "dame el próximo post de niño selectivo", macrame_image: "dame el próximo post de macramé",
-  historias_image: "dame el próximo post de historias de rescate", mix_historias: "dame una historia",
-  howbig_image: "give me the next How Big Really post",
+  historias_image: "dame el próximo post de historias de rescate", everyday_image: "give me the next Everyday Explained post", mix_historias: "dame una historia",
   mix_ninio: "dame una historia", mix_gaming: "dame el próximo post gaming", mix_macrame: "dame una historia",
 };
 // Cada mixto alterna estos dos tipos (igual que MIXED_TYPES en batch_pipeline.py).
@@ -3002,7 +3001,7 @@ function renderGamingJob(job) {
     $("gaming-caption").value = job.caption || "";
     // YouTube solo para clips (Short); por defecto marcado.
     $("gaming-youtube").checked = isClip;
-    $("gaming-instagram").checked = jobType !== "howbig_image";
+    $("gaming-instagram").checked = jobType !== "everyday_image";
     checkGamingYoutube(isClip);
     if (isClip && !isReel) loadGamingGames();  // la generación del clip actualizó la lista de juegos
   }
@@ -3010,7 +3009,7 @@ function renderGamingJob(job) {
   for (const key of Object.keys(GAMING_NETWORKS)) {
     const st = (job.networks[key] || {}).status;
     const locked = st === "waiting" || st === "running" || st === "done";
-    const facebookOnly = jobType === "howbig_image" && key !== "facebook";  // How Big Really: solo Facebook
+    const facebookOnly = jobType === "everyday_image" && key !== "facebook";  // Everyday Explained: solo Facebook
     $(`gaming-${key}`).disabled = locked || facebookOnly;
     if (locked || facebookOnly) $(`gaming-${key}`).checked = false;
   }
@@ -3039,7 +3038,7 @@ async function pollGamingJob() {
   if (job.status === "generating" || busy) gamingPollTimer = setTimeout(pollGamingJob, 3000);
 }
 
-const GAMING_START_KIND = { ninio_image: "ninio", macrame_image: "macrame", historias_image: "historias", howbig_image: "howbig" };
+const GAMING_START_KIND = { ninio_image: "ninio", macrame_image: "macrame", historias_image: "historias", everyday_image: "everyday" };
 async function startGamingPost(pageName, triggerMessage, type, withVideo = false) {
   $("pipeline-start-btn").disabled = true;
   let started = false;
@@ -3432,6 +3431,7 @@ function _loteVideoRowHtml(v, project) {
       <div class="lote-main">
         <span class="lote-badge ${badge[0]}">${badge[1]}</span>
         ${detail ? `<div class="lote-detail">${detail}</div>` : ""}${extra}
+        ${typeof v.hook_score === "number" ? `<div class="lote-detail" title="Puntaje del gancho (youtube-agent-skill): 72+ fuerte, 55+ aceptable">Gancho ${v.hook_score}/100 · ${v.hook_score >= 72 ? "fuerte" : v.hook_score >= 55 ? "aceptable" : "flojo"}${v.hook_formula ? " · " + _escapeHtml(v.hook_formula) : ""}</div>` : ""}
       </div>
       <div class="lote-nets">${_loteNetSchedule(v, project)}</div>
       <div class="lote-act">${action}${
@@ -3563,7 +3563,8 @@ $("lote-orientation").addEventListener("change", () => updateDurationOptions("lo
 updateDurationOptions("pipeline-orientation", "pipeline-duration");
 updateDurationOptions("lote-orientation", "lote-duration");
 
-let loteIgSaved = null; // casilla de Instagram antes de elegir How Big Really (se restaura al cambiar de tipo)
+
+let loteIgSaved = null; // casilla de Instagram antes de elegir un tipo solo-Facebook (se restaura al cambiar de tipo)
 function updateLoteTypeVisibility() {
   const type = $("lote-type").value;
   const isGaming = isPostType(type);
@@ -3576,10 +3577,10 @@ function updateLoteTypeVisibility() {
   const noYoutube = isImagePostType(type);
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
   $("lote-yt").closest("label").style.display = noYoutube ? "none" : "";
-  // How Big Really: solo Facebook (Instagram bloqueado y desmarcado) y horario automático por fases.
-  const howbig = type === "howbig_image";
-  $("lote-howbig-note").style.display = howbig ? "" : "none";
-  if (howbig) {
+  // Everyday Explained: solo Facebook (Instagram bloqueado y desmarcado).
+  const fbOnly = type === "everyday_image";
+  $("lote-everyday-note").style.display = fbOnly ? "" : "none";
+  if (fbOnly) {
     if (loteIgSaved === null) loteIgSaved = $("lote-ig").checked;
     $("lote-fb").checked = true;
     $("lote-ig").checked = false;
@@ -3587,8 +3588,7 @@ function updateLoteTypeVisibility() {
     $("lote-ig").checked = loteIgSaved;
     loteIgSaved = null;
   }
-  $("lote-ig").disabled = howbig;
-  // placeholder removed
+  $("lote-ig").disabled = fbOnly;
 }
 $("lote-type").addEventListener("change", updateLoteTypeVisibility);
 updateLoteTypeVisibility();
@@ -3614,7 +3614,7 @@ $("lote-create-btn").addEventListener("click", async () => {
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
-  if (contentType !== "howbig_image" && $("lote-ig").checked) networks.instagram = { page_id: pageId };
+  if (contentType !== "everyday_image" && $("lote-ig").checked) networks.instagram = { page_id: pageId };
   if (!isImagePostType(contentType) && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
@@ -5902,10 +5902,9 @@ def _run_gaming_generate(job_id: str, page_name: str, trigger_message: str,
         logger.exception("gaming %s: fallo la generacion", job_id)
         _gaming_update(job_id, status="error", stage=None, error=str(e))
         return
-    template = post.get("template", template)  # How Big Really: la plantilla del tema elegido, no la sorteada
     batch_pipeline._append_gaming_history({
         "project_id": "manual", "index": 0, "hook": post["hook"], "idea": post["idea"],
-        "template": template, "topic_id": post.get("topic_id"), "created_at": datetime.now().isoformat(),
+        "template": template, "created_at": datetime.now().isoformat(),
     }, profile["history_store"])
     _gaming_update(
         job_id, status="ready", stage=None, error=None, hook=post["hook"], top=post["top"],
@@ -6017,7 +6016,7 @@ def api_gaming_start():
     kind = "clip" if data.get("kind") in ("clip", "reel") else "image"
     # Los posts de imagen son de un nicho: gaming (default) o niño selectivo.
     profile_key = {"ninio": "ninio_image", "macrame": "macrame_image", "historias": "historias_image",
-                   "howbig": "howbig_image", "meme": "gaming_meme"}.get(
+                   "everyday": "everyday_image", "meme": "gaming_meme"}.get(
         data.get("kind"), "gaming_image")
     if reel:
         profile_key = "gaming_reel"
@@ -6237,10 +6236,10 @@ def api_gaming_publish():
         job = _gaming_jobs.get(job_id)
         if not job:
             return jsonify({"ok": False, "error": "Post no encontrado."}), 404
-        if job.get("profile") == "howbig_image":
-            networks = [n for n in networks if n == "facebook"]  # How Big Really: solo Facebook
+        if batch_pipeline._facebook_only(job.get("profile") or ""):
+            networks = [n for n in networks if n == "facebook"]  # Everyday Explained: solo Facebook
             if not networks:
-                return jsonify({"ok": False, "error": "How Big Really se publica solo en Facebook."}), 400
+                return jsonify({"ok": False, "error": "Everyday Explained se publica solo en Facebook."}), 400
         if "youtube" in networks and job.get("kind") != "clip":
             return jsonify({"ok": False, "error": "YouTube es solo para clips de video, no para posts de imagen."}), 400
         # Solo la imagen de Instagram se descarga por el tunel; el clip se sube directo.
@@ -6914,9 +6913,9 @@ def api_batch_create():
     networks = data.get("networks") or {}
     if image_profile:
         networks = {k: v for k, v in networks.items() if k != "youtube"}  # YouTube solo para clips
-    if content_type == "howbig_image" and not networks.get("facebook"):
+    if batch_pipeline._facebook_only(content_type) and not networks.get("facebook"):
         # create_project descarta Instagram/YouTube de este tipo; sin Facebook no quedaria ninguna red.
-        return jsonify({"ok": False, "error": "How Big Really se publica solo en Facebook: activa Facebook."})
+        return jsonify({"ok": False, "error": "Everyday Explained se publica solo en Facebook: activa Facebook."})
     video_settings = data.get("video_settings") or {}
     voice_error = _voice_error(video_settings.get("voice"))
     if voice_error:

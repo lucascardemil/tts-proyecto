@@ -20,6 +20,13 @@ ALL OUTPUT IS IN ENGLISH (idea, hook, headline, caption, hashtags).
   sentences in the caption body.
 - No insults, politics or controversies about people.
 
+## HEADLINE (TOP) AND HOOK
+- Put the surprising fact or the figure FROM THE DATA first, or a named thing; never a calculation question and never a vague word (amazing, incredible, insane, huge, secret, ultimate).
+- The caption's first line is the first thing seen in the feed: it must confirm the headline and open a question the reader wants closed.
+- A leak or rumor is called a leak or rumor in the headline itself.
+Hook formulas you can choose from (pick one; ignore any that need data you do not have):
+{{HOOK_FORMULAS}}
+
 ## OUTPUT FORMAT (mandatory, in this exact order, nothing before IDEA:)
 
 IDEA: one sentence summarizing the news.

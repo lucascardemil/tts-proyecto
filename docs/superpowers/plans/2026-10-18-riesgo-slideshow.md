@@ -392,7 +392,7 @@ Expected: todo PASS.
 ## Riesgos
 
 - **Umbrales sin calibrar con videos reales.** Los valores (6 s/12 s de hold, 5 s/10 s por escena, 50 % de video) son una primera estimación. Un video Luna de ~42 s con 5 escenas de ~8 s queda "strong" (≈1.4); uno con `animate_images` apagado y sin clips de video queda en "revise". Si las alertas salen demasiado o muy pocas, se ajustan las constantes de `slideshow_risk.py` sin tocar nada más.
-- **Solo videos.** Los posts de imagen (howbig, niño selectivo, etc.) no pasan por `build_props`, así que no tienen puntaje.
+- **Solo videos.** Los posts de imagen (niño selectivo, etc.) no pasan por `build_props`, así que no tienen puntaje.
 - **Los videos ya generados no tienen puntaje** (campo ausente → sin alerta). Solo aplica a los que se generen desde ahora.
 
 ## Self-Review

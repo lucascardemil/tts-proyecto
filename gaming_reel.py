@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import gaming_news
+import hook_craft
 import video_maker
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ IMAGE_STYLE = ("Vertical 9:16, cinematic, dark moody lighting, high detail, no t
                "no user interface, no watermark.")
 BG_FADE_FRAMES = 15
 SCRIPT_ATTEMPTS = 3
+YT_TITLE_MAX = hook_craft.DESKTOP  # titulo de Shorts: la busqueda de escritorio corta cerca de 60
+MAX_HOOK_ON_SCREEN_WORDS = 10
 DEFAULT_VOICE = "en_us_hombre"
 DEFAULT_SUBTITLE_PRESET = "hormozi"
 KIND = "gaming_reel"  # prompts/gaming_reel_system.md
@@ -70,6 +73,8 @@ _SCENE_RE = re.compile(r"^\s*SCENE\s*(\d+)\s*\|(.*)$", re.MULTILINE | re.IGNOREC
 _VALUE_RE = re.compile(r"^([$€£]?)\s*(\d[\d,]*(?:\.\d+)?)\s*([A-Za-z%+ ]{0,12}?)$")
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _IMAGE_RE = re.compile(r"^\s*IMAGE\s*\d+\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_HOOK_OPTIONS_RE = re.compile(r"^[ \t]*HOOK_OPTIONS:[ \t]*\n(.*?)(?=^[ \t]*HOOK:)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+_HOOK_OPTION_RE = re.compile(r"^\s*(?:\d+\s*[.):-]\s*)?(.+?)\s*\|\s*(.+?)\s*$")
 
 
 def _alnum(text: str) -> str:
@@ -139,10 +144,48 @@ def _build_scene(n: int, kind: str, on_screen: str, value: str, narration: str, 
     return scene
 
 
-def parse_reel_script(text: str, source: str) -> dict:
+def _split_hook_options(text: str) -> tuple:
+    """([(en_pantalla, hablada), ...], texto sin el bloque HOOK_OPTIONS). Las lineas mal formadas se ignoran."""
+    m = _HOOK_OPTIONS_RE.search(text)
+    if not m:
+        return [], text
+    options = []
+    for line in m.group(1).splitlines():
+        om = _HOOK_OPTION_RE.match(line)
+        if om:
+            options.append((om.group(1).strip().strip("«»\"“”"), om.group(2).strip().strip("«»\"“”")))
+    return options, text[:m.start()] + text[m.end():]
+
+
+def _choose_hook(options: list, scenes: list, known: set, strict: bool) -> dict:
+    """Elige el mejor gancho entre las opciones del modelo y el que ya trae la escena 1 (hook_craft.rank_hooks) y lo deja
+    en la escena 1 (texto en pantalla + frase hablada). Una opcion con digitos en la frase hablada, cifras que no estan
+    en la noticia o largo fuera de rango se descarta. Con `strict`, si ni el mejor llega al minimo se rechaza el guion
+    con la critica para que el modelo reescriba (en el ultimo intento se acepta el mejor)."""
+    first = scenes[0]
+    candidates = {first["narration"]: first["text"]}
+    for on_screen, spoken in options:
+        words = len(spoken.split())
+        if (not on_screen or not spoken or re.search(r"\d", spoken) or words > MAX_SCENE_WORDS
+                or len(on_screen.split()) > MAX_HOOK_ON_SCREEN_WORDS
+                or any(_digits_key(n) not in known for n in _NUMBER_RE.findall(on_screen))):
+            continue
+        candidates.setdefault(spoken, on_screen)
+    ranked = hook_craft.rank_hooks(list(candidates), "en")
+    if strict and options:
+        problem = hook_craft.critique(ranked, "en")
+        if problem:
+            raise ReelError(problem)
+    best = ranked[0]
+    first["narration"], first["text"] = best["hook"], candidates[best["hook"]]
+    return best
+
+
+def parse_reel_script(text: str, source: str, strict_hooks: bool = False) -> dict:
     """Valida la respuesta del modelo contra la noticia (`source` = titular + resumen + articulo).
     Devuelve {hook, title, caption, scenes, narration}; ReelError si algo no cumple."""
     cleaned = (text or "").replace("**", "").strip()
+    options, cleaned = _split_hook_options(cleaned)
     m = _SECTIONS_RE.search(cleaned)
     if not m:
         raise ReelError("la respuesta no viene en el formato HOOK / TITLE / CAPTION / SCENE")
@@ -169,6 +212,9 @@ def parse_reel_script(text: str, source: str) -> dict:
     scenes = [_build_scene(n, kind, on_screen, value, narration, source, known)
               for n, kind, on_screen, value, narration in raw]
     images = [i for i in _IMAGE_RE.findall(rest) if len(i.split()) >= MIN_IMAGE_WORDS][:MAX_BACKGROUNDS]
+    best = _choose_hook(options, scenes, known, strict_hooks)
+    if options:
+        hook = scenes[0]["text"]
     narration = " ".join(s["narration"] for s in scenes)
     words = len(narration.split())
     if not MIN_WORDS <= words <= MAX_WORDS:
@@ -178,7 +224,7 @@ def parse_reel_script(text: str, source: str) -> dict:
     if len(caption.splitlines()) < 4 or "source:" not in caption.lower():
         raise ReelError("el caption debe traer titular, explicacion, pregunta, fuente y hashtags")
     return {"hook": hook, "title": title[:100], "caption": caption, "scenes": scenes, "narration": narration,
-            "images": images}
+            "images": images, "hook_score": best["verdict"], "hook_formula": best["formula"]}
 
 
 # ---- tiempos y props -------------------------------------------------------------------------------------------------
@@ -245,7 +291,7 @@ def youtube_seo(parsed: dict) -> dict:
     """Titulo, descripcion y tags de YouTube Shorts a partir del guion."""
     tags = [t.lstrip("#") for t in re.findall(r"#\w+", parsed["caption"])][:8]
     body = re.sub(r"(?:\s*#\w+)+\s*$", "", parsed["caption"]).strip()
-    return {"title": parsed["title"][:95], "description": body + "\n\n#Shorts #gamingnews",
+    return {"title": hook_craft.trim_title(parsed["title"], YT_TITLE_MAX), "description": body + "\n\n#Shorts #gamingnews",
             "tags": tags + ["gaming news", "video game news"]}
 
 
@@ -278,7 +324,7 @@ def write_script(item: dict, text_fn: Callable[[str], str]) -> dict:
     for attempt in range(1, SCRIPT_ATTEMPTS + 1):
         message = base + (f"\n\nYour previous answer was rejected: {problem}. Fix exactly that." if problem else "")
         try:
-            return parse_reel_script(text_fn(message), source)
+            return parse_reel_script(text_fn(message), source, strict_hooks=attempt < SCRIPT_ATTEMPTS)
         except ReelError as e:
             problem = str(e)
             logger.warning("gaming_reel: guion rechazado (intento %d/%d): %s", attempt, SCRIPT_ATTEMPTS, e)
@@ -339,6 +385,6 @@ def generate_gaming_reel(job_key: str, text_fn: Callable[[str], str],
         gaming_news.mark_used(item)
         return {"video_path": str(out_path), "title": parsed["title"], "caption": parsed["caption"],
                 "hook": parsed["hook"], "news_link": item["link"], "youtube": youtube_seo(parsed),
-                "images": len(backgrounds)}
+                "images": len(backgrounds), "hook_score": parsed["hook_score"], "hook_formula": parsed["hook_formula"]}
     finally:
         shutil.rmtree(folder, ignore_errors=True)

@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Callable, Optional
 
+import hook_craft
 import text_provider
 
 SCRIPT_DIR = Path(__file__).parent
@@ -43,7 +44,15 @@ def _text_system_prompt(kind: str) -> str:
     prompt = (_PROMPTS_DIR / f"{kind}_system.md").read_text(encoding="utf-8")
     if kind in PILARES_KINDS:
         prompt += "\n\n" + (_PROMPTS_DIR / "_pilares_de_valor.md").read_text(encoding="utf-8")
+    hook_lang = HOOK_KINDS.get(kind)
+    if hook_lang == "es":  # los guiones en espanol suman las reglas de gancho/Shorts; los ingleses las traen en su prompt
+        prompt += "\n\n" + (_PROMPTS_DIR / "_ganchos_shorts.md").read_text(encoding="utf-8")
+    if hook_lang:
+        prompt = prompt.replace("{{HOOK_FORMULAS}}", hook_craft.formulas_block(hook_lang))
     return prompt
+
+# Prompts que llevan las formulas de gancho de youtube-agent-skill (hook_craft.formulas_block) y su idioma.
+HOOK_KINDS = {"gaming_reel": "en", "gaming_news": "en", "historias": "es", "macrame": "es", "ninio_selectivo": "es"}
 
 # Guiones largos que llevan "pilares de valor" (prueba tras el gancho + micro-promesas).
 # Hoy ninguno: HISTORIAS usa un formato fijo de ~90 s con su propia estructura (prompts/historias_system.md).
@@ -170,7 +179,6 @@ import gaming_clip
 import gaming_reel
 import gaming_news
 import gaming_memes
-import howbig
 import job_store
 import meme_maker
 import seo_optimizer
@@ -204,16 +212,6 @@ BATCH_MIN_GAP_SECONDS = 3600
 BATCH_HOUR_START = 9
 BATCH_HOUR_END = 21  # inclusive: las 21:00 en punto es el ultimo horario
 
-# How Big Really: horario por fase desde el primer lote de la pagina, en HORA DEL ESTE de EE. UU. (se convierte a la
-# hora local dia por dia, ver us_hours_for_date). Dias 1-14: 3 posts al dia (11:00, 15:00, 20:00); desde el dia 15:
-# 2 al dia (11:00 y 20:00). Las 20:00 del Este pueden caer pasadas las 21 locales, fuera del rango general 9-21,
-# asi que esta pagina usa su propio tope local (HOWBIG_HOUR_END).
-HOWBIG_PHASE1_DAYS = 14
-HOWBIG_PHASE1_HOURS = [11, 15, 20]
-HOWBIG_PHASE2_HOURS = [11, 20]
-HOWBIG_HOUR_END = 22
-HOWBIG_LAUNCH_STORE = "howbig_launch"
-
 # Las horas de los posts de imagen (*_SLOT_HOURS) estan en HORA DEL ESTE de EE. UU. (publico objetivo) y se convierten
 # a la hora local dia por dia (ver us_hours_for_date).
 # Posts de imagen gaming (Workflow JugadasEpicasVideojuegos, sec. 4): Facebook
@@ -221,6 +219,13 @@ HOWBIG_LAUNCH_STORE = "howbig_launch"
 # antes (11:00 y 18:00, via network_offsets del proyecto).
 GAMING_SLOT_HOURS = [12, 19]
 GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_at
+# Posts de imagen de "Everyday Explained" (infografias educativas en ingles, solo Facebook): 11:00 y 19:00 hora del Este.
+EVERYDAY_SLOT_HOURS = [11, 19]
+EVERYDAY_TEMPLATES = {"E1": "Explainer"}  # una sola plantilla: el modelo elige el tema
+EVERYDAY_WEEK = [("E1", "E1")] * 7
+EVERYDAY_TOP_MAX_WORDS = 6
+EVERYDAY_BOTTOM_MAX_WORDS = 12
+EVERYDAY_HASHTAGS = (3, 5)
 GAMING_MEME_SLOT_HOURS = [14, 17]  # memes de Memedroid (hora del Este): entre los posts de las 12 y las 19; sin pasar de las 21 locales
 # Plantillas de la "semana tipo" (sec. 2 y 4): [slot del mediodia, slot de la
 # noche] por dia, lunes=0. Domingo solo trae T1 en el workflow; el segundo
@@ -385,6 +390,46 @@ def _split_hook_text(story_text: str) -> tuple:
         return "", story_text
     hook = match.group(1).strip().strip("«»\"“”*")
     return hook, _HOOK_TEXT_LINE.sub("", story_text, count=1)
+
+
+_HOOK_OPTIONS_BLOCK = re.compile(r"^[ \t]*GANCHOS:[ \t]*\n((?:[ \t]*\d+[.)][^\n]*(?:\n|\Z)){2,8})", re.MULTILINE)
+_HOOK_OPTION_LINE = re.compile(r"^[ \t]*\d+[.)][ \t]*(.+?)[ \t]*$", re.MULTILINE)
+HOOK_MIN_GAIN = 10  # puntos que debe ganarle la opcion elegida a la primera frase original para reemplazarla
+HOOK_MAX_WORD_DELTA = 8  # el guion largo se valida por palabras: la frase nueva no puede cambiar mucho el largo
+
+
+def _split_hook_options(text: str) -> tuple:
+    """([primeras frases alternativas], texto sin el bloque `GANCHOS:` numerado). Se quita SIEMPRE del texto: si quedara,
+    el parser lo metería dentro de la ficha de personajes o de un prompt de imagen."""
+    m = _HOOK_OPTIONS_BLOCK.search(text)
+    if not m:
+        return [], text
+    options = [o.strip().strip("«»\"“”*") for o in _HOOK_OPTION_LINE.findall(m.group(1))]
+    return [o for o in options if o], text[:m.start()] + text[m.end():]
+
+
+def _first_sentence(script: str) -> str:
+    parts = re.split(r"(?<=[.!?…])\s+", (script or "").strip(), maxsplit=1)
+    return parts[0].strip() if parts else ""
+
+
+def _apply_best_hook(story_text: str, options: list, lang: str = "es") -> tuple:
+    """Elige entre la primera frase del guion y las alternativas del modelo (hook_craft.rank_hooks) y, si una gana por
+    HOOK_MIN_GAIN puntos, la pone en el lugar de la original en TODO el texto (guion y "Frase del guion" de la imagen 1,
+    que deben seguir coincidiendo). Devuelve (texto, {hook, hook_score, hook_formula} | None si no hubo nada que puntuar)."""
+    original = _first_sentence(auto_pipeline.extract_script(story_text))
+    if not options or not original or original not in story_text:
+        return story_text, None
+    ranked = hook_craft.rank_hooks([original] + [o for o in options if o != original], lang)
+    base = next(r for r in ranked if r["hook"] == original)
+    best = ranked[0]
+    keep = (best["hook"] == original or best["verdict"] - base["verdict"] < HOOK_MIN_GAIN
+            or abs(len(best["hook"].split()) - len(original.split())) > HOOK_MAX_WORD_DELTA
+            or re.search(r"[\n|]", best["hook"]))
+    chosen = base if keep else best
+    if not keep:
+        story_text = story_text.replace(original, best["hook"])
+    return story_text, {"hook": chosen["hook"], "hook_score": chosen["verdict"], "hook_formula": chosen["formula"]}
 
 
 def _rescue_history_block() -> str:
@@ -653,26 +698,6 @@ def _next_free_reschedule_slot(projects: dict, exclude: tuple, base_dt: datetime
     return slot
 
 
-def howbig_hours_for_date(day, launch) -> list:
-    """Horas LOCALES de publicacion de How Big Really para `day`: fase 1 (3 al dia) los primeros
-    HOWBIG_PHASE1_DAYS dias desde `launch` (fecha del primer lote de la pagina), despues fase 2 (2 al dia)."""
-    et_hours = HOWBIG_PHASE1_HOURS if (day - launch).days < HOWBIG_PHASE1_DAYS else HOWBIG_PHASE2_HOURS
-    return us_hours_for_date(day, et_hours, HOWBIG_HOUR_END)
-
-
-def _howbig_launch_date():
-    """Fecha del primer lote de How Big Really: se guarda (hoy) la primera vez y de ahi en mas es fija.
-    Llamar bajo `_lock` para que dos lotes simultaneos no la pisen."""
-    saved = (job_store.load(HOWBIG_LAUNCH_STORE) or {}).get("date")
-    try:
-        return datetime.fromisoformat(str(saved)).date()
-    except (TypeError, ValueError):
-        pass
-    today = datetime.now().date()
-    job_store.save(HOWBIG_LAUNCH_STORE, {"date": today.isoformat()})
-    return today
-
-
 def _free_slot(desired: datetime, taken: list, rescue: bool = False, hour_end: int = BATCH_HOUR_END) -> datetime:
     """Primer horario libre a partir de `desired`, dentro de 9:00-`hour_end`:00 (por defecto 21:00) y a no menos de
     BATCH_MIN_GAP_SECONDS de cualquier publicacion ya hecha o programada (`taken`). Ese dia se prueba
@@ -761,12 +786,12 @@ def _compute_schedule(total: int, per_day: int, best_hour: Optional[int], rescue
     (skip_days=1 = publicar cada 2 dias).
     Con `taken` (horarios ya ocupados de la pagina, ver existing_slots) cada publicacion se corre al
     primer horario libre del rango 9-21 h (ver _free_slot) para no pisar ni duplicar las existentes.
-    Con `hours_for_date` (fecha -> lista de horas, p. ej. howbig_hours_for_date) el reparto es por calendario:
+    Con `hours_for_date` (fecha -> lista de horas) el reparto es por calendario:
     desde hoy, cada dia usa sus propias horas en orden, saltando las que ya pasaron (antes de ahora + el
     adelanto minimo) en vez de correr el lote, y sin pasar del tope del dia (cantidad de horas de ese dia menos lo
     que `taken` ya tiene en esa fecha; un dia lleno se salta, y las horas a menos de BATCH_MIN_GAP_SECONDS de un
     horario ocupado no se usan); `per_day`/`skip_days`/`fixed_hours` no se usan. `hour_end` es
-    el tope horario de _free_slot (How Big Really publica hasta las 22:00).
+    el tope horario de _free_slot.
     Con `us_audience` las horas del dia son las franjas del Este de EE. UU. (`et_hours`, por defecto
     US_SLOT_HOURS_ET; ver us_hours_for_date) en vez de los DAYPARTS/best_hour/rescate/fixed_hours.
     Devuelve `total` timestamps ISO."""
@@ -911,15 +936,15 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     se manda al generador de texto para pedir la historia.
 
     content_type: "video" (default, el pipeline completo guion+clips+audio+
-    render), "gaming_image" / "ninio_image" / "howbig_image" (un solo post de imagen 4:5 + caption;
+    render), "gaming_image" / "ninio_image" / "everyday_image" (un solo post de imagen 4:5 + caption;
     ver IMAGE_POST_PROFILES, _generate_batch_image_post/_publish_batch_image_post)
     o "gaming_clip" (clip viral de Medal editado en vertical, ver
     _generate_batch_clip) -- YouTube solo para el clip (canal de gaming)."""
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     every_n_days = min(30, max(1, int(every_n_days or 1)))
-    if content_type == "howbig_image":
-        # How Big Really publica solo en Facebook: punto unico por el que pasa todo lote (la ruta, reintentos...).
+    if _facebook_only(content_type):
+        # Solo Facebook: punto unico por el que pasa todo lote (la ruta, reintentos...).
         networks = {k: v for k, v in (networks or {}).items() if k == "facebook"}
     mixed = MIXED_TYPES.get(content_type)
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
@@ -947,25 +972,13 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     youtube_on = bool(networks.get("youtube"))
     rescue_skip = 1 if (youtube_on and content_type == "video" and page_name.strip().upper() == RESCUE_PAGE_NAME) else 0
     skip_days = max(rescue_skip, every_n_days - 1)  # cada N dias = N-1 dias vacios entre publicaciones
-    if content_type == "howbig_image":
-        # Horario por fase (dias 1-14: 3 al dia; despues 2 al dia), ver howbig_hours_for_date.
-        per_day = len(HOWBIG_PHASE1_HOURS)
-        with _lock:
-            launch = _howbig_launch_date()
-        schedule = _compute_schedule(
-            total_videos, per_day, best_hour,
-            taken=existing_slots(page_name, networks),
-            hours_for_date=lambda day: howbig_hours_for_date(day, launch),
-            hour_end=HOWBIG_HOUR_END,
-        )
-    else:
-        schedule = _compute_schedule(
-            total_videos, per_day, best_hour, rescue=rescue,
-            skip_days=skip_days,
-            taken=existing_slots(page_name, networks),
-            us_audience=True,
-            et_hours=et_hours,  # None = las dos franjas generales (12:00 y 19:00 del Este)
-        )
+    schedule = _compute_schedule(
+        total_videos, per_day, best_hour, rescue=rescue,
+        skip_days=skip_days,
+        taken=existing_slots(page_name, networks),
+        us_audience=True,
+        et_hours=et_hours,  # None = las dos franjas generales (12:00 y 19:00 del Este)
+    )
 
     project = {
         "id": uuid.uuid4().hex[:10],
@@ -1349,6 +1362,10 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             stage_label="guion",
         )
         hook_text = ""
+        hook_info = None
+        if HOOK_KINDS.get(_text_kind_for_page(_project_page_name(project))) == "es":
+            hook_options, story_text = _split_hook_options(story_text)
+            story_text, hook_info = _apply_best_hook(story_text, hook_options)
         if rescue:
             hook_text, story_text = _split_hook_text(story_text)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
@@ -1520,6 +1537,8 @@ def _generate_batch_video(project_id: str, index: int) -> None:
             "attempt": narration.get("attempt"), "skipped": narration.get("skipped", False),
         }
         v["script_text"] = script_text
+        if hook_info:
+            v["hook_score"], v["hook_formula"] = hook_info["hook_score"], hook_info["hook_formula"]
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -1586,6 +1605,17 @@ IMAGE_POST_PROFILES = {
         "max_hashtags": {"instagram": GAMING_MAX_HASHTAGS["instagram"], "facebook": GAMING_MAX_HASHTAGS["facebook"]},
         "default_trigger": "dame el próximo meme de videojuegos", "label": "Meme gaming",
     },
+    "everyday_image": {
+        "kind": "everyday_post",  # prompts/everyday_post_system.md: infografias educativas (Everyday Explained), en ingles
+        "templates": EVERYDAY_TEMPLATES, "week": EVERYDAY_WEEK,
+        "slot_hours": EVERYDAY_SLOT_HOURS, "network_offsets": {},
+        "history_store": "everyday_post_history",
+        "composition": "", "text_fill": (255, 211, 78),
+        "ai_design": "infographic",  # la IA dibuja la infografia completa con su titular y su respuesta
+        "facebook_only": True,
+        "max_hashtags": {"instagram": 0, "facebook": EVERYDAY_HASHTAGS[1]},
+        "default_trigger": "give me the next Everyday Explained post", "label": "Post Everyday Explained",
+    },
     "ninio_image": {
         "kind": "ninio_post",  # prompts/ninio_post_system.md
         "templates": NINIO_TEMPLATES, "week": NINIO_WEEK,
@@ -1631,18 +1661,12 @@ IMAGE_POST_PROFILES = {
         "max_hashtags": {"instagram": 6, "facebook": 3},
         "default_trigger": "dame el próximo post de macramé", "label": "Post macramé",
     },
-    "howbig_image": {
-        "kind": "howbig_post",  # prompts/howbig_post_system.md: comparaciones de escala (How Big Really), en ingles
-        "templates": howbig.TEMPLATE_LABELS, "week": None,  # la plantilla se sortea (howbig.pick_template), no hay semana tipo
-        "slot_hours": list(HOWBIG_PHASE1_HOURS), "network_offsets": {},
-        "history_store": "howbig_post_history",
-        "composition": "", "text_fill": (255, 255, 255),
-        "ai_design": "scale",  # Flow dibuja la ilustracion vectorial con su titulo; fondo negro #0A0A0A intencional
-        "topics": True,  # cada post sale de un tema del banco (assets/howbig/topics.json), nunca inventado
-        "max_hashtags": {"instagram": 0, "facebook": 1},
-        "default_trigger": "give me the next How Big Really post", "label": "Post How Big Really",
-    },
 }
+
+
+def _facebook_only(content_type: str) -> bool:
+    """Perfiles de una pagina que solo publica en Facebook (p. ej. Everyday Explained)."""
+    return bool((IMAGE_POST_PROFILES.get(content_type) or {}).get("facebook_only"))
 
 
 def _hex(rgb: tuple) -> str:
@@ -1763,24 +1787,44 @@ def _ai_meme_layout(post: dict) -> str:
     )
 
 
-def _ai_scale_layout(post: dict) -> str:
-    """Sufijo (en ingles) para el prompt de Flow en How Big Really: todo dentro del 90 % central del
-    cuadro y el titulo escrito tal cual (sin comillas dobles dentro del titulo)."""
-    title = (post.get("top") or "").strip().replace('"', "'")
+EVERYDAY_ART_STYLE = (
+    "Hyperrealistic premium 3D educational illustration, deep navy blue (#14283E) and bright yellow (#FFD34E) accents "
+    "with white and light blue highlights, dramatic lighting, high contrast, clean composition with generous negative "
+    "space, one large clear subject. Landscape-friendly framing with every element inside the central 90% of the frame."
+)
+
+
+def _ai_infographic_layout(post: dict) -> str:
+    """Sufijo (en ingles) para el prompt de la ilustracion de Everyday Explained. La IA NO escribe texto: el titular y la
+    respuesta se componen despues con meme_maker.render_infographic (los generadores deletrean mal)."""
     return (
-        " Keep every element inside the central 90% of the frame, nothing near the edges. "
-        f'The title text must be spelled exactly as written: "{title}". '
-        "No other text, no logos, no watermark."
+        f" {EVERYDAY_ART_STYLE} IMPORTANT: absolutely no text, no letters, no numbers, no captions, no labels, no signs, "
+        "no logos, no watermark anywhere in the image; show the idea only with objects, lighting, arrows and simple "
+        "visual cues."
     )
 
 
+def _validate_everyday_post(post: dict) -> None:
+    """Reglas del formato de Everyday Explained: titular <= 6 palabras, respuesta <= 12, caption con pregunta y 3-5 hashtags.
+    PipelineError (reintentable) si algo no cumple."""
+    top_words, bottom_words = len((post.get("top") or "").split()), len((post.get("bottom") or "").split())
+    if not 1 <= top_words <= EVERYDAY_TOP_MAX_WORDS:
+        raise auto_pipeline.PipelineError(f"Everyday Explained: el titular debe tener 1-{EVERYDAY_TOP_MAX_WORDS} palabras y tiene {top_words}")
+    if not 1 <= bottom_words <= EVERYDAY_BOTTOM_MAX_WORDS:
+        raise auto_pipeline.PipelineError(f"Everyday Explained: la respuesta debe tener 1-{EVERYDAY_BOTTOM_MAX_WORDS} palabras y tiene {bottom_words}")
+    caption = post.get("caption") or ""
+    tags = re.findall(r"#\w+", caption)
+    if not EVERYDAY_HASHTAGS[0] <= len(tags) <= EVERYDAY_HASHTAGS[1]:
+        raise auto_pipeline.PipelineError(
+            f"Everyday Explained: el caption debe llevar {EVERYDAY_HASHTAGS[0]}-{EVERYDAY_HASHTAGS[1]} hashtags y lleva {len(tags)}")
+    if "?" not in caption:
+        raise auto_pipeline.PipelineError("Everyday Explained: el caption debe cerrar con una pregunta para comentar")
+
+
 def _image_post_template(profile_key: str, scheduled_at: Optional[str]) -> str:
-    """Plantilla del post. Con `topics` en el perfil, la sortea howbig.pick_template (ponderada, nunca la
-    misma que la ultima); con `rotate`, la que lleva mas tiempo sin usarse (historial);
+    """Plantilla del post. Con `rotate`, la que lleva mas tiempo sin usarse (historial);
     si no, la de la semana tipo que le toca a este horario."""
     profile = IMAGE_POST_PROFILES[profile_key]
-    if profile.get("topics"):
-        return howbig.pick_template([e.get("template") for e in _load_gaming_history(profile["history_store"])])
     if profile.get("rotate"):
         recent = [e.get("template") for e in _load_gaming_history(profile["history_store"])]
         last = {t: max((i for i, r in enumerate(recent) if r == t), default=-1) for t in profile["templates"]}
@@ -1817,20 +1861,9 @@ def generate_gaming_post(
 
     _stage("idea")
     news_item = None
-    topic = None
     if profile.get("news"):  # noticia real y reciente, que no se haya publicado ya
         news_item = gaming_news.next_news()
         template_message = trigger_message + gaming_news.news_block(news_item)
-    elif profile.get("topics"):  # tema del banco: el modelo solo redacta, no inventa datos
-        used = {e.get("topic_id") for e in _load_gaming_history(profile["history_store"]) if e.get("topic_id")}
-        topic = howbig.pick_topic(template, used)  # BankExhaustedError: falla claro, antes de gastar texto o Flow
-        template = topic["template"]  # si la plantilla pedida no tenia tema libre, manda la del tema
-        template_message = (
-            trigger_message
-            + f"\n\nTemplate for this post: {template} ({profile['templates'][template]})."
-            + howbig.topic_block(topic)
-            + _gaming_history_block(store_name=profile["history_store"])
-        )
     else:
         template_message = (
             trigger_message
@@ -1853,10 +1886,8 @@ def generate_gaming_post(
         stage_label="idea",
     )
     post = _parse_gaming_post(reply)
-    if topic:
-        post["topic_id"] = topic["id"]
-        post["template"] = template
-        post["caption"] = howbig.format_caption(post["caption"], topic)
+    if profile.get("ai_design") == "infographic":
+        _validate_everyday_post(post)
 
     _stage("imagen")
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1867,7 +1898,7 @@ def generate_gaming_post(
         else _ai_story_layout(post, template, page_name) if ai_design == "story"
         else _ai_news_layout(post, news_item["source"]) if ai_design == "news"
         else _ai_meme_layout(post) if ai_design == "meme"
-        else _ai_scale_layout(post) if ai_design == "scale"
+        else _ai_infographic_layout(post) if ai_design == "infographic"
         else profile["composition"]
     )
 
@@ -1882,8 +1913,7 @@ def generate_gaming_post(
                 story, dest_dir, unattended=True, start_index=0,
                 provider=image_provider if image_provider in auto_pipeline.PROVIDERS else "whatsapp",
                 generate_video=False,
-                # Flow: posts cuadrados (los disenados por la IA); la escala va 3:4 y se ajusta a 4:5 sin recortar el fondo negro
-                aspect="3:4" if ai_design == "scale" else "1:1" if ai_design else "3:4",
+                aspect="1:1" if ai_design else "3:4",  # Flow/WanGP: cuadrado (la infografia recorta su recuadro de ahi)
             )
             Path(generated[0]).replace(base_path)
 
@@ -1893,8 +1923,8 @@ def generate_gaming_post(
         on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider == "whatsapp" else None,
         stage_label="imagen",
     )
-    if ai_design == "scale":  # ilustracion con fondo negro intencional: 4:5 sin quitar bordes oscuros
-        meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_IG, trim=False)
+    if ai_design == "infographic":  # ilustracion sin texto + titular/respuesta compuestos con la marca
+        meme_maker.render_infographic(base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG)
     elif ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
         meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_SQUARE)
     elif profile.get("card"):  # tarjeta editorial: texto en un panel, no sobre la foto
@@ -1954,7 +1984,6 @@ def _generate_batch_image_post(project_id: str, index: int) -> None:
         "hook": post["hook"],
         "idea": post["idea"],
         "template": post.get("template", template),
-        "topic_id": post.get("topic_id"),
         "created_at": datetime.now().isoformat(),
     }, profile["history_store"])
     with _lock:
@@ -2110,6 +2139,7 @@ def _generate_batch_reel(project_id: str, index: int) -> None:
         v["caption"] = reel["caption"]
         v["yt_seo"] = reel["youtube"]
         v["source_news"] = reel["news_link"]
+        v["hook_score"], v["hook_formula"] = reel.get("hook_score"), reel.get("hook_formula")
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -2348,19 +2378,12 @@ def _load_gaming_history(store_name: str = GAMING_HISTORY_STORE_NAME) -> list:
     return job_store.load(store_name).get("entries", [])
 
 
-def _history_keeps_all(store_name: str) -> bool:
-    """El historial de un perfil con banco de temas (`topics`) no se poda: de el sale la lista de temas
-    ya usados, y podarlo haria que los mas viejos volvieran a salir (y que el banco nunca se agotara).
-    Esta acotado por el tamano del banco, porque un tema agotado no genera mas posts."""
-    return any(p.get("topics") and p.get("history_store") == store_name for p in IMAGE_POST_PROFILES.values())
-
-
 def _append_gaming_history(entry: dict, store_name: str = GAMING_HISTORY_STORE_NAME) -> None:
     with _lock:
         store = job_store.load(store_name)
         entries = store.get("entries", [])
         entries.append(entry)
-        store["entries"] = entries if _history_keeps_all(store_name) else entries[-GAMING_HISTORY_MAX:]
+        store["entries"] = entries[-GAMING_HISTORY_MAX:]
         job_store.save(store_name, store)
 
 
@@ -2621,7 +2644,6 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
             old_slot = v.get("scheduled_at")
             v["scheduled_at"] = _next_free_reschedule_slot(
                 projects, (project_id, index), datetime.now() + IG_RESCHEDULE_LEAD,
-                hour_end=HOWBIG_HOUR_END if item_type(projects[project_id], v) == "howbig_image" else BATCH_HOUR_END,
             ).isoformat()
             v["status"] = "ready"
             v["publish_attempts"] = 0
@@ -2648,7 +2670,6 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                 v["scheduled_at"] = _next_free_reschedule_slot(
                     projects, (project_id, index),
                     datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS),
-                    hour_end=HOWBIG_HOUR_END if item_type(projects[project_id], v) == "howbig_image" else BATCH_HOUR_END,
                 ).isoformat()
         _save(projects)
 
@@ -3039,9 +3060,8 @@ def _recover_stuck_videos() -> None:
                         dt = datetime.fromisoformat(v["scheduled_at"])
                     except (TypeError, ValueError):
                         continue
-                    hour_end = HOWBIG_HOUR_END if item_type(project, v) == "howbig_image" else BATCH_HOUR_END
-                    if not (BATCH_HOUR_START <= dt.hour <= hour_end):
-                        clamped_hour = BATCH_HOUR_START if dt.hour < BATCH_HOUR_START else hour_end
+                    if not (BATCH_HOUR_START <= dt.hour <= BATCH_HOUR_END):
+                        clamped_hour = BATCH_HOUR_START if dt.hour < BATCH_HOUR_START else BATCH_HOUR_END
                         v["scheduled_at"] = dt.replace(
                             hour=clamped_hour, minute=0, second=0, microsecond=0
                         ).isoformat()

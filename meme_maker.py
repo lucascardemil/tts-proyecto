@@ -204,7 +204,7 @@ def _serif(candidates: tuple, px: int) -> ImageFont.FreeTypeFont:
 
 def fit_post(base_path: Path, out_path: Path, size: tuple, trim: bool = True) -> Path:
     """Imagen ya diseñada (con su texto) -> JPEG recortado al centro a `size`, sin bordes negros.
-    Con `trim=False` no se quitan los bordes oscuros (fondo negro intencional, p. ej. How Big Really):
+    Con `trim=False` no se quitan los bordes oscuros (fondo negro intencional):
     solo se recorta a la proporcion de `size`."""
     with Image.open(base_path) as base:
         img = base.convert("RGB")
@@ -276,4 +276,71 @@ def render_card(
         draw.text((w / 2, y), line, font=sub_font, fill=accent, anchor="ma")
         y += sub_font.size * 1.25
     img.save(out_path, "JPEG", quality=92)
+    return out_path
+
+
+# ---- infografia de marca (Everyday Explained) ------------------------------------------------------------------------
+# Los generadores de imagen (WanGP/Flux, Flow) escriben mal el texto dentro de la imagen ("EXPLOKE"), asi que la IA solo
+# dibuja la ilustracion y el titular y la respuesta se componen aqui, con la ortografia exacta.
+INFO_NAVY = (20, 40, 62)  # #14283E
+INFO_YELLOW = (255, 211, 78)  # #FFD34E
+INFO_LIGHT = (222, 238, 250)  # blanco azulado
+INFO_HEADER_FRAC, INFO_FOOTER_FRAC = 0.185, 0.215
+INFO_SIDE_FRAC = 0.05
+_SANS_BOLD = ("C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+
+
+def infographic_art_size(size: tuple) -> tuple:
+    """(ancho, alto) del recuadro de la ilustracion dentro de la infografia `size`."""
+    w, h = size
+    side = int(w * INFO_SIDE_FRAC)
+    return w - 2 * side, h - int(h * INFO_HEADER_FRAC) - int(h * INFO_FOOTER_FRAC)
+
+
+def _center_block(draw, lines: list, font, fill: tuple, cx: float, top: float, height: float, gap: float) -> None:
+    block = len(lines) * font.size * gap
+    y = top + (height - block) / 2
+    for line in lines:
+        draw.text((cx, y), line, font=font, fill=fill, anchor="ma")
+        y += font.size * gap
+
+
+def render_infographic(art_path: Path, headline: str, answer: str, out_path: Path, size: tuple = SIZE_IG) -> Path:
+    """JPEG `size` con la marca Everyday Explained: titular amarillo arriba, la ilustracion al centro (esquinas
+    redondeadas) y la respuesta en blanco abajo, sobre azul marino. Ortografia exacta: el texto lo dibuja Pillow."""
+    w, h = size
+    side = int(w * INFO_SIDE_FRAC)
+    head_h, foot_h = int(h * INFO_HEADER_FRAC), int(h * INFO_FOOTER_FRAC)
+    art_w, art_h = infographic_art_size(size)
+    img = Image.new("RGB", size, INFO_NAVY)
+    with Image.open(art_path) as art:
+        art = _crop_to(art.convert("RGB"), (art_w, art_h))
+    mask = Image.new("L", (art_w, art_h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, art_w - 1, art_h - 1), radius=int(w * 0.03), fill=255)
+    img.paste(art, (side, head_h), mask)
+    draw = ImageDraw.Draw(img)
+    max_w = w - 2 * side
+    pad = int(h * 0.02)
+
+    title = (headline or "").strip().upper()
+    px = int(w * 0.11)
+    while True:
+        font = _font(px)
+        lines = _wrap(draw, title, font, max_w)
+        if (len(lines) <= 2 and len(lines) * px * 1.1 <= head_h - 2 * pad) or px <= int(w * 0.05):
+            break
+        px -= 2
+    _center_block(draw, lines, font, INFO_YELLOW, w / 2, 0, head_h, 1.1)
+
+    text = (answer or "").strip()
+    px = int(w * 0.062)
+    while True:
+        font = _serif(_SANS_BOLD, px)
+        lines = _wrap(draw, text, font, max_w)
+        if (len(lines) <= 3 and len(lines) * px * 1.25 <= foot_h - 2 * pad) or px <= int(w * 0.035):
+            break
+        px -= 2
+    _center_block(draw, lines, font, INFO_LIGHT, w / 2, h - foot_h, foot_h, 1.25)
+    img.save(out_path, "JPEG", quality=94)
     return out_path

@@ -37,8 +37,9 @@ def test_no_text_is_requested_while_every_network_waits(monkeypatch):
 
 
 def test_built_text_is_saved_and_reused(monkeypatch):
-    projects = _store(monkeypatch, datetime.now() - timedelta(hours=1), {"instagram": {"page_id": "1"}},
-                      published_at={})
+    # hoy pero ya pasado (no "ayer": cerca de la medianoche now()-1h cae en el dia anterior y dispara la reprogramacion)
+    projects = _store(monkeypatch, datetime.now().replace(hour=0, minute=0, second=1, microsecond=0),
+                      {"instagram": {"page_id": "1"}}, published_at={})
     monkeypatch.setattr(bp, "get_project", lambda pid: bp._load()[pid])
     built = []
 
