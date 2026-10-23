@@ -274,3 +274,29 @@ def test_parse_story_expands_the_place_sheet_only_where_tagged(tmp_path, monkeyp
     first, second = story["prompts"][0]["prompt"], story["prompts"][1]["prompt"]
     assert "stone bench in a sunny plaza" in first and "white cat with gray patch" in first
     assert "stone bench" not in second and "white cat with gray patch" in second
+
+
+def test_a_reply_without_image_blocks_is_retried_telling_the_model_to_use_only_the_format(monkeypatch):
+    users = []
+    replies = iter(["Okay, let me think about the story... no hay formato aqui", GOOD_ANY])
+    monkeypatch.setattr(bp.text_provider, "available_backends", lambda: ["freellm:auto"])
+    monkeypatch.setattr(bp.text_provider, "model_chain", lambda: ["m1", "m2"])
+    monkeypatch.setattr(bp.text_provider, "generate_text", lambda system, user, **k: (users.append(user), (next(replies), "freellm"))[1])
+    assert bp._generate_text_with_chain("macrame", "MACRAME CREATIVO", "msg", "t") == GOOD_ANY
+    assert "Responde SOLO con el formato" in users[1] and users[0] == "msg"
+
+
+def test_an_unavailable_model_falls_through_to_the_next_model(monkeypatch):
+    calls = []
+    monkeypatch.setattr(bp.text_provider, "available_backends", lambda: ["freellm:auto"])
+    monkeypatch.setattr(bp.text_provider, "model_chain", lambda: ["m1", "m2"])
+
+    def fake(system, user, model=None, **k):
+        calls.append(model)
+        if model == "m1":
+            raise bp.text_provider.TextProviderError("freellm: modelo 'm1' no disponible en el endpoint")
+        return GOOD_ANY, "freellm"
+
+    monkeypatch.setattr(bp.text_provider, "generate_text", fake)
+    assert bp._generate_text_with_chain("macrame", "MACRAME CREATIVO", "msg", "t") == GOOD_ANY
+    assert calls == ["m1", "m2"]

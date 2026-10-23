@@ -1084,6 +1084,7 @@ HTML = r"""<!DOCTYPE html>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <input type="text" id="custom-voice-name" maxlength="60" placeholder="Nombre de la voz (ej. Mamá Laura)" style="flex:1;min-width:180px">
           <input type="file" id="custom-voice-file" accept="audio/*">
+          <select id="custom-voice-lang" title="Idioma de la voz"><option value="es">Español</option><option value="en">Inglés (para el reel de noticias)</option></select>
           <button type="button" id="custom-voice-add-btn" class="btn-sm">🎙️ Agregar voz</button>
         </div>
         <p class="pub-hint" id="custom-voice-status">Audio de 4 a 20 segundos de una sola persona, sin música ni ruido. Usa solo voces de personas que dieron su permiso para ser clonadas. También puedes copiar archivos a la carpeta voices/custom/.</p>
@@ -1130,6 +1131,7 @@ HTML = r"""<!DOCTYPE html>
       <select id="pipeline-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
+        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="pipeline-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1159,6 +1161,7 @@ HTML = r"""<!DOCTYPE html>
       <select id="pipeline-image-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
+        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="pipeline-image-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1172,7 +1175,10 @@ HTML = r"""<!DOCTYPE html>
         <div class="row-2col" style="margin-top:14px">
           <div>
             <div class="field-label-row"><label for="pipeline-reel-voice">Voz (inglés)</label></div>
-            <select id="pipeline-reel-voice"><option>Cargando...</option></select>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="pipeline-reel-voice" style="flex:1;min-width:0"><option>Cargando...</option></select>
+              <button type="button" class="btn-sm" id="pipeline-reel-voice-preview" title="Escuchar una muestra de la voz">▶ Escuchar</button>
+            </div>
           </div>
           <div>
             <div class="field-label-row"><label for="pipeline-reel-subtitle">Subtítulos — estilo</label></div>
@@ -1459,6 +1465,7 @@ HTML = r"""<!DOCTYPE html>
         <select id="lote-image-provider">
           <option value="whatsapp">WhatsApp / Meta IA</option>
           <option value="flow">Google Flow</option>
+          <option value="wan2gp">WanGP local en esta PC</option>
         </select>
         <div data-flow-box="lote-image-provider" style="display:none;margin-top:6px;font-size:13px">
           <span data-flow-status></span>
@@ -1470,7 +1477,10 @@ HTML = r"""<!DOCTYPE html>
         <div class="row-2col" style="margin-top:14px">
           <div>
             <div class="field-label-row"><label for="lote-reel-voice">Voz (inglés)</label></div>
-            <select id="lote-reel-voice"><option>Cargando...</option></select>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="lote-reel-voice" style="flex:1;min-width:0"><option>Cargando...</option></select>
+              <button type="button" class="btn-sm" id="lote-reel-voice-preview" title="Escuchar una muestra de la voz">▶ Escuchar</button>
+            </div>
           </div>
           <div>
             <div class="field-label-row"><label for="lote-reel-subtitle">Subtítulos — estilo</label></div>
@@ -1578,6 +1588,7 @@ HTML = r"""<!DOCTYPE html>
       <select id="lote-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
+        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="lote-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1664,6 +1675,20 @@ HTML = r"""<!DOCTYPE html>
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn-sm" id="ajustes-check-flow-btn">Comprobar conexión</button>
         <button class="btn-sm" id="ajustes-open-flow-btn">Abrir Flow</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> WanGP (imágenes locales)</h2>
+      <p class="card-desc">Genera las imágenes en esta PC con tu GPU, sin sesión ni cuota. Elígelo en «Crear las imágenes con». La primera vez descarga el modelo (varios GB).</p>
+      <div class="status-rows">
+        <div class="status-row" id="ajustes-row-wan2gp">
+          <div class="status-row-text">
+            <strong>WanGP</strong>
+            <span id="ajustes-msg-wan2gp">Sin comprobar todavía.</span>
+          </div>
+          <div class="ring pending" id="ajustes-ring-wan2gp"></div>
+        </div>
       </div>
     </div>
 
@@ -1899,6 +1924,27 @@ async function officeRunAction(f, btn) {
   officePoll();
 }
 
+// "Reintentar todo": corre en orden la accion (POST) de cada alerta visible que tenga una, con una sola confirmacion.
+async function officeRunAll(findings, btn) {
+  const calls = findings.filter(f => f.action && f.action.kind === "call");
+  if (!calls.length || !window.confirm(calls.length + " alertas con acción (" + calls[0].action.label + "…).\n\n¿Ejecutarlas todas?")) return;
+  btn.disabled = true;
+  const failed = [];
+  for (let i = 0; i < calls.length; i++) {
+    btn.textContent = "Reintentando " + (i + 1) + " de " + calls.length + "…";
+    try {
+      const res = await fetch(calls[i].action.url, { method: calls[i].action.method || "POST" });
+      const data = await res.json();
+      if (!data.ok) failed.push(calls[i].text.slice(0, 60) + ": " + (data.error || "falló"));
+    } catch (e) {
+      failed.push(calls[i].text.slice(0, 60) + ": sin conexión");
+    }
+  }
+  btn.disabled = false;
+  if (failed.length) alert(failed.length + " de " + calls.length + " no se pudieron reintentar:\n\n" + failed.join("\n"));
+  officePoll();
+}
+
 function officeFindingRow(f) {
   const row = officeEl("div", "office-finding");
   row.appendChild(officeEl("span", "office-sev " + f.severity, OFFICE_SEVERITY_LABEL[f.severity] || f.severity));
@@ -1931,6 +1977,13 @@ function officeRenderPanel(force) {
   box.appendChild(officeEl("h2", "", cfg.title));
   box.appendChild(officeEl("p", "card-desc", officeOffline ? "Sin conexión con el servidor. Reintentando…" : view.bubble));
   details.forEach(t => box.appendChild(officeEl("p", "card-desc", t)));
+  const actionable = findings.filter(f => f.action && f.action.kind === "call");
+  if (actionable.length >= 2) {
+    const all = officeEl("button", "btn-sm", "⟳ Reintentar todo (" + actionable.length + ")");
+    all.type = "button";
+    all.addEventListener("click", () => officeRunAll(findings, all));
+    box.appendChild(all);
+  }
   findings.forEach(f => box.appendChild(officeFindingRow(f)));
   if (!findings.length && officeSelected === "revisor" && officeState && !officeOffline) {
     box.appendChild(officeEl("p", "card-desc", "Sin alertas por ahora."));
@@ -2237,6 +2290,7 @@ function activateTab(tab) {
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
     checkFlowSettings();
+    checkWan2gpSettings();
     checkYoutubeSettings();
     loadPublicUrl();
   }
@@ -2480,13 +2534,14 @@ $("custom-voice-add-btn").addEventListener("click", async () => {
   const form = new FormData();
   form.append("file", file);
   form.append("label", label);
+  form.append("lang", $("custom-voice-lang").value);
   btn.disabled = true;
   status.textContent = "Procesando la muestra...";
   try {
     const res = await fetch("/api/voices/custom", { method: "POST", body: form });
     const data = await res.json();
     if (!data.ok) { status.textContent = `❌ ${data.error || "No se pudo agregar la voz."}`; return; }
-    pipelineVoice = data.voice;
+    if ($("custom-voice-lang").value === "en") { loadReelOptions(); } else { pipelineVoice = data.voice; }
     $("custom-voice-name").value = "";
     $("custom-voice-file").value = "";
     status.textContent = `✅ Voz «${label}» agregada y seleccionada.`;
@@ -2520,10 +2575,11 @@ function wireFlowProvider(selectId, clipsCheckboxId) {
   const box = document.querySelector(`[data-flow-box="${selectId}"]`);
   const update = () => {
     const flow = sel.value === "flow";
+    const imagesOnly = sel.value !== "whatsapp";  // Flow y WanGP no generan clips animados
     box.style.display = flow ? "" : "none";
     if (clipsCheckboxId) {
-      $(clipsCheckboxId).disabled = flow;
-      if (flow) $(clipsCheckboxId).checked = false;
+      $(clipsCheckboxId).disabled = imagesOnly;
+      if (imagesOnly) $(clipsCheckboxId).checked = false;
     }
     if (flow) refreshFlowStatus(box);
   };
@@ -3236,12 +3292,36 @@ async function loadReelOptions() {
     const styleOpts = presets.map((p) => `<option value="${p.id}">${p.label}</option>`).join("");
     for (const prefix of ["pipeline", "lote"]) {
       $(`${prefix}-reel-voice`).innerHTML = voiceOpts;
+      const preferred = Object.keys(voices).find((k) => k.startsWith("custom:")) || "en_us_hombre";  // una voz nativa tuya primero
+      if (preferred in voices) $(`${prefix}-reel-voice`).value = preferred;
       $(`${prefix}-reel-subtitle`).innerHTML = styleOpts;
       $(`${prefix}-reel-subtitle`).value = "hormozi";
     }
   } catch (e) { console.error("No se pudieron cargar las voces del reel", e); }
 }
 loadReelOptions();
+// Previa de la voz elegida del reel (▶ / ■): muestra de la voz clonada o clip de referencia de la biblioteca.
+let reelVoiceAudio = null, reelVoiceButton = null;
+function stopReelVoicePreview() {
+  if (reelVoiceAudio) { reelVoiceAudio.pause(); reelVoiceAudio = null; }
+  if (reelVoiceButton) { reelVoiceButton.textContent = "▶ Escuchar"; reelVoiceButton = null; }
+}
+for (const prefix of ["pipeline", "lote"]) {
+  $(`${prefix}-reel-voice`).addEventListener("change", stopReelVoicePreview);
+  $(`${prefix}-reel-voice-preview`).addEventListener("click", () => {
+    const btn = $(`${prefix}-reel-voice-preview`);
+    if (reelVoiceButton === btn) { stopReelVoicePreview(); return; }
+    stopReelVoicePreview();
+    const key = $(`${prefix}-reel-voice`).value;
+    if (!key) return;
+    const audio = new Audio(key.startsWith("custom:")
+      ? `/api/voices/custom/${key.slice("custom:".length)}/sample` : `/api/voices/library/${key}/sample`);
+    reelVoiceAudio = audio; reelVoiceButton = btn;
+    btn.textContent = "■ Detener";
+    audio.addEventListener("ended", () => { if (reelVoiceAudio === audio) stopReelVoicePreview(); });
+    audio.play().catch(() => { if (reelVoiceAudio === audio) stopReelVoicePreview(); });
+  });
+}
 const reelChoices = (prefix) => ({
   voice: $(`${prefix}-reel-voice`).value, subtitle_preset: $(`${prefix}-reel-subtitle`).value,
 });
@@ -4232,6 +4312,15 @@ async function checkFlowSettings() {
   $("ajustes-ring-flow").className = state === "ok" ? "ring done" : "ring error";
   $("ajustes-msg-flow").textContent = message;
 }
+async function checkWan2gpSettings() {
+  let state = "unreachable", message = "No se pudo consultar WanGP.";
+  try {
+    const data = await (await fetch("/api/wan2gp/status")).json();
+    if (data.ok) ({ state, message } = data);
+  } catch (e) {}
+  $("ajustes-ring-wan2gp").className = state === "ok" ? "ring done" : "ring error";
+  $("ajustes-msg-wan2gp").textContent = message;
+}
 $("ajustes-check-flow-btn").addEventListener("click", checkFlowSettings);
 $("ajustes-open-flow-btn").addEventListener("click", async () => {
   const btn = $("ajustes-open-flow-btn");
@@ -4328,11 +4417,15 @@ def _voice_error(voice) -> Optional[str]:
 def api_voices():
     result = {}
     for slug, info in list_custom_voices().items():  # las clonadas primero
+        if info.get("lang", "es") == "en" and not request.args.get("lang"):
+            continue  # las voces en ingles son del reel de noticias (?lang=en)
         result[CUSTOM_VOICE_PREFIX + slug] = {
             "label": info.get("label") or slug, "gentle": False, "ready": True, "custom": True,
         }
     lang = (request.args.get("lang") or "").strip().lower()
-    if lang:  # voces de un idioma (reel en ingles): las clonadas y las de la biblioteca de ese idioma
+    if lang:  # voces nativas de un idioma (reel en ingles): la biblioteca de ese idioma y solo las clonadas de ese idioma
+        result = {key: v for key, v in result.items()
+                  if list_custom_voices().get(key[len(CUSTOM_VOICE_PREFIX):], {}).get("lang", "es") == lang}
         for key, info in VOICE_LIBRARY.items():
             if info.get("lang", "es") == lang:
                 result[key] = {"label": info["label"], "gentle": info["gentle"], "ready": voice_is_ready(key)}
@@ -4367,7 +4460,7 @@ def api_voices_custom_add():
         upload.save(str(tmp))
         if tmp.stat().st_size > CUSTOM_VOICE_MAX_UPLOAD:
             return jsonify({"ok": False, "error": "El audio pesa mas de 15 MB: recorta la muestra a 5-20 segundos."}), 400
-        key = add_custom_voice(str(tmp), label)
+        key = add_custom_voice(str(tmp), label, lang="en" if request.form.get("lang") == "en" else "es")
     except (ValueError, RuntimeError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     finally:
@@ -4387,6 +4480,19 @@ def api_voices_custom_delete(slug):
     if not delete_custom_voice(slug):
         return jsonify({"ok": False, "error": "Voz no encontrada."}), 404
     return jsonify({"ok": True})
+
+
+@app.route("/api/voices/library/<key>/sample")
+def api_voices_library_sample(key):
+    """Muestra de una voz de biblioteca (su clip de referencia; se prepara con Edge TTS la primera vez)."""
+    from tts_engine import bootstrap_voice, voice_reference_path
+    if key not in VOICE_LIBRARY:
+        return jsonify({"ok": False, "error": "Voz no encontrada."}), 404
+    if not voice_is_ready(key):
+        bootstrap_voice(key, show_progress=False)
+    if not voice_is_ready(key):
+        return jsonify({"ok": False, "error": "No se pudo preparar la muestra de la voz."}), 503
+    return send_file(str(voice_reference_path(key)), mimetype="audio/wav")
 
 
 @app.route("/api/voices/custom/<slug>/sample")
@@ -5876,6 +5982,12 @@ def api_gaming_games():
 def api_flow_status():
     import flow_images
     return jsonify({"ok": True, **flow_images.status()})
+
+
+@app.route("/api/wan2gp/status")
+def api_wan2gp_status():
+    import wan2gp_images
+    return jsonify({"ok": True, **wan2gp_images.status()})
 
 
 @app.route("/api/flow/launch", methods=["POST"])

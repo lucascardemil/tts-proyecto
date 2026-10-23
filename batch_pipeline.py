@@ -11,6 +11,7 @@ globales y las funciones _record_published_*) se importan de forma diferida,
 dentro de cada funcion que las usa.
 """
 
+import hashlib
 import json
 import logging
 import msvcrt
@@ -134,13 +135,16 @@ def _generate_text_with_chain(
                     # fallo en sus reintentos internos): el siguiente modelo de la cadena suele contestar.
                     retryable = any(m in str(e) for m in ("truncada", "bloques Imagen", "formato de historia", "fuera de largo",
                                                  "fuera de rango", "fuera de formato", "rate limit",
-                                                 "timed out", "fallo tras"))
+                                                 "timed out", "fallo tras", "no disponible en el endpoint"))
                     if not retryable or attempt == attempts:
                         raise
                     logger.warning("batch: %s; reintento %d/%d con otro modelo", e, attempt, attempts)
                     if any(m in str(e) for m in ("fuera de largo", "fuera de rango", "fuera de formato", "formato de historia")):
                         feedback = (f"\n\nTu respuesta anterior fue rechazada: {e}. Reescribe todo corrigiendo exactamente eso "
                                     "y cuenta las palabras del guion antes de responder.")
+                    elif "bloques Imagen" in str(e):
+                        feedback = ("\n\nTu respuesta anterior fue rechazada: no traia los bloques \"Imagen N / Frase del guion / "
+                                    "Prompt\". Responde SOLO con el formato pedido, sin razonamiento, analisis ni explicaciones.")
                     continue
                 logger.info("batch: texto generado por %s (story_id=%s)", backend, story_id)
                 return text
@@ -348,6 +352,7 @@ _PERMANENT_ERROR_MARKERS = (
     "falta una key",  # sin key de vision/proveedor en el .env
     "system prompt",  # prompts/<kind>_system.md no encontrado (configuracion)
     "no existe el archivo", "ya no existe",  # archivo borrado / voz clonada eliminada
+    "wangp no está instalado", "wangp no esta instalado",  # proveedor local sin instalar: hay que instalarlo
 )
 
 # Sanado de videos cuya PUBLICACION agoto MAX_AUTO_RETRIES (publish_error): una caida de internet, de Meta o de
@@ -1885,7 +1890,7 @@ def generate_gaming_post(
     _run_stage_with_retry(
         _do_generate_image,
         attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-        on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider != "flow" else None,
+        on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider == "whatsapp" else None,
         stage_label="imagen",
     )
     if ai_design == "scale":  # ilustracion con fondo negro intencional: 4:5 sin quitar bordes oscuros
@@ -2145,6 +2150,8 @@ _NATIVE_SCHEDULE_NETWORKS = {"facebook", "youtube"}
 # IG_CONTAINER_MAX_AGE se descartan y se publica por el camino completo. Si preparar falla, se
 # reintenta recien tras IG_PREPARE_RETRY (el publish del horario real funciona igual sin container).
 IG_PREPARE_LEAD = timedelta(minutes=60)
+IG_RESCHEDULE_LEAD = timedelta(hours=2)  # un Reel reprogramado por fallo sale como pronto en 2 h (Instagram va 1 h antes)
+MAX_IG_RESCHEDULES = 5
 IG_CONTAINER_MAX_AGE = timedelta(hours=20)
 IG_PREPARE_RETRY = timedelta(minutes=10)
 _ig_prepare_lock = threading.Lock()  # una subida de preparacion a la vez
@@ -2482,7 +2489,34 @@ def _build_publish_content(script_text: str, fallback_title: str, rescue: bool =
         "yt_tags": seo["tags"],
         "facebook_description": facebook_description,
         "instagram_description": instagram_description,
+        "ai": bool(written) or not copy_kind,  # False: la IA no respondio y se uso el texto de respaldo
     }
+
+
+PUBLISH_CONTENT_RETRY = timedelta(hours=1)  # un texto de respaldo se vuelve a pedir a la IA como mucho cada hora
+
+
+def _saved_publish_content(project_id: str, index: int, script_text: str) -> Optional[dict]:
+    """Titulo/descripciones ya guardados en el video para este guion: la IA redactada no se pide dos veces; el
+    texto de respaldo (la IA no respondio) se reintenta pasada una hora."""
+    with _lock:
+        saved = _load()[project_id]["videos"][index].get("publish_content")
+    if not saved or saved.get("key") != hashlib.sha1(script_text.encode("utf-8")).hexdigest():
+        return None
+    content = saved["content"]
+    if content.get("ai") or not _cooldown_elapsed(saved.get("built_at"), PUBLISH_CONTENT_RETRY, datetime.now()):
+        return content
+    return None
+
+
+def _save_publish_content(project_id: str, index: int, script_text: str, content: dict) -> None:
+    with _lock:
+        projects = _load()
+        projects[project_id]["videos"][index]["publish_content"] = {
+            "key": hashlib.sha1(script_text.encode("utf-8")).hexdigest(),
+            "built_at": datetime.now().isoformat(), "content": content,
+        }
+        _save(projects)
 
 
 def _publish_networks(project_id: str, index: int, publishers: dict, preparers: Optional[dict] = None) -> None:
@@ -2522,6 +2556,7 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
     waiting = False  # instagram todavia no llego a su horario real -> NO tocar scheduled_at
     error_parts = []
     any_auth_error = False
+    day_passed = False  # una red sin scheduling nativo (Instagram) fallo y el dia de su horario ya paso
     for network, publish_fn in publishers.items():
         cfg = networks.get(network)
         if not cfg or video["published_at"].get(network):
@@ -2559,6 +2594,8 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                 else:
                     error_parts.append(f"{network}: {result.get('error')}")
                     v["error"] = "; ".join(error_parts)
+                    if not native and scheduled_dt.date() < datetime.now().date():
+                        day_passed = True
                     if result.get("auth_error"):
                         any_auth_error = True
                 _save(projects)
@@ -2578,6 +2615,22 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
             v["status"] = "publish_error"
             v["publish_error_at"] = datetime.now().isoformat()
             v["last_publish_auth_error"] = True
+        elif error_parts and day_passed and v.get("reschedules", 0) < MAX_IG_RESCHEDULES:
+            # Instagram fallo y su dia ya paso: publicar tarde fuera de horario no sirve, se reprograma al proximo
+            # horario libre (Facebook/YouTube ya publicados quedan como estan) y empieza de cero.
+            old_slot = v.get("scheduled_at")
+            v["scheduled_at"] = _next_free_reschedule_slot(
+                projects, (project_id, index), datetime.now() + IG_RESCHEDULE_LEAD,
+                hour_end=HOWBIG_HOUR_END if item_type(projects[project_id], v) == "howbig_image" else BATCH_HOUR_END,
+            ).isoformat()
+            v["status"] = "ready"
+            v["publish_attempts"] = 0
+            v["publish_heal_cycles"] = 0
+            v["reschedules"] = v.get("reschedules", 0) + 1
+            v.pop("ig_container", None)
+            v.pop("ig_prepare_failed_at", None)
+            logger.info("batch %s item %d: Instagram fallo y su dia (%s) ya paso: reprogramado a %s (%s)",
+                        project_id, index, old_slot, v["scheduled_at"], (v.get("error") or "")[:100])
         elif error_parts:
             # Fallo real (no solo espera de espaciado): auto-reintenta hasta
             # MAX_AUTO_RETRIES volviendo a "ready" (el proximo tick reintenta
@@ -2660,13 +2713,24 @@ def _publish_batch_video(project_id: str, index: int) -> None:
     project = get_project(project_id)
     video = project["videos"][index]
     kind = _text_kind_for_page(_project_page_name(project))
-    content = _build_publish_content(
-        video.get("script_text", ""), project["name"], rescue=_is_rescue_project(project),
-        copy_kind="historias" if _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME
-        else kind if kind in COPY_FALLBACKS else None,
-        niche_tags=NICHE_HASHTAGS.get(kind),
-    )
-    title = content["title"]
+    script_text = video.get("script_text", "")
+    memo: dict = {}
+
+    def content() -> dict:
+        """Titulo y textos de las redes. Se piden a la IA solo cuando una red va a publicar de verdad (no mientras
+        todas esperan su horario: el tick corre cada minuto y agotaba la cuota del modelo) y quedan guardados."""
+        if not memo:
+            built = _saved_publish_content(project_id, index, script_text)
+            if built is None:
+                built = _build_publish_content(
+                    script_text, project["name"], rescue=_is_rescue_project(project),
+                    copy_kind="historias" if _project_page_name(project).strip().upper() == RESCUE_PAGE_NAME
+                    else kind if kind in COPY_FALLBACKS else None,
+                    niche_tags=NICHE_HASHTAGS.get(kind),
+                )
+                _save_publish_content(project_id, index, script_text, built)
+            memo.update(built)
+        return memo
 
     def _yt(v, page_id):
         with _lock:
@@ -2674,12 +2738,13 @@ def _publish_batch_video(project_id: str, index: int) -> None:
                 slot = _youtube_slot(_load(), (project_id, index), v["scheduled_at"]).isoformat()
             except (KeyError, TypeError, ValueError):
                 slot = v.get("scheduled_at")
+        c = content()
         result = youtube_publisher.publish_video(
-            v["video_path"], title, content["yt_description"], "unlisted", content["yt_tags"], True,
+            v["video_path"], c["title"], c["yt_description"], "unlisted", c["yt_tags"], True,
             publish_at=_rfc3339_utc(slot), language="es",
         )
         if result.get("ok"):
-            app._record_published_video(result["video_id"], title, Path(v["video_path"]).name)
+            app._record_published_video(result["video_id"], c["title"], Path(v["video_path"]).name)
             with _lock:
                 projects = _load()
                 projects[project_id]["videos"][index]["youtube_at"] = slot
@@ -2687,27 +2752,28 @@ def _publish_batch_video(project_id: str, index: int) -> None:
         return result
 
     def _fb(v, page_id):
+        c = content()
         result = facebook_publisher.publish_video(
-            v["video_path"], title, content["facebook_description"], page_id=page_id,
+            v["video_path"], c["title"], c["facebook_description"], page_id=page_id,
             scheduled_time=_scheduled_epoch(v),
         )
         if result.get("ok"):
-            app._record_published_facebook(result["video_id"], title, Path(v["video_path"]).name, page_id)
+            app._record_published_facebook(result["video_id"], c["title"], Path(v["video_path"]).name, page_id)
         return result
 
     def _ig_prep(v, page_id):
-        return instagram_publisher.prepare_video(
-            v["video_path"], title, content["instagram_description"], page_id=page_id
-        )
+        c = content()
+        return instagram_publisher.prepare_video(v["video_path"], c["title"], c["instagram_description"], page_id=page_id)
 
     def _ig(v, page_id):
         result = _publish_prepared_instagram(v, page_id)
+        c = content()
         if result is None:
             result = instagram_publisher.publish_video(
-                v["video_path"], title, content["instagram_description"], page_id=page_id
+                v["video_path"], c["title"], c["instagram_description"], page_id=page_id
             )
         if result.get("ok"):
-            app._record_published_instagram(result["media_id"], title, Path(v["video_path"]).name, page_id)
+            app._record_published_instagram(result["media_id"], c["title"], Path(v["video_path"]).name, page_id)
         return result
 
     _publish_networks(project_id, index, {"youtube": _yt, "facebook": _fb, "instagram": _ig},

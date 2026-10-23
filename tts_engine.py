@@ -383,7 +383,7 @@ def get_default_voice() -> str:
     wanted = os.environ.get("DEFAULT_CUSTOM_VOICE", "").strip()
     if wanted and custom_voice_sample(wanted):
         return wanted
-    voices = list_custom_voices()
+    voices = [s for s, v in list_custom_voices().items() if v.get("lang", "es") != "en"]  # las en ingles son del reel
     return CUSTOM_VOICE_PREFIX + sorted(voices)[0] if voices else DEFAULT_VOICE
 
 
@@ -924,8 +924,12 @@ def _text_to_speech_with_fallback(
     audio_prompt_path = kwargs.pop("audio_prompt_path", None)
     omnivoice_num_step = kwargs.pop("omnivoice_num_step", 16)
     omnivoice_max_chars = kwargs.pop("omnivoice_max_chars", 280)
-    if not is_custom_voice(kwargs.get("voice")) and not audio_prompt_path and list_custom_voices():
-        # Con voces clonadas disponibles, las de biblioteca quedan en desuso: un lote o
+    requested = kwargs.get("voice")
+    # Las voces de biblioteca en otro idioma (en_us_hombre...) no son legado: son las nativas del reel en ingles;
+    # una voz clonada en español hablando ingles sale con acento latino.
+    foreign_library = requested in VOICE_LIBRARY and VOICE_LIBRARY[requested].get("lang", "es") != "es"
+    if not is_custom_voice(requested) and not audio_prompt_path and list_custom_voices() and not foreign_library:
+        # Con voces clonadas disponibles, las de biblioteca en español quedan en desuso: un lote o
         # proyecto viejo que aun trae "es_es_mujer" narra con la voz clonada por defecto.
         legacy = kwargs.get("voice")
         kwargs["voice"] = get_default_voice()

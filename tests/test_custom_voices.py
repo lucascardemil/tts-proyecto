@@ -182,3 +182,55 @@ def test_pipeline_start_rejects_missing_custom_voice(monkeypatch):
     client = _client(monkeypatch)
     res = client.post("/api/pipeline/start", json={"story_text": "x", "voice": "custom:no_existe"})
     assert res.status_code == 400 and "ya no existe" in res.get_json()["error"]
+
+
+def test_english_library_voice_is_not_replaced_by_a_spanish_custom_voice(tmp_path, monkeypatch):
+    tts_engine.add_custom_voice(str(_tone(tmp_path / "a.wav", 6)), "Ana")  # clon en español
+    monkeypatch.setattr(tts_engine, "tts_omnivoice", lambda *a, **k: pytest.fail("no debe usar la voz clonada"))
+    seen = {}
+    monkeypatch.setattr(tts_engine, "tts_chatterbox", lambda text, output_path=None, **k: seen.update(k) or "cb.wav")
+    assert tts_engine._text_to_speech_with_fallback("hello", voice="en_us_hombre", language="en") == "cb.wav"
+    assert seen["voice"] == "en_us_hombre" and seen["language"] == "en"
+
+
+def test_voices_endpoint_by_language_lists_only_native_voices(tmp_path, monkeypatch):
+    import base64
+    import app as app_module
+    monkeypatch.setenv("DASHBOARD_USER", "u")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "p")
+    auth = {"Authorization": "Basic " + base64.b64encode(b"u:p").decode()}
+    tts_engine.add_custom_voice(str(_tone(tmp_path / "a.wav", 6)), "Ana")  # clon en español
+    tts_engine.add_custom_voice(str(_tone(tmp_path / "b.wav", 6)), "Ben", lang="en")
+    voices = app_module.app.test_client().get("/api/voices?lang=en", headers=auth).get_json()
+    assert "custom:ben" in voices and "custom:ana" not in voices
+    assert {"en_us_hombre", "en_us_mujer"} <= set(voices) and not any(k.startswith("es_") for k in voices)
+
+
+def test_english_custom_voices_stay_out_of_the_spanish_defaults_and_selectors(tmp_path, monkeypatch):
+    import base64
+    import app as app_module
+    monkeypatch.delenv("DEFAULT_CUSTOM_VOICE", raising=False)
+    tts_engine.add_custom_voice(str(_tone(tmp_path / "a.wav", 6)), "Zeta", lang="en")
+    assert tts_engine.get_default_voice() == tts_engine.DEFAULT_VOICE  # solo hay una voz y es en ingles
+    es = tts_engine.add_custom_voice(str(_tone(tmp_path / "b.wav", 6)), "Yola")
+    assert tts_engine.get_default_voice() == es
+    monkeypatch.setenv("DASHBOARD_USER", "u")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "p")
+    auth = {"Authorization": "Basic " + base64.b64encode(b"u:p").decode()}
+    voices = app_module.app.test_client().get("/api/voices", headers=auth).get_json()
+    assert es in voices and "custom:zeta" not in voices
+
+
+def test_library_voice_sample_route(monkeypatch, tmp_path):
+    import base64
+    import app as app_module
+    monkeypatch.setenv("DASHBOARD_USER", "u")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "p")
+    auth = {"Authorization": "Basic " + base64.b64encode(b"u:p").decode()}
+    ref = _tone(tmp_path / "ref.wav", 5)
+    monkeypatch.setattr(tts_engine, "voice_reference_path", lambda key: ref)
+    monkeypatch.setattr(tts_engine, "bootstrap_voice", lambda *a, **k: True)
+    monkeypatch.setattr(app_module, "voice_is_ready", lambda key: True)
+    client = app_module.app.test_client()
+    assert client.get("/api/voices/library/en_us_hombre/sample", headers=auth).status_code == 200
+    assert client.get("/api/voices/library/no_existe/sample", headers=auth).status_code == 404
