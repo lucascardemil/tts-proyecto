@@ -376,15 +376,6 @@ def render_everyday_card(art_path: Path, headline: str, body: str, out_path: Pat
     return out_path
 
 
-def render_infographic(art_path: Path, headline: str, answer: str, out_path: Path, size: tuple = SIZE_IG,
-                       number: int = 1) -> Path:
-    """Formato A de Everyday Explained: publicacion individual (pregunta, ilustracion y respuesta simple)."""
-    return render_everyday_card(
-        art_path, headline, answer, out_path, size, tag_right=f"SCIENCE \u2022 {number:02d}", label_top="The question",
-        label_bottom="The simple answer", footer=EVERYDAY_TAGLINE,
-    )
-
-
 CAROUSEL_LABELS = ("The hook", "The observation", "The science", "The detail", "The takeaway")
 CAROUSEL_FOLLOW = "Follow Everyday Explained for more."
 

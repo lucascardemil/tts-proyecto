@@ -14,20 +14,20 @@ import batch_pipeline as bp
 import facebook_publisher as fp
 import meme_maker
 
-REPLY = """IDEA: Why does a metal spoon feel colder than a wooden one in the same room? Metal moves heat away from your hand faster.
-HOOK: Why metal feels colder than wood
-IMAGE_PROMPT: hyperrealistic 3D macro render of a hand touching a steel spoon and a wooden spoon on a kitchen counter, heat shown as glowing orange arrows flowing out of the fingertips into the steel, dramatic side lighting, shallow depth of field
-TOP: Why does metal feel colder than wood?
-BOTTOM: Metal conducts heat away from your skin faster than wood, so it feels colder even at the same temperature.
-CAPTION: Same room, same temperature. So why does metal feel colder? 🤔
+REPLY = """IDEA: How a thermos keeps drinks hot: a vacuum layer between two walls stops heat from escaping.
+HOOK: How a thermos keeps drinks hot
+IMAGE_PROMPT: a stainless steel vacuum thermos flask cut in half, showing the outer wall, the empty vacuum gap, the inner wall, the plastic lid and the hot coffee inside
+TOP: HOW A THERMOS KEEPS DRINKS HOT
+BOTTOM: Insulated lid | Hot drink | Inner steel wall | Vacuum gap | Outer steel wall
+CAPTION: Ever wondered how a thermos keeps coffee hot for hours? ☕
 
-Metal is a much better conductor of heat than wood. When you touch it, it pulls warmth out of your hand quickly. Wood moves heat slowly, so your skin barely notices.
+A thermos has two walls with almost no air between them. With nothing to carry the heat across the gap, your drink stays warm much longer.
 
-Key takeaway: you feel the speed of heat leaving your hand, not the object's real temperature.
+Key takeaway: the empty space between the walls is what blocks the heat.
 
-Which everyday object always feels freezing to you?
+What do you keep in your thermos?
 
-#EverydayExplained #Science #HowThingsWork #DidYouKnow"""
+#EverydayExplained #HowThingsWork #Science #DidYouKnow"""
 
 CAROUSEL_REPLY = """IDEA: Why does ice form from the outside in? Surfaces lose heat first, so freezing usually starts at the edges.
 HOOK: Why ice freezes from the outside in
@@ -68,14 +68,15 @@ def _post(**over):
     return post
 
 
-# ---- Formato A: publicacion individual ---------------------------------------------------------------------------
+# ---- Formato A: infografia individual (la IA dibuja todo el texto) -----------------------------------------------------
 
-def test_profiles_are_facebook_only_and_scheduled_three_a_day():
+def test_profiles_are_facebook_only_and_scheduled_by_format():
     for key, hours in (("everyday_image", [10, 19]), ("everyday_carousel", [14])):
         p = bp.IMAGE_POST_PROFILES[key]
-        assert p["slot_hours"] == hours and p["facebook_only"] and p["ai_design"] == "infographic"
+        assert p["slot_hours"] == hours and p["facebook_only"]
         assert p["max_hashtags"]["facebook"] == 5 and p["history_store"] == "everyday_post_history"
-        assert p["week"][0][0] in p["templates"]
+    single = bp.IMAGE_POST_PROFILES["everyday_image"]
+    assert single["ai_design"] == "diagram" and single["rotate"] and list(single["templates"]) == ["S1", "S2", "S3", "S4", "S5"]
     assert bp.IMAGE_POST_PROFILES["everyday_carousel"]["carousel"] is True
     assert bp.MIXED_TYPES["mix_everyday"] == ("everyday_image", "everyday_carousel")
     assert bp.MIXED_SLOT_HOURS["mix_everyday"] == [10, 14, 19]  # individual 10 y 19, carrusel 14: 3 al dia
@@ -86,77 +87,111 @@ def test_profiles_are_facebook_only_and_scheduled_three_a_day():
 
 def test_system_prompts_load_without_placeholders_and_carry_the_rules():
     single, carousel = bp._text_system_prompt("everyday_post"), bp._text_system_prompt("everyday_carousel")
-    assert "{{" not in single and "MAXIMUM 10 words" in single and "MAXIMUM 28 words" in single
-    assert "Do NOT invent statistics" in single and "ENGAGEMENT QUESTION" in single
+    assert "{{" not in single and "MAXIMUM 8 words" in single and "MAXIMUM 4 words" in single
+    for style in ("S1 CUTAWAY", "S2 BLUEPRINT", "S3 TYPES", "S4 WRONG VS RIGHT", "S5 WHAT TO CHECK"):
+        assert style in single
+    assert "Do NOT invent statistics" in single and "ENGAGEMENT QUESTION" in single and "WRONG:" in single
     assert "exactly 5 separate slides" in carousel and "Do NOT invent studies" in carousel
     assert "Follow Everyday Explained for more." in carousel and "no Reels" in carousel
 
 
+def _post(**over):
+    post = bp._parse_gaming_post(REPLY)
+    post.update(over)
+    return post
+
+
 def test_valid_reply_parses_and_passes_validation():
     post = _post()
-    assert post["top"].startswith("Why does metal") and post["bottom"].endswith("same temperature.")
-    bp._validate_everyday_post(post)
+    assert post["top"] == "HOW A THERMOS KEEPS DRINKS HOT"
+    assert bp._everyday_labels(post) == ["Insulated lid", "Hot drink", "Inner steel wall", "Vacuum gap", "Outer steel wall"]
+    bp._validate_everyday_post(post, "S1")
+    bp._validate_everyday_post(post, "S2")
 
 
-@pytest.mark.parametrize("over,match", [
-    ({"top": "WHY DOES THE METAL SPOON IN MY KITCHEN ALWAYS FEEL SO MUCH COLDER THAN WOOD"}, "titular"),
-    ({"bottom": ""}, "respuesta"),
-    ({"bottom": " ".join(["word"] * 29)}, "respuesta"),
-    ({"caption": "Why does metal feel cold?\n\nIt conducts heat. #A #B"}, "hashtags"),
-    ({"caption": "Metal feels cold.\n\nIt conducts heat. #A #B #C"}, "pregunta"),
-    ({"caption": "Q? #A #B #C #D #E #F"}, "hashtags"),
+@pytest.mark.parametrize("over,template,match", [
+    ({"top": "HOW DOES THE VACUUM THERMOS IN MY KITCHEN KEEP DRINKS HOT FOR SO LONG"}, "S1", "titulo"),
+    ({"top": ""}, "S1", "titulo"),
+    ({"bottom": "Lid | Drink"}, "S1", "etiquetas"),
+    ({"bottom": " | ".join(f"Part {c}" for c in "ABCDEFGH")}, "S1", "etiquetas"),
+    ({"bottom": "A very long label that explains too much | Lid | Wall"}, "S1", "etiqueta"),
+    ({"bottom": "Lid | Wall | Gap"}, "S3", "4 etiquetas"),
+    ({"bottom": "Lid | Wall | Gap | Cap"}, "S4", "WRONG:"),
+    ({"caption": "Why does it work?\n\nIt insulates. #A #B"}, "S1", "hashtags"),
+    ({"caption": "It works.\n\nIt insulates. #A #B #C"}, "S1", "pregunta"),
 ])
-def test_invalid_posts_are_rejected(over, match):
+def test_invalid_posts_are_rejected(over, template, match):
     with pytest.raises(auto_pipeline.PipelineError, match=match):
-        bp._validate_everyday_post(_post(**over))
+        bp._validate_everyday_post(_post(**over), template)
 
 
-def test_illustration_prompt_forbids_text_and_carries_the_new_palette():
-    out = bp._ai_infographic_layout(_post())
-    assert "#0B1E3B" in out and "#008AFF" in out and "#FFD600" in out and "absolutely no text" in out
-    assert _post()["top"] not in out  # el texto NO viaja al generador: se compone despues
+def test_types_and_wrong_vs_right_pass_with_their_own_label_shapes():
+    bp._validate_everyday_post(_post(bottom="Incandescent | Halogen | Fluorescent | LED"), "S3")
+    bp._validate_everyday_post(_post(bottom="WRONG: Overloaded socket | WRONG: Frayed cable | RIGHT: One plug per socket | RIGHT: Intact cable"), "S4")
 
 
-def _art(tmp_path, color=(200, 60, 60), size=(1024, 1024)):
+def test_diagram_prompt_carries_the_exact_title_labels_style_and_signature():
+    post = _post(top='HOW A "THERMOS" KEEPS DRINKS HOT')
+    out = bp._ai_diagram_layout(post, "S1")
+    assert "watercolor-and-ink" in out and "a stainless steel vacuum thermos flask cut in half" in out
+    assert "exactly as written: \"HOW A 'THERMOS' KEEPS DRINKS HOT\"" in out  # comillas internas neutralizadas
+    for label in ("Insulated lid", "Hot drink", "Inner steel wall", "Vacuum gap", "Outer steel wall"):
+        assert f'"{label}"' in out
+    assert '"EVERYDAY EXPLAINED"' in out and "4:5" in out and "92%" in out and "No other text" in out
+    assert "navy blue" in out
+
+
+def test_each_style_has_its_own_layout_and_unknown_styles_fall_back_to_cutaway():
+    post = _post()
+    seen = {bp._ai_diagram_layout(post, k).split(" Vertical 4:5")[0] for k in bp.EVERYDAY_STYLES}
+    assert len(seen) == 5
+    assert "grid paper" in bp._ai_diagram_layout(post, "S2") and "2x2 grid" in bp._ai_diagram_layout(post, "S3")
+    assert "bright yellow background" in bp._ai_diagram_layout(post, "S5")
+    assert bp._ai_diagram_layout(post, "S9") == bp._ai_diagram_layout(post, "S1")
+
+
+def test_wrong_vs_right_labels_go_to_their_panels():
+    post = _post(bottom="WRONG: Overloaded socket | RIGHT: One plug per socket | RIGHT: Intact cable | WRONG: Frayed cable")
+    out = bp._ai_diagram_layout(post, "S4")
+    assert 'top panel (the mistake): "Overloaded socket", "Frayed cable"' in out
+    assert 'bottom panel (the correct way): "One plug per socket", "Intact cable"' in out and "WRONG:" not in out
+
+
+def test_styles_rotate_by_history_never_repeating_the_last(monkeypatch):
+    history = []
+    monkeypatch.setattr(bp, "_load_gaming_history", lambda store=None: [{"template": t} for t in history])
+    picks = []
+    for _ in range(6):
+        t = bp._image_post_template("everyday_image", None)
+        picks.append(t)
+        history.append(t)
+    assert picks == ["S1", "S2", "S3", "S4", "S5", "S1"]
+
+
+def test_single_post_generation_needs_flow_and_ends_as_a_4_5_cover(tmp_path, monkeypatch):
+    import app
     from PIL import Image
-    Image.new("RGB", size, color).save(tmp_path / "art.png")
-    return tmp_path / "art.png"
+    monkeypatch.setattr(bp, "_generate_text_with_chain", lambda *a, **k: REPLY)
+    monkeypatch.setattr(bp, "_gaming_history_block", lambda **k: "")
+    with pytest.raises(auto_pipeline.PipelineError, match="solo Flow"):
+        bp.generate_gaming_post("Everyday Explained", "give me the next Everyday Explained post", "wan2gp", tmp_path / "a", "S1",
+                                profile_key="everyday_image")
+    seen = {}
 
+    def fake_clips(story, dest, unattended, start_index=0, provider="", generate_video=False, aspect=""):
+        seen.update(prompt=story["prompts"][0]["prompt"], provider=provider, aspect=aspect)
+        dest.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (768, 1024), (20, 40, 80)).save(dest / "scene_000.jpg")
+        return [str(dest / "scene_000.jpg")]
 
-def _count(img, box, test):
-    return sum(1 for px in img.crop(box).getdata() if test(px))
-
-
-def test_render_single_post_has_brand_header_question_answer_and_tagline(tmp_path):
-    from PIL import Image
-    out = meme_maker.render_infographic(_art(tmp_path), "Why does ice form from the outside in?",
-                                        "Ice forms as water loses heat and often starts at the cold surfaces.", tmp_path / "o.jpg", number=7)
-    with Image.open(out) as img:
-        w, h = img.size
-        assert img.size == meme_maker.SIZE_IG and img.getpixel((3, h // 2)) == pytest.approx(meme_maker.INFO_NAVY, abs=6)
-        assert _count(img, (0, 0, w // 2, int(h * 0.09)), lambda p: p[0] > 220 and p[1] > 180 and p[2] < 60) > 300  # EVERYDAY amarillo
-        assert _count(img, (w // 2, 0, w, int(h * 0.09)), lambda p: p[2] > 200 and p[0] < 60) > 100  # SCIENCE • 07 azul electrico
-        assert _count(img, (0, int(h * 0.15), w, int(h * 0.4)), lambda p: min(p) > 230) > 3000  # pregunta en blanco
-        assert _count(img, (0, int(h * 0.93), w, h), lambda p: p[0] > 220 and p[1] > 180 and p[2] < 60) > 300  # lema amarillo
-        assert img.getpixel((w // 2, int(h * 0.55)))[0] > 150  # ilustracion al centro
-
-
-def test_render_slides_differ_by_role_and_stay_inside_margins(tmp_path):
-    from PIL import Image
-    art = _art(tmp_path, (90, 120, 160))
-    hook = meme_maker.render_carousel_slide(art, "WHY DOES THE SKY LOOK BLUE", "ignored on the hook slide", tmp_path / "s1.jpg", 1)
-    last = meme_maker.render_carousel_slide(art, "Freezing starts where heat escapes", "Under ordinary conditions ice grows inward from the cold surfaces.",
-                                            tmp_path / "s5.jpg", 5)
-    with Image.open(hook) as a, Image.open(last) as b:
-        w, h = a.size
-        footer = (0, int(h * 0.93), w, h)
-        assert _count(a, footer, lambda p: p[0] > 220 and p[1] > 180 and p[2] < 60) > 150  # SWIPE →
-        assert _count(b, footer, lambda p: p[0] > 220 and p[1] > 180 and p[2] < 60) > 300  # Follow Everyday Explained for more.
-        art_rows = lambda im: sum(1 for y in range(0, h, 10) if max(abs(c - n) for c, n in zip(im.getpixel((w // 2, y)), (90, 120, 160))) < 20)
-        assert art_rows(a) > art_rows(b)  # sin explicacion, la ilustracion del gancho es mas alta
-        for img in (a, b):
-            for box in ((0, 0, int(w * 0.03), h), (int(w * 0.97), 0, w, h)):
-                assert max(abs(c - n) for px in img.crop(box).getdata() for c, n in zip(px, meme_maker.INFO_NAVY)) < 12
+    monkeypatch.setattr(auto_pipeline, "generate_clips", fake_clips)
+    post = bp.generate_gaming_post("Everyday Explained", "give me the next Everyday Explained post", "flow", tmp_path / "b", "S2",
+                                   profile_key="everyday_image")
+    assert seen["provider"] == "flow" and seen["aspect"] == "3:4"
+    assert '"HOW A THERMOS KEEPS DRINKS HOT"' in seen["prompt"] and "grid paper" in seen["prompt"]
+    with Image.open(tmp_path / "b" / "cover.jpg") as img:
+        assert img.size == meme_maker.SIZE_IG
+    assert post["top"] == "HOW A THERMOS KEEPS DRINKS HOT"
 
 
 def test_hashtags_are_limited_for_facebook():
@@ -231,7 +266,7 @@ def test_create_project_is_facebook_only_with_its_own_daily_slots(monkeypatch, c
     from zoneinfo import ZoneInfo
     project = bp.create_project(
         "Everyday Explained", 6, 1,  # per_day pedido = 1: la pagina impone sus 3 franjas
-        {"facebook": {"page_id": "1"}, "instagram": {"page_id": "1"}, "youtube": True}, {}, content_type=content_type,
+        {"facebook": {"page_id": "1"}, "instagram": {"page_id": "1"}, "youtube": True}, {"image_provider": "flow"}, content_type=content_type,
     )
     assert set(project["networks"]) == {"facebook"} and project["per_day"] == len(hours)
     days = {}
@@ -245,7 +280,7 @@ def test_create_project_is_facebook_only_with_its_own_daily_slots(monkeypatch, c
 
 def test_mixed_batch_publishes_individual_carousel_individual_every_day(monkeypatch):
     _stub_create(monkeypatch)
-    project = bp.create_project("Everyday Explained", 6, 3, {"facebook": {"page_id": "1"}}, {}, content_type="mix_everyday")
+    project = bp.create_project("Everyday Explained", 6, 3, {"facebook": {"page_id": "1"}}, {"image_provider": "flow"}, content_type="mix_everyday")
     assert [bp.item_type(project, v) for v in project["videos"]] == ["everyday_image", "everyday_carousel", "everyday_image"] * 2
 
 
@@ -334,3 +369,45 @@ def test_app_exposes_the_three_types_and_facebook_only_endpoints():
     assert "individual 10:00 y 19:00 · carrusel 14:00 · mixto los tres" in src
     assert '"everyday": "everyday_image"' in src and 'everyday_image: "everyday"' in src
     assert "_facebook_only(" in src
+
+
+# ---- diapositivas del carrusel (el texto lo compone el codigo) --------------------------------------------------------
+
+def _art(tmp_path, color=(90, 120, 160), size=(1024, 1024)):
+    from PIL import Image
+    Image.new("RGB", size, color).save(tmp_path / "art.png")
+    return tmp_path / "art.png"
+
+
+def _count(img, box, test):
+    return sum(1 for px in img.crop(box).getdata() if test(px))
+
+
+def test_render_slides_differ_by_role_and_stay_inside_margins(tmp_path):
+    from PIL import Image
+    art = _art(tmp_path)
+    hook = meme_maker.render_carousel_slide(art, "WHY DOES THE SKY LOOK BLUE", "ignored on the hook slide", tmp_path / "s1.jpg", 1)
+    last = meme_maker.render_carousel_slide(art, "Freezing starts where heat escapes", "Under ordinary conditions ice grows inward from the cold surfaces.",
+                                            tmp_path / "s5.jpg", 5)
+    with Image.open(hook) as a, Image.open(last) as b:
+        w, h = a.size
+        assert a.size == meme_maker.SIZE_IG
+        footer = (0, int(h * 0.93), w, h)
+        yellow = lambda p: p[0] > 220 and p[1] > 180 and p[2] < 60
+        assert _count(a, footer, yellow) > 150  # SWIPE
+        assert _count(b, footer, yellow) > 300  # Follow Everyday Explained for more.
+        art_rows = lambda im: sum(1 for y in range(0, h, 10) if max(abs(c - n) for c, n in zip(im.getpixel((w // 2, y)), (90, 120, 160))) < 20)
+        assert art_rows(a) > art_rows(b)  # sin explicacion, la ilustracion del gancho es mas alta
+        for img in (a, b):
+            for box in ((0, 0, int(w * 0.03), h), (int(w * 0.97), 0, w, h)):
+                assert max(abs(c - n) for px in img.crop(box).getdata() for c, n in zip(px, meme_maker.INFO_NAVY)) < 12
+
+
+@pytest.mark.parametrize("content_type", ["everyday_image", "mix_everyday"])
+def test_single_infographics_refuse_providers_that_cannot_write_text(monkeypatch, content_type):
+    _stub_create(monkeypatch)
+    for settings in ({}, {"image_provider": "wan2gp"}, {"image_provider": "whatsapp"}):
+        with pytest.raises(ValueError, match="necesita Flow"):
+            bp.create_project("Everyday Explained", 3, 2, {"facebook": {"page_id": "1"}}, settings, content_type=content_type)
+    # el carrusel solo pide ilustraciones sin texto: cualquier proveedor sirve
+    bp.create_project("Everyday Explained", 3, 1, {"facebook": {"page_id": "1"}}, {"image_provider": "wan2gp"}, content_type="everyday_carousel")

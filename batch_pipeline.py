@@ -225,10 +225,19 @@ GAMING_NETWORK_OFFSETS = {"instagram": -3600}  # segundos respecto de scheduled_
 EVERYDAY_SINGLE_HOURS = [10, 19]
 EVERYDAY_CAROUSEL_HOURS = [14]
 EVERYDAY_SLOT_HOURS = [10, 14, 19]
-EVERYDAY_TEMPLATES = {"E1": "Explainer"}  # una sola plantilla: el modelo elige el tema
+EVERYDAY_TEMPLATES = {"E1": "Explainer"}  # carrusel: una sola plantilla, el modelo elige el tema
 EVERYDAY_WEEK = [("E1", "E1")] * 7
-EVERYDAY_TOP_MAX_WORDS = 10  # la pregunta
-EVERYDAY_BOTTOM_MAX_WORDS = 28  # la respuesta simple
+# Estilos de la infografia individual (referencias que funcionan en Facebook); rotan por historial, nunca dos iguales seguidas.
+EVERYDAY_STYLES = {
+    "S1": "Cutaway with labels",
+    "S2": "Blueprint with color-coded labels",
+    "S3": "Types in a 2x2 grid",
+    "S4": "Wrong vs right",
+    "S5": "What to check",
+}
+EVERYDAY_TITLE_MAX_WORDS = 8  # titulo de la infografia
+EVERYDAY_LABELS = (3, 7)  # etiquetas que dibuja la IA en la infografia
+EVERYDAY_LABEL_MAX_WORDS = 4
 EVERYDAY_HASHTAGS = (3, 5)
 EVERYDAY_SLIDES = 5  # Formato B: carrusel educativo
 EVERYDAY_SLIDE_TITLE_MAX_WORDS = 10
@@ -959,6 +968,9 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     mixed = MIXED_TYPES.get(content_type)
     if _facebook_only(content_type):  # pagina de horario propio: tantos posts al dia como franjas tiene
         per_day = len(MIXED_SLOT_HOURS.get(content_type) or IMAGE_POST_PROFILES[content_type]["slot_hours"])
+    if "everyday_image" in (mixed or (content_type,)) and (video_settings or {}).get("image_provider") != "flow":
+        # La infografia individual lleva el texto dibujado por la IA y solo Flow lo hace bien (WanGP/Meta AI lo deletrean mal).
+        raise ValueError("Everyday Explained (infografia individual) necesita Flow como generador de imagenes.")
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
     best_hour = _best_hour_for_networks(networks)
@@ -1626,11 +1638,11 @@ IMAGE_POST_PROFILES = {
     },
     "everyday_image": {
         "kind": "everyday_post",  # prompts/everyday_post_system.md: infografias educativas (Everyday Explained), en ingles
-        "templates": EVERYDAY_TEMPLATES, "week": EVERYDAY_WEEK,
+        "templates": EVERYDAY_STYLES, "week": [("S1", "S1")] * 7, "rotate": True,  # rota los 5 estilos por historial
         "slot_hours": EVERYDAY_SINGLE_HOURS, "network_offsets": {},
         "history_store": "everyday_post_history",
         "composition": "", "text_fill": (255, 211, 78),
-        "ai_design": "infographic",  # la IA dibuja la infografia completa con su titular y su respuesta
+        "ai_design": "diagram",  # la IA dibuja la infografia completa: titulo, etiquetas con flechas y la ilustracion
         "facebook_only": True,
         "max_hashtags": {"instagram": 0, "facebook": EVERYDAY_HASHTAGS[1]},
         "default_trigger": "give me the next Everyday Explained post", "label": "Post Everyday Explained",
@@ -1835,14 +1847,80 @@ def _ai_infographic_layout(post: dict) -> str:
     )
 
 
-def _validate_everyday_post(post: dict) -> None:
-    """Reglas del formato de Everyday Explained: titular <= 6 palabras, respuesta <= 12, caption con pregunta y 3-5 hashtags.
-    PipelineError (reintentable) si algo no cumple."""
-    top_words, bottom_words = len((post.get("top") or "").split()), len((post.get("bottom") or "").split())
-    if not 1 <= top_words <= EVERYDAY_TOP_MAX_WORDS:
-        raise auto_pipeline.PipelineError(f"Everyday Explained: el titular debe tener 1-{EVERYDAY_TOP_MAX_WORDS} palabras y tiene {top_words}")
-    if not 1 <= bottom_words <= EVERYDAY_BOTTOM_MAX_WORDS:
-        raise auto_pipeline.PipelineError(f"Everyday Explained: la respuesta debe tener 1-{EVERYDAY_BOTTOM_MAX_WORDS} palabras y tiene {bottom_words}")
+_EVERYDAY_SIGNATURE = "EVERYDAY EXPLAINED"
+_EVERYDAY_STYLE_PROMPTS = {
+    "S1": (
+        "A premium educational cutaway poster in a soft watercolor-and-ink illustration style: one large central cross-section "
+        "of {scene}, showing its inner workings, with glowing arrows for the flow of air, heat, water or energy. Thin clean "
+        "black leader lines run from each label to the exact part it names. Pale watercolor sky or paper background."
+    ),
+    "S2": (
+        "A technical 'labeled parts' poster on light-blue engineering grid paper with a rounded double border: a hyperrealistic "
+        "3D render of {scene} in the center. Color-coded rounded label boxes (yellow, green, blue, pink, purple) with thick red "
+        "arrows pointing to the exact part each one names. The title sits at the top inside a light-blue rounded box."
+    ),
+    "S3": (
+        "A 2x2 grid infographic on a warm beige background: four realistic isometric illustrations, one per cell, showing the "
+        "four types of {scene}, each with its bold uppercase caption centered under the cell. The title is huge, black, "
+        "condensed and uppercase across the top."
+    ),
+    "S4": (
+        "A 'wrong vs right' poster on a clean white background with two stacked panels showing {scene}: the top panel shows "
+        "the common mistake with a large red X, the bottom panel shows the correct way with a large green check mark. Yellow "
+        "rounded label boxes with red arrows point to the details. The title is bold black, with its key word in blue."
+    ),
+    "S5": (
+        "A bold poster on a solid bright yellow background with a huge black uppercase headline: a large photorealistic hero "
+        "image of {scene} in the middle, and thin black leader lines running to close-up product-style photos of each part "
+        "arranged along the bottom, each with its short caption."
+    ),
+}
+
+
+def _everyday_labels(post: dict) -> list:
+    return [x.strip() for x in (post.get("bottom") or "").split("|") if x.strip()]
+
+
+def _ai_diagram_layout(post: dict, template: str = "S1") -> str:
+    """Prompt COMPLETO (en ingles) de la infografia individual de Everyday Explained: escena del modelo + estilo de la
+    referencia (`template`) + el titulo y las etiquetas EXACTOS, para que el generador de imagenes (Flow) dibuje todo."""
+    q = lambda text: '"' + text.replace('"', "'") + '"'
+    title = (post.get("top") or "").strip()
+    labels = _everyday_labels(post)
+    wrong = [x.split(":", 1)[1].strip() for x in labels if x.upper().startswith("WRONG:")]
+    right = [x.split(":", 1)[1].strip() for x in labels if x.upper().startswith("RIGHT:")]
+    if template == "S4" and wrong and right:
+        callouts = f"Callouts on the top panel (the mistake): {', '.join(q(x) for x in wrong)}. Callouts on the bottom panel (the correct way): {', '.join(q(x) for x in right)}."
+    else:
+        plain = [x.split(":", 1)[-1].strip() if x.upper().startswith(("WRONG:", "RIGHT:")) else x for x in labels]
+        callouts = f"Labels, each placed next to the part it names: {', '.join(q(x) for x in plain)}."
+    scene = (post.get("image_prompt") or "").strip().rstrip(".")
+    style = _EVERYDAY_STYLE_PROMPTS.get(template, _EVERYDAY_STYLE_PROMPTS["S1"]).format(scene=scene)
+    return (
+        f"{style} Vertical 4:5 educational infographic poster in English. The title text, exactly as written: {q(title)}. {callouts} "
+        f"A small signature {q(_EVERYDAY_SIGNATURE)} in the bottom corner. Every word must be spelled exactly as given and fully "
+        "readable, in clean bold sans-serif lettering; keep all text and the subject inside the central 92% of the frame. "
+        "Use the brand accents deep navy blue, electric blue and bright yellow wherever the style allows. No other text, no "
+        "watermark, no logos, no clutter."
+    )
+
+
+def _validate_everyday_post(post: dict, template: str = "S1") -> None:
+    """Reglas de la infografia individual: titulo <= 8 palabras, 3-7 etiquetas de <= 4 palabras (S3 pide 4; S4 las separa en
+    WRONG:/RIGHT:), caption con pregunta final y 3-5 hashtags. PipelineError (reintentable) si algo no cumple."""
+    title_words = len((post.get("top") or "").split())
+    if not 1 <= title_words <= EVERYDAY_TITLE_MAX_WORDS:
+        raise auto_pipeline.PipelineError(f"Everyday Explained: el titulo debe tener 1-{EVERYDAY_TITLE_MAX_WORDS} palabras y tiene {title_words}")
+    labels = _everyday_labels(post)
+    if not EVERYDAY_LABELS[0] <= len(labels) <= EVERYDAY_LABELS[1] or (template == "S3" and len(labels) != 4):
+        raise auto_pipeline.PipelineError(
+            f"Everyday Explained: la infografia necesita {4 if template == 'S3' else f'{EVERYDAY_LABELS[0]}-{EVERYDAY_LABELS[1]}'} etiquetas separadas por | y trae {len(labels)}")
+    for label in labels:
+        text = label.split(":", 1)[1] if label.upper().startswith(("WRONG:", "RIGHT:")) else label
+        if not 1 <= len(text.split()) <= EVERYDAY_LABEL_MAX_WORDS:
+            raise auto_pipeline.PipelineError(f"Everyday Explained: la etiqueta '{label}' debe tener 1-{EVERYDAY_LABEL_MAX_WORDS} palabras")
+    if template == "S4" and not (any(x.upper().startswith("WRONG:") for x in labels) and any(x.upper().startswith("RIGHT:") for x in labels)):
+        raise auto_pipeline.PipelineError("Everyday Explained: el estilo 'wrong vs right' necesita etiquetas WRONG: y RIGHT:")
     _validate_everyday_caption(post.get("caption") or "")
 
 
@@ -1957,14 +2035,17 @@ def generate_gaming_post(
         stage_label="idea",
     )
     post = _parse_gaming_post(reply)
-    if profile.get("ai_design") == "infographic":
-        _validate_everyday_post(post)
+    if profile.get("ai_design") == "diagram":
+        _validate_everyday_post(post, template)
+        if image_provider != "flow":  # WanGP/Meta AI no saben escribir texto: la infografia solo sale bien con Flow
+            raise auto_pipeline.PipelineError(
+                "Everyday Explained dibuja el texto dentro de la imagen y solo Flow lo hace bien: elige Flow como generador")
 
     _stage("imagen")
     dest_dir.mkdir(parents=True, exist_ok=True)
     base_path = dest_dir / "base.jpg"
     ai_design = profile.get("ai_design")  # "card" / "meme": Meta AI dibuja el post completo, con texto
-    image_prompt = post["image_prompt"].rstrip() + (
+    image_prompt = _ai_diagram_layout(post, template) if ai_design == "diagram" else post["image_prompt"].rstrip() + (
         _ai_ad_layout(post, profile, page_name) if ai_design == "ad"
         else _ai_story_layout(post, template, page_name) if ai_design == "story"
         else _ai_news_layout(post, news_item["source"]) if ai_design == "news"
@@ -1984,7 +2065,7 @@ def generate_gaming_post(
                 story, dest_dir, unattended=True, start_index=0,
                 provider=image_provider if image_provider in auto_pipeline.PROVIDERS else "whatsapp",
                 generate_video=False,
-                aspect="1:1" if ai_design else "3:4",  # Flow/WanGP: cuadrado (la infografia recorta su recuadro de ahi)
+                aspect="3:4" if ai_design == "diagram" else "1:1" if ai_design else "3:4",  # la infografia va 3:4 y se ajusta a 4:5
             )
             Path(generated[0]).replace(base_path)
 
@@ -1994,9 +2075,8 @@ def generate_gaming_post(
         on_retry=(lambda attempt: _reset_session(auto_pipeline.WHATSAPP_SESSION)) if image_provider == "whatsapp" else None,
         stage_label="imagen",
     )
-    if ai_design == "infographic":  # ilustracion sin texto + titular/respuesta compuestos con la marca
-        meme_maker.render_infographic(base_path, post["top"], post["bottom"], dest_dir / "cover.jpg", meme_maker.SIZE_IG,
-                                      number=len(_load_gaming_history(profile["history_store"])) + 1)
+    if ai_design == "diagram":  # la IA ya dibujo todo el texto: solo se ajusta a 4:5 sin quitar bordes oscuros
+        meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_IG, trim=False)
     elif ai_design:  # la IA ya dibujo el post completo (foto + texto): solo se ajusta a cuadrado 1:1
         meme_maker.fit_post(base_path, dest_dir / "cover.jpg", meme_maker.SIZE_SQUARE)
     elif profile.get("card"):  # tarjeta editorial: texto en un panel, no sobre la foto
