@@ -16,12 +16,7 @@ Uso manual (para probar):
     python publish_worker.py
 
 Instagram video (Reels) funciona sin problema aca: sube el archivo local
-directo, no necesita URL publica. Instagram FOTO (solo el proyecto tipo
-gaming_image) si necesita la ruta publica de app.py detras del Cloudflare
-Tunnel -- si app.py no esta corriendo en ese momento, esos posts quedan en
-"ready" reintentando hasta que app.py vuelva a estar arriba (ver
-MAX_AUTO_RETRIES en batch_pipeline.py). Es la unica limitacion conocida de
-este script; el resto de los proyectos (video) no la tiene.
+directo, no necesita URL publica. Los posts de foto van solo a Facebook.
 """
 
 import logging

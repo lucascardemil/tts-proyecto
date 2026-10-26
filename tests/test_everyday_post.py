@@ -174,7 +174,7 @@ def test_single_post_generation_needs_flow_and_ends_as_a_4_5_cover(tmp_path, mon
     monkeypatch.setattr(bp, "_generate_text_with_chain", lambda *a, **k: REPLY)
     monkeypatch.setattr(bp, "_gaming_history_block", lambda **k: "")
     with pytest.raises(auto_pipeline.PipelineError, match="solo Flow"):
-        bp.generate_gaming_post("Everyday Explained", "give me the next Everyday Explained post", "wan2gp", tmp_path / "a", "S1",
+        bp.generate_gaming_post("Everyday Explained", "give me the next Everyday Explained post", "whatsapp", tmp_path / "a", "S1",
                                 profile_key="everyday_image")
     seen = {}
 
@@ -241,9 +241,9 @@ def test_generate_carousel_composes_five_branded_slides_and_a_cover(tmp_path, mo
 
     monkeypatch.setattr(auto_pipeline, "generate_clips", fake_clips)
     stages = []
-    result = bp.generate_everyday_carousel("Everyday Explained", "give me the next Everyday Explained carousel", "wan2gp",
+    result = bp.generate_everyday_carousel("Everyday Explained", "give me the next Everyday Explained carousel", "whatsapp",
                                            tmp_path / "post", on_stage=stages.append)
-    assert stages == ["idea", "imagen", "diseño"] and seen["provider"] == "wan2gp" and seen["aspect"] == "1:1"
+    assert stages == ["idea", "imagen", "diseño"] and seen["provider"] == "whatsapp" and seen["aspect"] == "1:1"
     assert all("absolutely no text" in p for p in seen["prompts"]) and len(seen["prompts"]) == 5
     assert [Path(p).name for p in result["slides"]] == [f"slide_{i}.jpg" for i in range(1, 6)]
     for path in result["slides"] + [str(tmp_path / "post" / "cover.jpg")]:
@@ -406,8 +406,8 @@ def test_render_slides_differ_by_role_and_stay_inside_margins(tmp_path):
 @pytest.mark.parametrize("content_type", ["everyday_image", "mix_everyday"])
 def test_single_infographics_refuse_providers_that_cannot_write_text(monkeypatch, content_type):
     _stub_create(monkeypatch)
-    for settings in ({}, {"image_provider": "wan2gp"}, {"image_provider": "whatsapp"}):
+    for settings in ({}, {"image_provider": "whatsapp"}):
         with pytest.raises(ValueError, match="necesita Flow"):
             bp.create_project("Everyday Explained", 3, 2, {"facebook": {"page_id": "1"}}, settings, content_type=content_type)
     # el carrusel solo pide ilustraciones sin texto: cualquier proveedor sirve
-    bp.create_project("Everyday Explained", 3, 1, {"facebook": {"page_id": "1"}}, {"image_provider": "wan2gp"}, content_type="everyday_carousel")
+    bp.create_project("Everyday Explained", 3, 1, {"facebook": {"page_id": "1"}}, {"image_provider": "whatsapp"}, content_type="everyday_carousel")

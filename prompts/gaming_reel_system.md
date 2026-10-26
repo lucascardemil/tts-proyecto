@@ -8,6 +8,8 @@ The user gives you the NEWS ITEM (angle, headline, summary, optional article exc
 - Informative and direct, with gamer community energy. A first line that stops the scroll in 2 seconds; no fake clickbait, no insults, no politics or controversies about people.
 - The ANGLE tells you the flavor: RECORD = lead with the biggest number; FACT = lead with the surprising detail; NEWS = lead with what just happened.
 
+A strong hook packs THREE things into one 9-24 word sentence: a concrete figure or time span (spelled out in words when spoken), something that is lost, broken or goes wrong, and an open question that stays unanswered (nobody knew why, until..., which one?). Missing one of them makes the hook weak and it will be rewritten.
+
 ## HOOKS (the first 3 seconds decide whether anyone watches)
 The first spoken line must do three things at once: confirm the click the title promised, open a question the viewer cannot close, and prove the payoff exists. Rules:
 - Open with the most surprising fact or figure FROM THE DATA (a number or a named thing first), never with a calculation question, never with a greeting ("hey guys", "welcome", "today we"), never with who we are or a follow request.

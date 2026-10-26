@@ -37,7 +37,7 @@ MIN_IMAGE_WORDS = 8
 IMAGE_STYLE = ("Vertical 9:16, cinematic, dark moody lighting, high detail, no text, no letters, no logos, "
                "no user interface, no watermark.")
 BG_FADE_FRAMES = 15
-SCRIPT_ATTEMPTS = 3
+SCRIPT_ATTEMPTS = 1 + hook_craft.HOOK_RETRIES  # el primero + las reescrituras por gancho flojo
 YT_TITLE_MAX = hook_craft.DESKTOP  # titulo de Shorts: la busqueda de escritorio corta cerca de 60
 MAX_HOOK_ON_SCREEN_WORDS = 10
 DEFAULT_VOICE = "en_us_hombre"

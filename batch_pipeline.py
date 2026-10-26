@@ -376,7 +376,6 @@ _PERMANENT_ERROR_MARKERS = (
     "falta una key",  # sin key de vision/proveedor en el .env
     "system prompt",  # prompts/<kind>_system.md no encontrado (configuracion)
     "no existe el archivo", "ya no existe",  # archivo borrado / voz clonada eliminada
-    "wangp no está instalado", "wangp no esta instalado",  # proveedor local sin instalar: hay que instalarlo
 )
 
 # Sanado de videos cuya PUBLICACION agoto MAX_AUTO_RETRIES (publish_error): una caida de internet, de Meta o de
@@ -413,7 +412,7 @@ def _split_hook_text(story_text: str) -> tuple:
 
 _HOOK_OPTIONS_BLOCK = re.compile(r"^[ \t]*GANCHOS:[ \t]*\n((?:[ \t]*\d+[.)][^\n]*(?:\n|\Z)){2,8})", re.MULTILINE)
 _HOOK_OPTION_LINE = re.compile(r"^[ \t]*\d+[.)][ \t]*(.+?)[ \t]*$", re.MULTILINE)
-HOOK_MIN_GAIN = 10  # puntos que debe ganarle la opcion elegida a la primera frase original para reemplazarla
+HOOK_MIN_GAIN = 1  # puntos que debe ganarle la opcion elegida a la primera frase original para reemplazarla
 HOOK_MAX_WORD_DELTA = 8  # el guion largo se valida por palabras: la frase nueva no puede cambiar mucho el largo
 
 
@@ -449,6 +448,33 @@ def _apply_best_hook(story_text: str, options: list, lang: str = "es") -> tuple:
     if not keep:
         story_text = story_text.replace(original, best["hook"])
     return story_text, {"hook": chosen["hook"], "hook_score": chosen["verdict"], "hook_formula": chosen["formula"]}
+
+
+def _generate_script_with_hook(generate, trigger_message: str, hooked: bool, on_attempt=None) -> tuple:
+    """Pide el guion y, si su mejor gancho no llega a hook_craft.HOOK_TARGET, lo reescribe hasta HOOK_RETRIES veces contando
+    al modelo que fallo (hook_craft.critique). Siempre devuelve el MEJOR intento: el gancho nunca bloquea el lote.
+    generate(mensaje) -> texto; devuelve (texto, {hook, hook_score, hook_formula, attempts} | None)."""
+    total = 1 + (hook_craft.HOOK_RETRIES if hooked else 0)
+    best = None  # (texto, hook_info) del mejor intento
+    message = trigger_message
+    for attempt in range(1, total + 1):
+        if on_attempt:
+            on_attempt(attempt, total)
+        text = generate(message)
+        info = None
+        if hooked:
+            options, text = _split_hook_options(text)
+            text, info = _apply_best_hook(text, options)
+        if best is None or (info or {}).get("hook_score", -1) > (best[1] or {}).get("hook_score", -1):
+            best = (text, info)
+        if not hooked or info is None or info["hook_score"] >= hook_craft.HOOK_TARGET:
+            break
+        logger.info("batch: gancho %d/100 (meta %d), reescribiendo guion (intento %d/%d)",
+                    info["hook_score"], hook_craft.HOOK_TARGET, attempt, total)
+        problem = hook_craft.critique(hook_craft.rank_hooks([info["hook"]], "es"), "es")
+        message = trigger_message + f"\n\nTu respuesta anterior se rechazó: {problem}. Corrige exactamente eso."
+    text, info = best
+    return text, (dict(info, attempts=attempt) if info else None)
 
 
 def _rescue_history_block() -> str:
@@ -962,14 +988,14 @@ def create_project(page_name: str, total_videos: int, per_day: int,
     total_videos = max(1, int(total_videos))
     per_day = max(1, int(per_day))
     every_n_days = min(30, max(1, int(every_n_days or 1)))
-    if _facebook_only(content_type):
-        # Solo Facebook: punto unico por el que pasa todo lote (la ruta, reintentos...).
+    if _photo_post(content_type):
+        # Fotos solo a Facebook (Instagram exige URL publica para imagenes): punto unico por el que pasa todo lote.
         networks = {k: v for k, v in (networks or {}).items() if k == "facebook"}
     mixed = MIXED_TYPES.get(content_type)
     if _facebook_only(content_type):  # pagina de horario propio: tantos posts al dia como franjas tiene
         per_day = len(MIXED_SLOT_HOURS.get(content_type) or IMAGE_POST_PROFILES[content_type]["slot_hours"])
     if "everyday_image" in (mixed or (content_type,)) and (video_settings or {}).get("image_provider") != "flow":
-        # La infografia individual lleva el texto dibujado por la IA y solo Flow lo hace bien (WanGP/Meta AI lo deletrean mal).
+        # La infografia individual lleva el texto dibujado por la IA y solo Flow lo hace bien (Meta AI lo deletrea mal).
         raise ValueError("Everyday Explained (infografia individual) necesita Flow como generador de imagenes.")
     if "gaming_clip" in (mixed or (content_type,)) and not gaming_clip.gaming_vision.is_configured():
         raise ValueError(gaming_clip.gaming_vision.NOT_CONFIGURED_MSG)
@@ -1378,25 +1404,28 @@ def _generate_batch_video(project_id: str, index: int) -> None:
     text_provider_pref = vs.get("text_provider", "auto")
     _provider_attempts: list = []
     try:
-        story_text = _run_stage_with_retry(
-            lambda: _generate_text_with_chain(
-                _text_kind_for_page(_project_page_name(project)),
-                _project_page_name(project),
-                trigger_message,
-                story_id,
-                duration_seconds=vs.get("duration_seconds"),
-                prefer=text_provider_pref,
-                attempted=_provider_attempts,
-            ),
-            attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
-            on_retry=None,
-            stage_label="guion",
-        )
         hook_text = ""
         hook_info = None
-        if HOOK_KINDS.get(_text_kind_for_page(_project_page_name(project))) == "es":
-            hook_options, story_text = _split_hook_options(story_text)
-            story_text, hook_info = _apply_best_hook(story_text, hook_options)
+        hooked = HOOK_KINDS.get(_text_kind_for_page(_project_page_name(project))) == "es"
+        story_text, hook_info = _generate_script_with_hook(
+            lambda message: _run_stage_with_retry(
+                lambda: _generate_text_with_chain(
+                    _text_kind_for_page(_project_page_name(project)),
+                    _project_page_name(project),
+                    message,
+                    story_id,
+                    duration_seconds=vs.get("duration_seconds"),
+                    prefer=text_provider_pref,
+                    attempted=_provider_attempts,
+                ),
+                attempts=BROWSER_STAGE_RETRY_ATTEMPTS,
+                on_retry=None,
+                stage_label="guion",
+            ),
+            trigger_message,
+            hooked,
+            on_attempt=lambda n, total: _set_stage(project_id, index, "guion" if n == 1 else f"guion (intento {n}/{total})"),
+        )
         if rescue:
             hook_text, story_text = _split_hook_text(story_text)
         story = auto_pipeline.load_story_from_text(story_text, story_id)
@@ -1570,6 +1599,7 @@ def _generate_batch_video(project_id: str, index: int) -> None:
         v["script_text"] = script_text
         if hook_info:
             v["hook_score"], v["hook_formula"] = hook_info["hook_score"], hook_info["hook_formula"]
+            v["hook_attempts"] = hook_info.get("attempts")
         v["gen_attempts"] = 0
         v["heal_cycles"] = 0
         _save(projects)
@@ -1703,6 +1733,11 @@ IMAGE_POST_PROFILES = {
         "default_trigger": "dame el próximo post de macramé", "label": "Post macramé",
     },
 }
+
+
+def _photo_post(content_type: str) -> bool:
+    """Lotes de solo posts de imagen: se publican solo en Facebook (un mixto con clips conserva Instagram para ellos)."""
+    return all(k in IMAGE_POST_PROFILES for k in (MIXED_TYPES.get(content_type) or (content_type,)))
 
 
 def _facebook_only(content_type: str) -> bool:
@@ -2037,7 +2072,7 @@ def generate_gaming_post(
     post = _parse_gaming_post(reply)
     if profile.get("ai_design") == "diagram":
         _validate_everyday_post(post, template)
-        if image_provider != "flow":  # WanGP/Meta AI no saben escribir texto: la infografia solo sale bien con Flow
+        if image_provider != "flow":  # Meta AI no sabe escribir texto: la infografia solo sale bien con Flow
             raise auto_pipeline.PipelineError(
                 "Everyday Explained dibuja el texto dentro de la imagen y solo Flow lo hace bien: elige Flow como generador")
 
@@ -2624,25 +2659,6 @@ def _gaming_history_block(limit: int = GAMING_HISTORY_LIMIT, store_name: str = G
     )
 
 
-def get_public_base_url() -> Optional[str]:
-    return job_store.load("batch_settings").get("public_base_url") or None
-
-
-def set_public_base_url(url: str) -> None:
-    with _lock:
-        settings = job_store.load("batch_settings")
-        settings["public_base_url"] = (url or "").strip().rstrip("/")
-        job_store.save("batch_settings", settings)
-
-
-def _public_image_url(project_id: str, index: int) -> Optional[str]:
-    """URL publica de la portada del post."""
-    base = get_public_base_url()
-    if not base:
-        return None
-    return f"{base}/api/batch/cover/{project_id}/{index}"
-
-
 _COPY_LABELS = re.compile(r"^(FACEBOOK|INSTAGRAM):[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
 
 
@@ -2849,12 +2865,14 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                         any_auth_error = True
                 _save(projects)
 
+    purge = None
     with _lock:
         projects = _load()
         v = projects[project_id]["videos"][index]
         active_networks = [n for n in publishers if networks.get(n)]
         if active_networks and all(v["published_at"].get(n) for n in active_networks):
             v["status"] = "published"
+            purge = dict(v)
             v["error"] = None
             v["publish_attempts"] = 0
             v["last_publish_auth_error"] = False
@@ -2898,6 +2916,22 @@ def _publish_networks(project_id: str, index: int, publishers: dict, preparers: 
                     datetime.now() + timedelta(seconds=BATCH_MIN_GAP_SECONDS),
                 ).isoformat()
         _save(projects)
+    if purge:
+        _purge_published_item(project_id, purge)
+
+
+def _purge_published_item(project_id: str, video: dict) -> None:
+    """Item ya publicado/programado en todas sus redes: nada de lo que dejo en disco hace falta (el texto y los
+    horarios se quedan en el lote). Un fallo al borrar solo se registra: nunca revierte el estado publicado."""
+    try:
+        _purge_video_assets(project_id, video)
+        with _lock:
+            projects = _load()
+            projects[project_id]["videos"][video["index"]]["assets_purged"] = True
+            _save(projects)
+    except Exception:
+        logger.warning("batch %s item %s: no se pudieron borrar los archivos del item publicado",
+                       project_id, video.get("index"), exc_info=True)
 
 
 def reschedule_published_video(project_id: str, index: int, new_slot: datetime) -> dict:
@@ -3045,18 +3079,7 @@ def _publish_batch_image_post(project_id: str, index: int) -> None:
             app._record_published_facebook(result["post_id"], project["name"], Path(v["video_path"]).name, page_id)
         return result
 
-    def _ig(v, page_id):
-        url = _public_image_url(project_id, index)
-        if not url:
-            return {"ok": False, "error": "Falta configurar la URL pública del Cloudflare Tunnel (pestaña Ajustes)."}
-        result = instagram_publisher.publish_photo(
-            url, _limit_hashtags(caption, max_tags["instagram"]), page_id=page_id,
-        )
-        if result.get("ok"):
-            app._record_published_instagram(result["media_id"], project["name"], Path(v["video_path"]).name, page_id)
-        return result
-
-    _publish_networks(project_id, index, {"facebook": _fb, "instagram": _ig})  # nunca youtube
+    _publish_networks(project_id, index, {"facebook": _fb})  # los posts de foto van solo a Facebook
 
 
 def _publish_batch_clip(project_id: str, index: int) -> None:

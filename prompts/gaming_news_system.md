@@ -20,6 +20,8 @@ ALL OUTPUT IS IN ENGLISH (idea, hook, headline, caption, hashtags).
   sentences in the caption body.
 - No insults, politics or controversies about people.
 
+A strong hook packs THREE things into one 9-24 word sentence: a concrete figure or time span (spelled out in words when spoken), something that is lost, broken or goes wrong, and an open question that stays unanswered (nobody knew why, until..., which one?). Missing one of them makes the hook weak and it will be rewritten.
+
 ## HEADLINE (TOP) AND HOOK
 - Put the surprising fact or the figure FROM THE DATA first, or a named thing; never a calculation question and never a vague word (amazing, incredible, insane, huge, secret, ultimate).
 - The caption's first line is the first thing seen in the feed: it must confirm the headline and open a question the reader wants closed.

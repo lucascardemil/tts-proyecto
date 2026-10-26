@@ -20,14 +20,15 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent / "data" / "hooks"
 LANGS = ("en", "es")
 
-STRONG, WORKABLE = 72, 55  # bandas del veredicto
-RETRY_BELOW = 40  # solo se pide reescribir cuando el MEJOR candidato esta claramente flojo (el puntaje es un filtro, no un juez fino)
+STRONG, WORKABLE = 80, 60  # bandas del veredicto
+HOOK_RETRIES = 4  # reescrituras extra del guion si el mejor gancho no llega a la meta
+HOOK_TARGET = STRONG  # meta del lote: por debajo se pide reescribir el gancho (el puntaje es un filtro, no un juez fino)
 DESKTOP, MOBILE, HARD = 60, 40, 100  # largo de titulo: busqueda de escritorio / feed movil / limite de YouTube
 THUMB_MAX_WORDS = 3
 
 _NUM_EN = (r"(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|"
            r"eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)")
-_NUM_ES = (r"(?:uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|veinti\w+|"
+_NUM_ES = (r"(?:dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|veinti\w+|"
            r"treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|mil|mill[oó]n|millones)")
 
 _LEX = {
@@ -39,9 +40,11 @@ _LEX = {
         "concrete": re.compile(
             r"\b(\d[\d,.]*\s?(%|k|m|x|s|h)?|\$\d|\d+\s?(second|minute|hour|day|week|month|year)s?|" + _NUM_EN + r")\b", re.I),
         "you": re.compile(r"\b(you|your|you're|youre|yourself)\b", re.I),
-        "stake": re.compile(r"\b(lose|lost|wasting|waste|quit|fail|broke|cost|risk|before|stop|never|die|dying|dead|banned|"
-                            r"delayed|cancelled|canceled)\b", re.I),
-        "curiosity": re.compile(r"\b(why|how|what|which|until|before|but|nobody|almost|except|reason|actually|reportedly)\b", re.I),
+        "stake": re.compile(r"\b(lose|lost|wasting|waste|quit|fail\w*|broke|broken|cost|costs|risk|before|stop|never|die|dying|dead|"
+                            r"banned|delayed|cancelled|canceled|ruin\w*|crash\w*|bug|mistake|worst|scam|refund\w*|removed|"
+                            r"shut\s?down|layoffs?)\b", re.I),
+        "curiosity": re.compile(r"\b(why|how|what|which|until|before|but|nobody|almost|except|reason|actually|reportedly|quietly|"
+                                r"surprised|noticed|expected|real)\b", re.I),
         "closed": re.compile(r"\b(because|so that|which means)\b", re.I),
     },
     "es": {
@@ -50,14 +53,16 @@ _LEX = {
         "vague": {"increíble", "increible", "impresionante", "brutal", "enorme", "gigante", "secreto", "poderoso", "definitivo",
                   "mejor", "revolucionario", "alucinante", "espectacular", "tremendo", "épico", "epico", "locura"},
         "concrete": re.compile(
-            r"\b(\d[\d.,]*\s?(%|k|m|x|s|h)?|\$\d|\d+\s?(segundo|minuto|hora|día|dia|semana|mes|año|ano)s?|" + _NUM_ES + r")\b",
+            r"\b(\d[\d.,]*\s?(%|k|m|x|s|h)?|\$\d|(?:\d+|un|una|uno)\s?(segundo|minuto|hora|día|dia|semana|mes|año|ano)s?|" + _NUM_ES + r")\b",
             re.I),
         "you": re.compile(r"\b(tú|tu|tus|te|ti|vos|usted|contigo|tuyo|tuya)\b", re.I),
-        "stake": re.compile(r"\b(perder|perdió|perdio|perdiendo|pierde|desperdici\w+|abandon\w+|fracas\w+|cuesta|costó|costo|"
-                            r"riesgo|peligro|nunca|jamás|jamas|morir|murió|moría|quedaban|antes de|dejar de|última|ultima)\b", re.I),
+        "stake": re.compile(r"\b(perd[ií]\w*|pierd\w+|desperdici\w+|abandon\w+|fracas\w+|cuesta|cuestan|cost[óo]|riesgo|peligro|"
+                            r"nunca|jam[áa]s|morir|muri[óo]|mor[ií]a|quedaban|antes de|dejar de|[úu]ltim[ao]|errores?|"
+                            r"arruin\w+|romp\w+|se deshac\w+|se deshiz\w+|se tuerc\w+|tard[ée]|tir[ée]|"
+                            r"llor[óo]|rechaz\w+|fall[óoa]\w*|problema|peor|estafa|culpa|miedo|dolor)\b", re.I),
         "curiosity": re.compile(r"\b(por qué|cómo|como|qué|cuál|cual|hasta que|antes de|pero|nadie|casi|excepto|razón|razon|"
-                                r"realmente|nunca)\b", re.I),
-        "closed": re.compile(r"\b(porque|por eso|lo que significa|así que|asi que)\b", re.I),
+                                r"realmente|nunca|nada|algo que|lo que|ni siquiera|sin saber|todos)\b", re.I),
+        "closed": re.compile(r"\b(por eso|lo que significa|así que|asi que)\b", re.I),
     },
 }
 
@@ -100,11 +105,11 @@ def _specificity(t: str, lex: dict) -> int:
     w = _words(t)
     if not w:
         return 0
-    nums = len(lex["concrete"].findall(t))
+    nums = min(2, len(lex["concrete"].findall(t)))
     vague = sum(1 for x in w if x in lex["vague"])
     filler = sum(1 for x in w if x in lex["filler"])
-    s = 34 + nums * 22 - vague * 16 - filler * 5
-    s += min(18, 6 * sum(1 for x in t.split()[1:] if x[:1].isupper()))  # nombre propio que no abre la frase
+    s = 40 + nums * 36 - vague * 16 - filler * 5
+    s += min(16, 8 * sum(1 for x in t.split()[1:] if x[:1].isupper()))  # nombre propio que no abre la frase
     return max(0, min(100, s))
 
 
@@ -115,15 +120,15 @@ def _address(t: str, lex: dict) -> int:
 
 
 def _stakes(t: str, lex: dict) -> int:
-    n = len(lex["stake"].findall(t))
-    return max(0, min(100, 22 + n * 26 + (14 if lex["concrete"].search(t) else 0)))
+    n = min(2, len(lex["stake"].findall(t)))
+    return max(0, min(100, 22 + n * 48 + (12 if n and lex["concrete"].search(t) else 0)))
 
 
 def _curiosity(t: str, lex: dict) -> int:
-    n = len(lex["curiosity"].findall(t))
-    q = 18 if t.strip().endswith("?") else 0
+    n = min(3, len(lex["curiosity"].findall(t)))
+    q = 16 if t.strip().endswith("?") else 0
     closed = -18 if lex["closed"].search(t) else 0  # un gancho que se resuelve solo ya no tiene hueco
-    return max(0, min(100, 24 + n * 17 + q + closed))
+    return max(0, min(100, 24 + n * 36 + q + closed))
 
 
 def _brevity(t: str, lex: dict) -> int:
@@ -166,7 +171,7 @@ def hook_score(text: str, lang: str = "en", address_counts: bool = False) -> dic
     text = (text or "").strip()
     parts = {name: fn(text, lex) for name, fn in _PROPS}
     values = [v for k, v in parts.items() if address_counts or k != "ADDRESS"]
-    verdict = round(0.6 * (sum(values) / len(values)) + 0.4 * min(values))
+    verdict = round(0.7 * (sum(values) / len(values)) + 0.3 * min(values))
     formula, _ = classify(text, lang)
     weakest = min((k for k in parts if address_counts or k != "ADDRESS"), key=parts.get)
     return {"hook": text, "properties": parts, "verdict": verdict, "band": band(verdict), "formula": formula,
@@ -186,8 +191,8 @@ def pick_hook(options: list, lang: str = "en") -> dict:
 
 
 def critique(ranked: list, lang: str = "en") -> str:
-    """Texto para reintentar cuando NINGUN candidato llega a RETRY_BELOW ('' si alguno sirve o no hay candidatos)."""
-    if not ranked or ranked[0]["verdict"] >= RETRY_BELOW:
+    """Texto para reintentar cuando NINGUN candidato llega a HOOK_TARGET ('' si alguno sirve o no hay candidatos)."""
+    if not ranked or ranked[0]["verdict"] >= HOOK_TARGET:
         return ""
     best = ranked[0]
     if _lang(lang) == "es":

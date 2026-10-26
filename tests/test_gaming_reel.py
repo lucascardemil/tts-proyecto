@@ -135,7 +135,7 @@ def test_write_script_retries_with_the_rejection_reason():
 def test_write_script_gives_up_after_the_attempt_limit():
     item = {"title": "t", "summary": "s", "body": "", "source": "IGN", "angle": "NEWS",
             "published": datetime.now(timezone.utc)}
-    with pytest.raises(gr.ReelError, match="tras 3 intentos"):
+    with pytest.raises(gr.ReelError, match=f"tras {gr.SCRIPT_ATTEMPTS} intentos"):
         gr.write_script(item, lambda m: "garbage")
 
 

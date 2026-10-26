@@ -23,5 +23,5 @@ gaming_clip.render_clip(props, Path('video/public/gclip_<id>/props.json'), Path(
 2. Instagram: crear container REELS → subir a rupload → publicar
 
 ## Notes
-- Cloudflare tunnel no necesario para videos (solo para imágenes en IG)
+- Sin túnel: los posts de foto van solo a Facebook; Instagram solo recibe videos/reels (subida por archivo)
 - GPU usage: ~40-80% during render vs CPU-only before

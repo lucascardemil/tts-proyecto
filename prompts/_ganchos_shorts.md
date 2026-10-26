@@ -3,6 +3,7 @@
 La primera frase hablada hace tres cosas a la vez: confirma lo que prometió el título o la portada, abre una pregunta que el espectador no puede cerrar y demuestra que el desenlace existe. Reglas:
 - Una sola idea. Un gancho con dos promesas no cumple ninguna.
 - Lo específico gana a lo grande: un número, un nombre, un lugar o un plazo ("siete meses", "tres días") en vez de adjetivos. Palabras vagas prohibidas: increíble, impresionante, secreto, brutal, épico.
+- Un gancho fuerte junta TRES cosas en una sola frase de 9 a 24 palabras: una cifra o plazo concreto, algo que se pierde, se rompe o sale mal (error, desperdicio, tardar, fallar) y una pregunta que queda abierta (nadie sabe por qué, hasta que..., ¿cuál es?). Si te falta una, la frase queda floja y se reescribirá.
 - Nada de saludo, de presentarte ni de pedir que sigan o se suscriban al inicio. Eso va (si va) al final, una sola vez.
 - No inventes cifras, resultados ni fuentes. Si un número no sale de lo que tienes, escribe la frase sin número.
 - El texto en pantalla (HOOK_TEXT) usa palabras DISTINTAS de la primera frase hablada: aporta un segundo ángulo, no la repite.

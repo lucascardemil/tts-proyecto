@@ -57,7 +57,6 @@ import office_agents
 import gaming_clip
 import gaming_reel
 import gaming_memes
-import cloudflare_tunnel
 import text_provider
 from tts_engine import (
     text_to_speech_long,
@@ -87,18 +86,13 @@ mimetypes.add_type("text/javascript", ".js")
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB: tope de subida (imágenes/clips del pipeline manual)
 
-_PUBLIC_PATHS = ("/api/batch/cover/", "/api/gaming/cover/")  # Instagram la baja directo vía el túnel, sin credenciales
-
 
 @app.before_request
 def _require_dashboard_auth():
-    if request.path.startswith(_PUBLIC_PATHS):
-        return None
-
     dashboard_user = os.environ.get("DASHBOARD_USER")
     dashboard_password = os.environ.get("DASHBOARD_PASSWORD")
     if not dashboard_user or not dashboard_password:
-        # Fail-closed: la app puede quedar expuesta a internet vía el túnel,
+        # Fail-closed: la app escucha en toda la red local,
         # así que se prefiere romper todo con un error explícito antes que
         # quedar abierta sin que nadie lo note.
         return (
@@ -1131,7 +1125,6 @@ HTML = r"""<!DOCTYPE html>
       <select id="pipeline-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
-        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="pipeline-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1161,7 +1154,6 @@ HTML = r"""<!DOCTYPE html>
       <select id="pipeline-image-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
-        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="pipeline-image-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1467,7 +1459,6 @@ HTML = r"""<!DOCTYPE html>
         <select id="lote-image-provider">
           <option value="whatsapp">WhatsApp / Meta IA</option>
           <option value="flow">Google Flow</option>
-          <option value="wan2gp">WanGP local en esta PC</option>
         </select>
         <div data-flow-box="lote-image-provider" style="display:none;margin-top:6px;font-size:13px">
           <span data-flow-status></span>
@@ -1590,7 +1581,6 @@ HTML = r"""<!DOCTYPE html>
       <select id="lote-provider">
         <option value="whatsapp">WhatsApp / Meta IA</option>
         <option value="flow">Google Flow (solo imágenes)</option>
-        <option value="wan2gp">WanGP local en esta PC (solo imágenes)</option>
       </select>
       <div data-flow-box="lote-provider" style="display:none;margin-top:6px;font-size:13px">
         <span data-flow-status></span>
@@ -1681,20 +1671,6 @@ HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="card">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> WanGP (imágenes locales)</h2>
-      <p class="card-desc">Genera las imágenes en esta PC con tu GPU, sin sesión ni cuota. Elígelo en «Crear las imágenes con». La primera vez descarga el modelo (varios GB).</p>
-      <div class="status-rows">
-        <div class="status-row" id="ajustes-row-wan2gp">
-          <div class="status-row-text">
-            <strong>WanGP</strong>
-            <span id="ajustes-msg-wan2gp">Sin comprobar todavía.</span>
-          </div>
-          <div class="ring pending" id="ajustes-ring-wan2gp"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
       <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/></svg> Conexión de YouTube</h2>
       <p class="card-desc">Necesaria para publicar en YouTube. Cada canal se conecta por separado: con su botón se abre el navegador de esta PC y tienes que elegir la cuenta de Google DE ESE canal (no la de otro). Si dice "Necesita reconectar" (el token venció o fue revocado), vuelve a conectarlo y reintenta las publicaciones con error.
         Los canales se definen en el archivo .env (YT_CHANNEL_1_NAME, YT_CHANNEL_2_NAME, YT_CHANNEL_3_NAME…). Si el token vence cada ~7 días, la app OAuth está en modo "Testing" en Google Cloud Console: pásala a "En producción" para que no vuelva a pasar.</p>
@@ -1702,32 +1678,6 @@ HTML = r"""<!DOCTYPE html>
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn-sm" id="ajustes-check-youtube-btn">Comprobar conexión</button>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>🌐 URL pública (Cloudflare Tunnel)</h2>
-      <p class="card-desc">
-        La app lanza <code>cloudflared</code> sola al arrancar (Quick Tunnel) y
-        detecta la URL pública automáticamente — no hace falta correr nada a
-        mano ni pegarla acá. El campo de abajo se completa solo y sirve
-        como respaldo/override manual: si preferís usar un túnel con dominio
-        propio en vez del automático, pegalo acá y se usa ese en su lugar.
-        Recordá que la URL automática es efímera (cambia con cada reinicio del
-        servidor) — eso es normal.
-        <br><br>
-        Si en la consola del servidor ves un aviso de "cloudflared no está
-        instalado", instalalo una vez con
-        <code>winget install --id Cloudflare.cloudflared</code> y reiniciá la app.
-        Todo el dashboard (no solo esta imagen) queda accesible desde esa URL,
-        protegido con el usuario/clave de <code>DASHBOARD_USER</code> /
-        <code>DASHBOARD_PASSWORD</code> del <code>.env</code>.
-      </p>
-      <div class="field-label-row">
-        <label for="ajustes-public-url">URL del túnel (automática o manual)</label>
-      </div>
-      <input type="text" id="ajustes-public-url" placeholder="https://algo.trycloudflare.com">
-      <button class="btn-sm" id="ajustes-save-public-url-btn" style="margin-top:10px">Guardar</button>
-      <div id="ajustes-public-url-status" class="pub-status"></div>
     </div>
 
   </div> <!-- /tab-ajustes -->
@@ -2296,9 +2246,7 @@ function activateTab(tab) {
   if (tab === "ajustes") {
     checkSessionStatus("whatsapp");
     checkFlowSettings();
-    checkWan2gpSettings();
     checkYoutubeSettings();
-    loadPublicUrl();
   }
   if (tab === "lote") {
     loadLotePages();
@@ -2581,7 +2529,7 @@ function wireFlowProvider(selectId, clipsCheckboxId) {
   const box = document.querySelector(`[data-flow-box="${selectId}"]`);
   const update = () => {
     const flow = sel.value === "flow";
-    const imagesOnly = sel.value !== "whatsapp";  // Flow y WanGP no generan clips animados
+    const imagesOnly = sel.value !== "whatsapp";  // Flow solo genera imágenes, no clips animados
     box.style.display = flow ? "" : "none";
     if (clipsCheckboxId) {
       $(clipsCheckboxId).disabled = imagesOnly;
@@ -2970,6 +2918,8 @@ function gamingNetworkLine(name, net) {
 }
 
 async function checkGamingYoutube(isClip) {
+  $("gaming-instagram").closest("label").style.display = isClip ? "" : "none"; // la foto no va a Instagram
+  if (!isClip) $("gaming-instagram").checked = false;
   let connected = true;
   if (isClip) {
     try {
@@ -3437,7 +3387,7 @@ function _loteVideoRowHtml(v, project) {
       <div class="lote-main">
         <span class="lote-badge ${badge[0]}">${badge[1]}</span>
         ${detail ? `<div class="lote-detail">${detail}</div>` : ""}${extra}
-        ${typeof v.hook_score === "number" ? `<div class="lote-detail" title="Puntaje del gancho (youtube-agent-skill): 72+ fuerte, 55+ aceptable">Gancho ${v.hook_score}/100 · ${v.hook_score >= 72 ? "fuerte" : v.hook_score >= 55 ? "aceptable" : "flojo"}${v.hook_formula ? " · " + _escapeHtml(v.hook_formula) : ""}</div>` : ""}
+        ${typeof v.hook_score === "number" ? `<div class="lote-detail" title="Puntaje del gancho (youtube-agent-skill): 80+ fuerte, 60+ aceptable. Si no llega a 80 el guion se reescribe hasta 4 veces y se usa el mejor">Gancho ${v.hook_score}/100 · ${v.hook_score >= 80 ? "fuerte" : v.hook_score >= 60 ? "aceptable" : "flojo"}${v.hook_attempts > 1 ? " · " + v.hook_attempts + " intentos" : ""}${v.hook_formula ? " · " + _escapeHtml(v.hook_formula) : ""}</div>` : ""}
       </div>
       <div class="lote-nets">${_loteNetSchedule(v, project)}</div>
       <div class="lote-act">${action}${
@@ -3584,9 +3534,9 @@ function updateLoteTypeVisibility() {
   const noYoutube = isImagePostType(type);
   $("lote-yt").checked = noYoutube ? false : $("lote-yt").checked;
   $("lote-yt").closest("label").style.display = noYoutube ? "none" : "";
-  // Everyday Explained: solo Facebook (Instagram bloqueado y desmarcado).
-  const fbOnly = EVERYDAY_TYPES.includes(type);
-  $("lote-everyday-note").style.display = fbOnly ? "" : "none";
+  // Posts de imagen: solo Facebook (Instagram pide una URL pública para las fotos; queda para videos y clips).
+  const fbOnly = isImagePostType(type);
+  $("lote-everyday-note").style.display = EVERYDAY_TYPES.includes(type) ? "" : "none";
   if (fbOnly) {
     if (loteIgSaved === null) loteIgSaved = $("lote-ig").checked;
     $("lote-fb").checked = true;
@@ -3621,7 +3571,7 @@ $("lote-create-btn").addEventListener("click", async () => {
   const pageId = $("lote-page").value || null;
   const networks = {};
   if ($("lote-fb").checked) networks.facebook = { page_id: pageId };
-  if (!EVERYDAY_TYPES.includes(contentType) && $("lote-ig").checked) networks.instagram = { page_id: pageId };
+  if (!isImagePostType(contentType) && $("lote-ig").checked) networks.instagram = { page_id: pageId };
   if (!isImagePostType(contentType) && $("lote-yt").checked) networks.youtube = true;
   if (!Object.keys(networks).length) {
     statusEl.innerHTML = `<div class="analytics-empty">Elegí al menos una red social.</div>`;
@@ -4319,15 +4269,6 @@ async function checkFlowSettings() {
   $("ajustes-ring-flow").className = state === "ok" ? "ring done" : "ring error";
   $("ajustes-msg-flow").textContent = message;
 }
-async function checkWan2gpSettings() {
-  let state = "unreachable", message = "No se pudo consultar WanGP.";
-  try {
-    const data = await (await fetch("/api/wan2gp/status")).json();
-    if (data.ok) ({ state, message } = data);
-  } catch (e) {}
-  $("ajustes-ring-wan2gp").className = state === "ok" ? "ring done" : "ring error";
-  $("ajustes-msg-wan2gp").textContent = message;
-}
 $("ajustes-check-flow-btn").addEventListener("click", checkFlowSettings);
 $("ajustes-open-flow-btn").addEventListener("click", async () => {
   const btn = $("ajustes-open-flow-btn");
@@ -4369,34 +4310,6 @@ async function checkYoutubeSettings() {
   }
 }
 $("ajustes-check-youtube-btn").addEventListener("click", checkYoutubeSettings);
-
-// ── Ajustes: URL pública del Cloudflare Tunnel (posts de imagen gaming) ──
-async function loadPublicUrl() {
-  try {
-    const res = await fetch("/api/batch/get-public-url");
-    const data = await res.json();
-    if (data.ok) $("ajustes-public-url").value = data.url || "";
-  } catch (e) { /* silencioso, no bloquea el resto de la pestaña */ }
-}
-$("ajustes-save-public-url-btn").addEventListener("click", async () => {
-  const btn = $("ajustes-save-public-url-btn");
-  const statusEl = $("ajustes-public-url-status");
-  btn.disabled = true;
-  try {
-    const res = await fetch("/api/batch/set-public-url", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: $("ajustes-public-url").value.trim() }),
-    });
-    const data = await res.json();
-    statusEl.innerHTML = data.ok
-      ? `<div class="analytics-empty">✅ Guardado.</div>`
-      : `<div class="analytics-empty">❌ No se pudo guardar.</div>`;
-  } catch (e) {
-    statusEl.innerHTML = `<div class="analytics-empty">❌ Error de conexión con el servidor.</div>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
 </script>
 </body>
 </html>"""
@@ -5815,7 +5728,7 @@ def _resolve_page_id(data: dict) -> tuple[Optional[str], Optional[dict]]:
 # proyecto: el post queda en _gaming_jobs hasta que se lo publica. Facebook
 # se programa de forma nativa (scheduled_publish_time); Instagram no tiene
 # scheduling, asi que su hilo duerme hasta la hora (el server tiene que seguir
-# vivo) y la imagen se baja por el tunel desde /api/gaming/cover/<job_id>.
+# vivo) y la portada se sirve desde /api/gaming/cover/<job_id>.
 
 _gaming_jobs = job_store.load("gaming")  # job_id -> {status, stage, error, hook, top, bottom, caption, networks}
 _gaming_jobs_lock = threading.Lock()
@@ -5990,12 +5903,6 @@ def api_flow_status():
     return jsonify({"ok": True, **flow_images.status()})
 
 
-@app.route("/api/wan2gp/status")
-def api_wan2gp_status():
-    import wan2gp_images
-    return jsonify({"ok": True, **wan2gp_images.status()})
-
-
 @app.route("/api/flow/launch", methods=["POST"])
 def api_flow_launch():
     """Abre el Brave de Flow (perfil dedicado, puerto 9333) para iniciar sesion en Google a mano."""
@@ -6152,16 +6059,6 @@ def _run_gaming_publish(job_id: str, network: str, page_id: str, target_ts: Opti
         )
         item_id = result.get("post_id")
         record = _record_published_facebook
-    else:
-        if target_ts is not None:
-            time.sleep(max(0, target_ts - time.time()))
-            _gaming_net_update(job_id, network, status="running")
-        result = instagram_publisher.publish_photo(
-            f"{batch_pipeline.get_public_base_url()}/api/gaming/cover/{job_id}", caption, page_id=page_id,
-            on_status=lambda st: _gaming_net_update(job_id, network, stage=st),
-        )
-        item_id = result.get("media_id")
-        record = _record_published_instagram
     if result.get("ok"):
         _gaming_net_update(
             job_id, network, status="done", error=None, stage=None, item_id=item_id,
@@ -6249,9 +6146,10 @@ def api_gaming_publish():
                 return jsonify({"ok": False, "error": "Everyday Explained se publica solo en Facebook."}), 400
         if "youtube" in networks and job.get("kind") != "clip":
             return jsonify({"ok": False, "error": "YouTube es solo para clips de video, no para posts de imagen."}), 400
-        # Solo la imagen de Instagram se descarga por el tunel; el clip se sube directo.
-        if "instagram" in networks and job.get("kind") != "clip" and not batch_pipeline.get_public_base_url():
-            return jsonify({"ok": False, "error": "Falta configurar la URL pública del Cloudflare Tunnel (pestaña Ajustes)."}), 400
+        if job.get("kind") != "clip":
+            networks = [n for n in networks if n == "facebook"]  # la foto de Instagram pide URL pública: solo Facebook
+            if not networks:
+                return jsonify({"ok": False, "error": "Las fotos se publican solo en Facebook."}), 400
         if job["status"] != "ready":
             return jsonify({"ok": False, "error": "El post todavía no está listo."}), 409
         busy = [
@@ -6948,30 +6846,6 @@ def api_batch_create():
     return jsonify({"ok": True, "project": project})
 
 
-@app.route("/api/batch/get-public-url")
-def api_batch_get_public_url():
-    return jsonify({"ok": True, "url": batch_pipeline.get_public_base_url() or ""})
-
-
-@app.route("/api/batch/set-public-url", methods=["POST"])
-def api_batch_set_public_url():
-    data = request.get_json(force=True) or {}
-    batch_pipeline.set_public_base_url(data.get("url") or "")
-    return jsonify({"ok": True})
-
-
-@app.route("/api/batch/cover/<project_id>/<int:index>")
-def api_batch_cover(project_id, index):
-    """Sirve la imagen de portada de un post gaming del lote -- ruta publica
-    minima para que Instagram (via Cloudflare Tunnel) pueda descargarla; la
-    Graph API de Instagram no acepta subida de archivo local para imagenes."""
-    project = batch_pipeline.get_project(project_id)
-    video = project and next((v for v in project["videos"] if v["index"] == index), None)
-    if not video or not video.get("video_path") or not Path(video["video_path"]).exists():
-        return "No encontrado", 404
-    return send_file(video["video_path"])
-
-
 @app.route("/api/batch/list")
 def api_batch_list():
     return jsonify({"ok": True, "projects": batch_pipeline.list_projects()})
@@ -7057,13 +6931,5 @@ if __name__ == "__main__":
         print("  La app va a responder 500 a TODAS las requests hasta que los agregues.")
         print("!" * 55)
         logger.warning("DASHBOARD_USER/DASHBOARD_PASSWORD no configurados en .env")
-
-    def _on_tunnel_url(url: str) -> None:
-        batch_pipeline.set_public_base_url(url)
-        print(f"   → URL pública (Cloudflare Quick Tunnel): {url}")
-        logger.info("Cloudflare Quick Tunnel activo: %s", url)
-
-    cloudflare_tunnel.start(PORT, _on_tunnel_url)
-    atexit.register(cloudflare_tunnel.stop)
 
     app.run(debug=False, host="0.0.0.0", port=PORT, threaded=True)

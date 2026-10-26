@@ -13,7 +13,7 @@ import flow_images as flow
 
 
 def test_flow_is_an_image_provider():
-    assert ap.PROVIDERS == ("whatsapp", "flow", "wan2gp")
+    assert ap.PROVIDERS == ("whatsapp", "flow")
 
 
 def test_generate_clips_with_flow_uses_flow_and_returns_scene_jpgs(monkeypatch, tmp_path):

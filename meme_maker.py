@@ -280,7 +280,7 @@ def render_card(
 
 
 # ---- identidad visual de Everyday Explained ---------------------------------------------------------------------------
-# Los generadores de imagen (WanGP/Flux, Flow) escriben mal el texto dentro de la imagen ("EXPLOKE"), asi que la IA solo
+# Los generadores de imagen (Flow, Meta AI) escriben mal el texto dentro de la imagen ("EXPLOKE"), asi que la IA solo
 # dibuja la ilustracion y TODO el texto (titular, explicacion, logotipo, numeracion) se compone aqui, con ortografia exacta.
 INFO_NAVY = (11, 30, 59)  # #0B1E3B
 INFO_BLUE = (0, 138, 255)  # #008AFF

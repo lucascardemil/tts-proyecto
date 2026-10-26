@@ -175,8 +175,7 @@ AGENT_BROWSER_BROWSERS_DIR = AGENT_BROWSER_STATE_DIR / "browsers"
 _SINGLETON_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 
 # "flow" = Google Flow (flow_images.py): solo imagenes, sin clips de video.
-# "wan2gp" = WanGP local (wan2gp_images.py): imagenes generadas en esta PC, sin clips de video.
-PROVIDERS = ("whatsapp", "flow", "wan2gp")
+PROVIDERS = ("whatsapp", "flow")
 
 POLL_INTERVAL_SECONDS = 4
 IMAGE_TIMEOUT_SECONDS = 600
@@ -1456,13 +1455,6 @@ def generate_clips(story: dict, download_dir: Path, unattended: bool, start_inde
             try:  # reanuda sola: salta las scene_NNN.jpg que ya existen
                 flow_images.generate_scene_images(story, download_dir, on_progress=report, aspect=aspect)
             except flow_images.FlowError as e:
-                raise PipelineError(str(e)) from e
-            clips = [str(download_dir / f"scene_{i:03d}.jpg") for i in range(n_prompts)]
-        elif provider == "wan2gp":
-            import wan2gp_images
-            try:  # reanuda sola: salta las scene_NNN.jpg que ya existen
-                wan2gp_images.generate_scene_images(story, download_dir, on_progress=report, aspect=aspect)
-            except wan2gp_images.Wan2gpError as e:
                 raise PipelineError(str(e)) from e
             clips = [str(download_dir / f"scene_{i:03d}.jpg") for i in range(n_prompts)]
         else:

@@ -12,7 +12,7 @@ import batch_pipeline as bp
 import gaming_reel as gr
 import hook_craft as hc
 
-STRONG_EN = "Elden Ring just sold twenty-five million copies, but nobody expected who bought it."
+STRONG_EN = "Players lost forty hours of progress to a single bug, but the real cause surprised everyone."
 WEAK_EN = "Amazing insane secret game changer you won't believe"
 
 
@@ -49,6 +49,17 @@ def test_rank_and_pick_choose_the_best_candidate():
     assert [r["hook"] for r in ranked] == [STRONG_EN, WEAK_EN]
     assert hc.pick_hook([WEAK_EN, STRONG_EN], "en")["hook"] == STRONG_EN
     assert hc.pick_hook([], "en") == {}
+
+
+def test_calibration_corpus_separates_good_medium_and_weak_hooks():
+    import hook_corpus as corpus
+    for lang, hooks in corpus.GOOD.items():
+        assert all(hc.hook_score(h, lang)["verdict"] >= hc.HOOK_TARGET for h in hooks), (lang, hooks)
+    for lang, hooks in corpus.MEDIUM.items():
+        assert all(55 <= hc.hook_score(h, lang)["verdict"] < hc.HOOK_TARGET for h in hooks), (lang, hooks)
+    for lang, hooks in corpus.WEAK.items():
+        assert all(hc.hook_score(h, lang)["verdict"] < 55 for h in hooks), (lang, hooks)
+    assert hc.band(80) == "STRONG" and hc.band(60) == "WORKABLE" and hc.band(59) == "WEAK"
 
 
 def test_critique_only_when_even_the_best_is_clearly_weak():
@@ -92,7 +103,7 @@ from test_gaming_reel import SCRIPT, SOURCE  # noqa: E402
 OPTIONS = """HOOK_OPTIONS:
 1. SILKSONG SOLD OUT FAST | Twenty five hundred thousand players bought it on day one and the studio did not see it coming
 2. DAY ONE RECORD | The wait is over and a lot of people showed up
-3. TWO AND A HALF MILLION | Two and a half million copies in a single day, but nobody expected who bought them
+3. TWO AND A HALF MILLION | Two and a half million copies in a single day, but nobody expected the one bug that almost ruined it
 """
 
 
@@ -100,7 +111,7 @@ def test_hook_options_pick_the_best_and_rewrite_scene_one():
     out = gr.parse_reel_script(OPTIONS + SCRIPT, SOURCE)
     assert out["scenes"][0]["text"] == "TWO AND A HALF MILLION" and out["hook"] == "TWO AND A HALF MILLION"
     assert out["scenes"][0]["narration"].startswith("Two and a half million copies in a single day")
-    assert out["hook_score"] >= 40 and isinstance(out["hook_formula"], str)
+    assert out["hook_score"] >= hc.HOOK_TARGET and isinstance(out["hook_formula"], str)
 
 
 def test_without_hook_options_the_script_is_unchanged():
@@ -128,7 +139,7 @@ def test_all_weak_options_are_rejected_with_the_critique_until_the_last_attempt(
     with pytest.raises(gr.ReelError, match="hook options are weak"):
         gr.parse_reel_script(script, SOURCE, strict_hooks=True)
     out = gr.parse_reel_script(script, SOURCE, strict_hooks=False)  # ultimo intento: se acepta el mejor
-    assert out["hook_score"] < hc.RETRY_BELOW
+    assert out["hook_score"] < hc.HOOK_TARGET
 
 
 def test_write_script_feeds_the_critique_back_and_succeeds_on_retry():
